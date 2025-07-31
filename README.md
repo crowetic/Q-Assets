@@ -1,63 +1,48 @@
-# React + TypeScript + Vite
+# Q-Assets - Asset Issuance, Management, Trading, and Documentation
+Q-Assets is an asset issuance, management, trading, and information Q-App for the Qortal Blockchain. 
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+## Asset Issuance
+Create new assets on Qortal. Not nonsense not-tokens on EVM chains. A Native, QORT-like asset running on the Qortal chain, validated every block by every node. 
 
-Currently, two official plugins are available:
+### Asset Issuer / Newly Created / Not in Circulation
+Assets that are created, are issued by the 'issuer' account. Any assets that are still in the issuer account, may be considered 'out of circulation. 
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- Assets are issued by the issuer with their 'total supply' up front. 
+- Any assets that are not sent anywhere from issuance, are 'out of circulation', technically. 
+- Any assets that ARE distributed from the issuer to any other account on Qortal, are 'in circulation'. 
 
-## Expanding the ESLint configuration
+## Asset Definition and Use Cases
+Assets in their original design concept, were meant to be utilized for things like 'stocks', or 'tracking ownership in something'. The 'tokens' of today are utilized in many fashions they were not designed for, and as such, are scammy. 
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Assets are CENTRALIZED by nature, due to being issued by a single party. Regardless of the fact that they are on a decentralized network, and actually validated by Qortal consensus, the ISSUANCE METHOD MAKES THEM A CENTRALIZED THING. 
 
-```js
-export default tseslint.config({
-  extends: [
-    // Remove ...tseslint.configs.recommended and replace with this
-    ...tseslint.configs.recommendedTypeChecked,
-    // Alternatively, use this for stricter rules
-    ...tseslint.configs.strictTypeChecked,
-    // Optionally, add this for stylistic rules
-    ...tseslint.configs.stylisticTypeChecked,
-  ],
-  languageOptions: {
-    // other options...
-    parserOptions: {
-      project: ['./tsconfig.node.json', './tsconfig.app.json'],
-      tsconfigRootDir: import.meta.dirname,
-    },
-  },
-});
-```
+The only difference between QORT and other assets on the Qortal Chain, are that non-QORT assets (aside from having a different 'asset ID', are NOT created BY the Qortal Consensus). Minting, on Qortal, is what actually CREATES the QORT coins, which is what makes QORT a 'coin' and not a 'token' (or 'asset'). While, technically, 'assets', 'tokens', and 'coins' are the 'same thing' on Qortal, this one differentiating factor is the key here. 
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+- 'coins' are created BY CONSENSUS, I.E. on Qortal, they are created by the MINTERS, and created EACH BLOCK. The Qortal chain was STARTED WITH 0 QORT, and MINTED into CREATION from there. 
+- ASSETS or TOKENS on the other hand, are created by someone issuing an 'ISSUE_ASSET' transaction, with the FULL MAX SUPPLY ISSUED AT THAT POINT. The only difference between 'circulating' and 'non-ciruculating' assets, are those that have been SENT FROM THE ISSUER ACCOUNT. 
+- Non-QORT-Assets on Qortal were NOT meant to be utilized as 'coins', but instead meant to be a 'stock' or a 'representation of ownership' in some concept, project, or other such thing. 
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x';
-import reactDom from 'eslint-plugin-react-dom';
+### Utilizing Tokens (non-QORT assets) on Qortal
+As described above, the best use case for non-QORT assets (or 'tokens') on Qortal, is to replace the concept of 'stocks'. Since stocks are MEANT TO BE CENTRALIZED, and controlled by the issuing entity. 
 
-export default tseslint.config({
-  plugins: {
-    // Add the react-x and react-dom plugins
-    'react-x': reactX,
-    'react-dom': reactDom,
-  },
-  rules: {
-    // other rules...
-    // Enable its recommended typescript rules
-    ...reactX.configs['recommended-typescript'].rules,
-    ...reactDom.configs.recommended.rules,
-  },
-});
-```
+Any use case that claims to be 'completely decentralized' (and doesn't implement some as-of-yet non-existent functionality to accomplish this) is LYING, at least at the base level. ASSETS ARE ISSUED BY A SINGLE PARTY, AND THEREFORE ARE NOT FULLY DECENTRALIZED. They cannot be created by consensus, like QORT, at least not as of July 2025. 
 
-## Internationalization of the app (I18N)
+### Legitimate Use Case #1 - 'Stocks'
+The most legitimate use case for non-QORT assets on Qortal, is to replace 'stocks'. Ownership in a company, or a concept, is a great way to leverage non-QORT assets on Qortal. Issue the asset, then distribute as many as the party owns to them, and they are trackable, trade-able, and able to be given value in the same way that stocks are, but with MUCH more LEGITIMACY, as they are tracked, traded, and validated by the Qortal Blockchain, and the nodes therein. 
 
-This template supports internationalization (i18n) using [i18next](https://www.i18next.com/), allowing seamless translation of UI text into multiple languages.
-The setup includes modularized translation files (namespaces), language detection, context and runtime language switching.
+### Legitimate Use Case #2 - 'Group Ownership' 
+Another good use case for assets, is 'group ownership'. I.E. sharing ownership of something with a group of people. The asset could be issued, and split amongst the people, and therein ownership kept track of. 
+- Issue X number of assets total
+- Split them into pieces and give X number = X% ownership
+- Distributed to shared owner accounts. 
 
-Files with translation are in `src/i18n/locales/<locale>` folder.
+### Edge Use Case #1 - 'physical asset representation' (WARNING)
+This is a potential use case that requires ANOTHER centralized component. The VALIDATION of the physical asset that is supposedly behind the 'token'. This means that it is more risky than the other use cases that only have the issuance centralization. 
 
-`core` namespace is already present and active.
+WARNING to those that would accept a digital representation of something built on Qortal with an asset. This is potentially risky, and highly dependent upon the party that issues the asset. If they are legitimate, and you trust them, it could be okay. But if they are not, it could be a scam. 
+
+### Illegitimate Use Case #1 - 'decentralized coins' (such as any wannabe coin issued as an EVM not-token) 
+This is hands-down the most illegitimate use case for non-QORT assets on Qortal. They are NOT coins, and never will be. Even if they can look, feel, and be used like one for quite a few things. They are not controlled and issued with a model from consensus, therefore they are centralized. 
+
+Unless a new concept is created that allows non-QORT assets to be issued/created by consensus, and/or issued/created by an AT, and the asset count starts at 0, this is to be considered an illegitimate use case in our eyes.
+
