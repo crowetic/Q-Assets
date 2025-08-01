@@ -75,25 +75,30 @@ const lightTheme = createTheme({
   palette: {
     mode: 'light',
     primary: {
-      main: 'rgb(36, 81, 92)',
-      dark: 'rgb(27, 49, 53)',
-      light: 'rgb(180, 200, 235)',
+      main: 'rgba(65, 101, 136, 0.76)',
+      dark: 'rgb(47, 58, 73)',
+      light: 'rgb(219, 219, 219)',
+      contrastText: 'rgba(27, 52, 66, 0.99)'
     },
     secondary: {
-      main: 'rgba(194, 222, 236, 1)',
-      dark: 'rgb(14, 70, 80)',
-      light: 'rgb(137, 200, 216)',
+      main: 'rgb(54, 136, 177)',
+      dark: 'rgb(31, 65, 85)',
+      light: 'rgb(17, 105, 163)',
     },
     background: {
-      default: 'rgb(215, 217, 230)',
-      paper: 'rgb(124, 156, 161)', // darker card background
+      default: 'rgb(201, 202, 209)',
+      paper: 'rgb(172, 172, 172)', // darker card background
     },
     text: {
-      primary: 'rgba(0, 0, 0, 0.87)', // 87% black (slightly softened)
-      secondary: 'rgba(0, 0, 0, 0.6)', // 60% black
+      primary: 'rgba(1, 4, 14, 0.87)', // 87% black (slightly softened)
+      secondary: 'rgba(0, 10, 19, 0.67)', // 60% black
+    },
+    info: {
+      main: 'rgb(90, 152, 84) ',
+      dark: 'rgb(48, 102, 17)',
     },
     action: {
-      hover: 'rgb(81, 132, 148)' // your choice of light hover
+      hover: 'rgba(81, 132, 148, 0.79)' // your choice of light hover
     }
 
   },
@@ -104,14 +109,16 @@ const darkTheme = createTheme({
   palette: {
     mode: 'dark',
     primary: {
-      main: 'rgb(12, 15, 17)',
+      main: 'rgb(8, 15, 20)',
       dark: 'rgb(21, 41, 58)',
-      light: 'rgb(99, 162, 211)',
+      // light: 'rgb(44, 104, 150)',
+      light: 'rgba(10, 92, 139, 0.99)',
+      contrastText: 'rgba(205, 224, 247, 0.72)'
     },
     secondary: {
-      main: 'rgb(26, 48, 65)',
-      dark: 'rgb(24, 46, 43)',
-      light: ' #ccd0f6',
+      main: 'rgb(37, 72, 99)',
+      dark: 'rgb(38, 56, 63)',
+      light: 'rgb(134, 154, 180)',
     },
     background: {
       default: 'rgb(11, 14, 19)',
@@ -119,7 +126,11 @@ const darkTheme = createTheme({
     },
     text: {
       primary: 'rgb(255, 255, 255)',
-      secondary: 'rgb(179, 179, 179)',
+      secondary: 'rgb(139, 139, 139)',
+    },
+    info: {
+      main: 'rgb(137, 152, 84) ',
+      dark: 'rgb(109, 103, 17)',
     },
     action: {
       hover: 'rgb(14, 14, 15)', 

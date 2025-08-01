@@ -3,6 +3,7 @@ import { getAllAssets, getAssetBalances } from '../utils/qortalAssetRequests';
 import { Typography, Paper, CircularProgress, useTheme, Box } from '@mui/material';
 import { Link } from 'react-router-dom';
 import { useAuth } from 'qapp-core';
+import { formatAssetAmount } from '../utils/qortalAssetRequests';
 
 export interface Asset {
   assetId: number;
@@ -209,7 +210,7 @@ const AssetExplorer = () => {
                             Total Supply:{' '}
                           </Typography>
                           <Typography component="span">
-                            {asset.totalSupply.toLocaleString()}
+                            {formatAssetAmount(asset.totalSupply, asset.isDivisible)}
                           </Typography>
                         </Box>
 
@@ -218,7 +219,7 @@ const AssetExplorer = () => {
                             Circulating:{' '}
                           </Typography>
                           <Typography component="span">
-                            {asset.circulating.toLocaleString()}
+                            {formatAssetAmount(asset.circulating, asset.isDivisible)}
                           </Typography>
                         </Box>
 

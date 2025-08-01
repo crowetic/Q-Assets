@@ -1,8 +1,8 @@
 import { getAssetInfo } from "../utils/qortalAssetRequests";
 import type { Service } from "qapp-core"; // or your local types
 
-export async function getAssetIdentifiers(assetName: string): Promise<{
-  assetId: number;
+export async function getAssetIdentifiers(assetName: string, assetId?: number): Promise<{
+  assetId?: number;
   assetName: string;
   identifiers: {
     avatar: string;
@@ -17,7 +17,9 @@ export async function getAssetIdentifiers(assetName: string): Promise<{
     structuredMeta: Service;
   };
 }> {
-  const { assetId } = await getAssetInfo({ assetName });
+  // const { assetId } = await getAssetInfo({ assetName });
+  if (!assetId) assetId = await getAssetInfo({ assetName });
+  
   const prefix = `asset${assetId}_${assetName}`;
 
   return {

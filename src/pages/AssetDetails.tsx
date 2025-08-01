@@ -19,6 +19,7 @@ import { fileToBase64 } from '../utils/data';
 import { getPrimaryAccountName } from '../utils/qortalApi';
 import { getAssetIdentifiers } from '../constants/qdnConstants';
 import type { AssetPublication } from '../types/AssetPublicationMetadata';
+import { formatAssetAmount } from '../utils/qortalAssetRequests';
 
 export default function AssetDetail() {
   const { assetId } = useParams<{ assetId: string }>();
@@ -76,10 +77,12 @@ export default function AssetDetail() {
               <strong>Asset ID:</strong> {asset.assetId}
             </Typography>
             <Typography variant="body1">
-              <strong>Total Supply:</strong> {asset.totalSupply.toLocaleString()}
+              <strong>Total Supply:</strong>{' '}
+              {formatAssetAmount(asset.totalSupply, asset.isDivisible)}
             </Typography>
             <Typography variant="body1">
-              <strong>Circulating:</strong> {asset.circulating.toLocaleString()}
+              <strong>Circulating:</strong>{' '}
+              {formatAssetAmount(asset.circulating, asset.isDivisible)}
             </Typography>
             <Typography variant="body1" sx={{ mt: 2 }}>
               {asset.description}
@@ -97,7 +100,7 @@ export default function AssetDetail() {
           )}
 
           <Divider sx={{ my: 3 }} />
-          <Typography variant="h5">Primary Group</Typography>
+          <Typography variant="h5">Primary Group Data</Typography>
           {assetPub?.primaryGroup ? (
             <>
               <Typography variant="body1">

@@ -44,8 +44,13 @@ export async function getAssetBalances(options: {
   }));
 }
 
-
-
+export function formatAssetAmount(amount: number, isDivisible: boolean): string {
+    const decimals = isDivisible ? 8 : 0;
+    return amount.toLocaleString(undefined, {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+  }
 
 
 /** Fetch order book or trades, etc. */
