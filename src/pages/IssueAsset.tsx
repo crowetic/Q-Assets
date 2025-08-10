@@ -1,37 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Box,
-  Button,
   TextField,
   Typography,
   Paper,
   Divider,
   FormControlLabel,
   Checkbox,
-  MenuItem,
-  Select,
 } from '@mui/material';
 import { useTheme } from '@mui/material';
 import { useAuth } from 'qapp-core';
 import { AssetPublication } from '../types/AssetPublicationMetadata';
-import { signAndBroadcast, issueAsset } from '../utils/qortalApi';
+import { issueAsset } from '../utils/qortalApi';
 import { objectToBase64 } from 'qapp-core';
 import { getAssetIdentifiers } from '../constants/qdnConstants';
-import { EditorContent, flattenExtensions, useEditor } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-// import Bold from '@tiptap/extension-bold';
-// import Italic from '@tiptap/extension-italic';
-// import Underline from '@tiptap/extension-underline';
-import TextAlign from '@tiptap/extension-text-align';
-import Color from '@tiptap/extension-color';
-import { FontSize, TextStyle } from '@tiptap/extension-text-style';
-// import Paragraph from '@tiptap/extension-paragraph';
-import type { Level } from '@tiptap/extension-heading';
-
-// import Text from '@tiptap/extension-text';
-// import Code from '@tiptap/extension-code';
-import Image from '@tiptap/extension-image';
 import { fileToBase64 } from '../utils/data';
+import { getAllAssets } from '../utils/qortalAssetRequests';
+import TiptapEditor from '../components/TipTapEditor';
+import SuccessButton from '../components/buttons/SuccessButton';
+import InfoOutlineButton from '../components/buttons/InfoOutlineButton';
 
 export default function IssueAsset() {
   const {
@@ -44,9 +31,9 @@ export default function IssueAsset() {
   const [assetName, setAssetName] = useState('');
   const [description, setDescription] = useState('');
   const [quantity, setQuantity] = useState<number>(0);
-  const [divisible, setDivisible] = useState<boolean>(true);
-  const [unspendable, setUnspendable] = useState<boolean>(false);
-  const [assetData, setAssetData] = useState<string>();
+  const [isDivisible, setIsDivisible] = useState<boolean>(true);
+  const [isUnspendable, setIsUnspendable] = useState<boolean>(false);
+  const [assetData, setAssetData] = useState<string>('None');
 
   // Metadata (QDN JSON)
   const [html, setHtml] = useState('');
@@ -55,6 +42,7 @@ export default function IssueAsset() {
   const [groupLink, setGroupLink] = useState('');
   const [groupIsPrivate, setGroupIsPrivate] = useState(false);
   const [avatarBase64, setAvatarBase64] = useState<string>('');
+  const [newAssetID, setNewAssetID] = useState<number>(0);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,39 +53,21 @@ export default function IssueAsset() {
 
   const theme = useTheme();
 
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        heading: { levels: [1, 2, 3, 4, 5, 6] },
-      }),
-      TextStyle,
-      Color,
-      TextAlign.configure({
-        types: ['heading', 'paragraph'],
-      }),
-      Image,
-      // Bold,
-      // Italic,
-      // Underline,
-      // Code,
-    ],
-    content: html,
-    onUpdate: ({ editor }) => {
-      setHtml(editor.getHTML());
-      // const md = editor.storage.markdown.getMarkdown(); // Optional: capture markdown too
-      // console.log('markdown:', md);
-    },
-  });
-
   useEffect(() => {
-    if (editor && assetName) {
+    if (!editorHasInit && assetName.trim()) {
       const today = new Date().toISOString().split('T')[0];
-      const title = `<center><h2><span style="color: ${theme.palette.info.dark}">ANNouncement</span> - <span style="color: ${theme.palette.primary.light}">${assetName}</span> - Genesis Announcement -  <span style="color: ${theme.palette.primary.main}">${today}</span></h2></center>`;
+      const title =
+        `<center><h2>` +
+        `<span style="color:${theme.palette.info.dark}">ANNouncement</span> - ` +
+        `<span style="color:${theme.palette.primary.light}">${assetName}</span> - ` +
+        `Genesis Announcement - <span style="color:${theme.palette.primary.main}">${today}</span>` +
+        `</h2></center>`;
       const body = `<p>Describe your asset here...</p>`;
-      editor.commands.setContent(`${title}${body}`);
+
+      setHtml(`${title}${body}`); // <-- Prefill via value prop
       setEditorHasInit(true);
     }
-  }, [editor, assetName]);
+  }, [assetName, editorHasInit, theme]);
 
   useEffect(() => {
     // If no address at all, auto-trigger authentication
@@ -106,73 +76,107 @@ export default function IssueAsset() {
     }
   }, [userName, authenticateUser]);
 
+  async function predictAssetID(): Promise<number> {
+    const allAssets = await getAllAssets(false); // no need to load metadata
+    const ids = allAssets.map((a: any) => a.assetId).filter((id: number) => typeof id === 'number');
+
+    const maxId = ids.length > 0 ? Math.max(...ids) : 0;
+    return maxId + 1; // the “probably safe” new asset ID
+  }
+
+  const resetForm = () => {
+    setSuccess('Asset issued and Genesis publication saved successfully!');
+    setAssetName('');
+    setDescription('');
+    setQuantity(0);
+    setIsDivisible(true);
+    setIsUnspendable(false);
+    setGroupName('');
+    setGroupId('');
+    setGroupLink('');
+    setGroupIsPrivate(false);
+    setAttemptedSubmit(false);
+    setAvatarBase64('');
+    setHtml('');
+  };
+
   const handleIssueAsset = async () => {
     if (!userName || !userAddress || !userPublicKey || !quantity || !assetName) {
-      alert('Missing Required Asset data, please check all data and try again. !');
+      alert('Missing Required Asset data, please check all data and try again.');
       return;
     }
+
     setAttemptedSubmit(true);
     setLoading(true);
     setError(null);
     setSuccess(null);
+    if (!assetData) setAssetData('None');
+
+    // Snapshot state so later resetForm() won't overwrite values during async work
+    const currentAssetName = assetName;
+    const currentDescription = description;
+    const currentQuantity = quantity;
+    const currentDivisible = isDivisible;
+    const currentUnspendable = isUnspendable;
+    const currentAssetData = assetData;
+    const currentAvatarBase64 = avatarBase64;
 
     try {
+      const predictedAssetID = await predictAssetID();
+
       const publication: AssetPublication = {
-        description: description,
-        html: html,
+        description: currentDescription,
+        html,
         primaryGroup: {
           name: groupName,
           id: groupId,
           joinLink: groupLink,
-          isPrivate: false, // or dynamic
+          isPrivate: false,
         },
       };
 
       const pub64 = await objectToBase64(publication);
-      const [assetIdent] = (await getAssetIdentifiers(assetName)).identifiers.genesisPost;
-      const [assetAvatarIdent] = (await getAssetIdentifiers(assetName)).identifiers.avatar;
 
+      // No array destructuring — these are just strings
+      const publishInfo = await getAssetIdentifiers(currentAssetName, predictedAssetID);
+      const pubID = publishInfo.identifiers.genesisPost;
+      const assetAvatarID = publishInfo.identifiers.avatar;
+      const pubService = publishInfo.services.genesisPost;
+      const assetAvatarService = publishInfo.services.avatar;
+
+      // Issue the asset with the snapshotted flags
       await issueAsset(
         userAddress,
         userPublicKey,
-        assetName,
-        description,
-        quantity,
-        divisible,
-        assetData,
-        unspendable
+        currentAssetName,
+        currentDescription,
+        currentQuantity,
+        currentAssetData,
+        currentDivisible,
+        currentUnspendable
       );
 
+      // Publish genesis announcement
       await qortalRequest({
         action: 'PUBLISH_QDN_RESOURCE',
-        service: 'BLOG_POST',
-        identifier: assetIdent,
+        service: pubService,
+        identifier: pubID,
         base64: pub64,
       });
 
-      if (avatarBase64) {
+      // Publish avatar if present
+      if (currentAvatarBase64) {
         await qortalRequest({
           action: 'PUBLISH_QDN_RESOURCE',
-          service: 'IMAGE',
+          service: assetAvatarService,
           name: userName,
-          identifier: assetAvatarIdent,
-          base64: avatarBase64,
+          identifier: assetAvatarID,
+          base64: currentAvatarBase64,
         });
       }
 
-      setSuccess('Asset issued and Genesis publication saved successfully!');
-      setAssetName('');
-      setDescription('');
-      setQuantity(0);
-      setDivisible(true);
-      setUnspendable(false);
-      setGroupName('');
-      setGroupId('');
-      setGroupLink('');
-      setGroupIsPrivate(false);
-      setAttemptedSubmit(false);
-      setAvatarBase64('');
-      editor?.commands.clearContent();
+      // Reset form only AFTER all async work is done
+      resetForm();
     } catch (err: any) {
       console.error(err);
       setError(`Issue failed: ${err.message || err}`);
@@ -182,29 +186,32 @@ export default function IssueAsset() {
   };
 
   return (
-    // <Box p={4} maxWidth="md" mx="auto">
     <Box
       sx={{
         width: '100%',
-        // maxWidth: { xs: '100%', sm: '700px', md: '900px', lg: '1100px' },
         maxWidth: 'calc(90vw - 10rem)',
-        minHeight: 'calc(75vh)',
+        minHeight: '75vh',
         display: 'flex',
         flexDirection: 'column',
         mx: 'auto',
         px: { xs: 2, sm: 3 },
       }}
     >
-      <Typography
-        variant="h4"
-        gutterBottom
-        color="primary.contrastText"
-        textAlign={'center'}
-        padding={'1.75vh'}
-      >
-        Issue New Asset
-      </Typography>
       <Paper sx={{ p: 3 }}>
+        <Typography
+          variant="h4"
+          gutterBottom
+          color="primary.contrastText"
+          textAlign="center"
+          padding="0.2rem"
+        >
+          Issue New Asset
+        </Typography>
+
+        {/* Asset Info */}
+        <Typography variant="h5" color="primary.contrastText">
+          Asset Information
+        </Typography>
         <TextField
           required
           fullWidth
@@ -233,12 +240,14 @@ export default function IssueAsset() {
           helperText={!quantity && attemptedSubmit ? 'Quantity is required' : ''}
           sx={{ mb: 2 }}
         />
+
+        {/* Avatar */}
         {!avatarBase64 && (
           <>
-            <Typography variant="h5" color="text.secondary">
+            <Typography variant="h5" color="primary.contrastText">
               Include Asset Avatar?
             </Typography>
-            <Button size="small" component="label" variant="outlined">
+            <InfoOutlineButton size="small" variant="outlined" sx={{ mb: 2 }}>
               Select Avatar Image
               <input
                 type="file"
@@ -250,37 +259,58 @@ export default function IssueAsset() {
                   }
                 }}
               />
-            </Button>
+            </InfoOutlineButton>
           </>
         )}
+
         <Divider sx={{ my: 3 }} />
+
+        {/* Divisible / Unspendable */}
         <Typography variant="body2" color="text.secondary">
-          Make Asset Divisible (Allow asset to have decimals)?{' '}
-          {/* <Typography variant="body2" color="primary.contrastText">
-            default=TRUE
-          </Typography> */}
+          Make Asset Divisible (Allow asset to have decimals)?
         </Typography>
         <FormControlLabel
           control={
-            <Checkbox checked={divisible} onChange={(e) => setDivisible(e.target.checked)} />
+            <Checkbox
+              checked={isDivisible}
+              sx={{
+                color: theme.palette.primary.dark,
+                '&.Mui-checked': {
+                  color: theme.palette.info.main,
+                },
+              }}
+              onChange={(e) => setIsDivisible(e.target.checked)}
+            />
           }
           label="Divisible"
         />
         <Typography variant="body2" color="text.secondary">
-          Make Asset Un-Spendable (Do NOT allow asset to be sent/traded by others)?{' '}
+          Make Asset Un-Spendable (Do NOT allow asset to be sent/traded by others)?
         </Typography>
         <FormControlLabel
           control={
-            <Checkbox checked={unspendable} onChange={(e) => setUnspendable(e.target.checked)} />
+            <Checkbox
+              checked={isUnspendable}
+              sx={{
+                color: theme.palette.primary.dark,
+                '&.Mui-checked': {
+                  color: theme.palette.info.main,
+                },
+              }}
+              onChange={(e) => setIsUnspendable(e.target.checked)}
+            />
           }
           label="Unspendable"
         />
+
         <Divider sx={{ my: 3 }} />
+
+        {/* Group Info */}
         <Typography variant="h5" color="primary.contrastText">
-          Asset-Related Group Data{' '}
+          Asset-Related Group Data
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Input group information for your primary asset group. This is where communications/furter
+          Input group information for your primary asset group. This is where communications/further
           data/announcements will be published regarding your asset.
         </Typography>
         <TextField
@@ -304,20 +334,19 @@ export default function IssueAsset() {
           onChange={(e) => setGroupLink(e.target.value)}
           sx={{ mb: 2 }}
         />
-
         <FormControlLabel
-          color="primary.dark"
           control={
             <Checkbox
-              checked={false} //set the 'false' to 'groupIsPrivate' to activate in the future.
+              checked={false} // set to groupIsPrivate later
               onChange={(e) => setGroupIsPrivate(e.target.checked)}
-              // onChange={(e) => setGroupIsPrivate(e.target.checked)}
             />
           }
           label="Make Private? (not active yet...)"
         />
 
         <Divider sx={{ my: 3 }} />
+
+        {/* Genesis Publication */}
         <Typography variant="h5" color="primary.contrastText" gutterBottom>
           Genesis Publication
         </Typography>
@@ -325,7 +354,8 @@ export default function IssueAsset() {
           Input your Genesis announcement publication information below. Format it nicely — this is
           a public announcement of your asset!
         </Typography>
-        <Paper
+
+        <Box
           sx={{
             border: '1px solid #ccc',
             p: 2,
@@ -335,141 +365,33 @@ export default function IssueAsset() {
               minHeight: '20vh',
               outline: 'none',
             },
+            '& .ProseMirror ul': { pl: '1.5rem', listStyleType: 'disc', my: 1.5 },
+            '& .ProseMirror ol': { pl: '1.5rem', listStyleType: 'decimal', my: 1.5 },
+            '& .ProseMirror li': { mb: 0.25 },
+            '& .ProseMirror img': { maxWidth: '100%', height: 'auto', display: 'block', my: 2 },
           }}
         >
-          {editor ? (
-            <>
-              <Select
-                size="small"
-                value={
-                  editor.isActive('heading', { level: 1 })
-                    ? 'h1'
-                    : editor.isActive('heading', { level: 2 })
-                      ? 'h2'
-                      : editor.isActive('heading', { level: 3 })
-                        ? 'h3'
-                        : 'paragraph'
-                }
-                onChange={(e) => {
-                  const value = e.target.value;
-                  if (value === 'paragraph') editor.chain().focus().setParagraph().run();
-                  else
-                    editor
-                      .chain()
-                      .focus()
-                      .toggleHeading({
-                        level: parseInt(value.replace('h', '')) as Level,
-                      })
-                      .run();
-                }}
-              >
-                <MenuItem value="paragraph">Paragraph</MenuItem>
-                <MenuItem value="h1">Heading 1</MenuItem>
-                <MenuItem value="h2">Heading 2</MenuItem>
-                <MenuItem value="h3">Heading 3</MenuItem>
-                <MenuItem value="h4">Heading 4</MenuItem>
-              </Select>
-              <Box display="flex" gap={1} flexWrap="wrap" mb={2}>
-                <Button
-                  size="small"
-                  onClick={() => editor.chain().focus().setTextAlign('left').run()}
-                >
-                  Left
-                </Button>
-                <Button
-                  size="small"
-                  onClick={() => editor.chain().focus().setTextAlign('center').run()}
-                >
-                  Center
-                </Button>
-                <Button
-                  size="small"
-                  onClick={() => editor.chain().focus().setTextAlign('right').run()}
-                >
-                  Right
-                </Button>
-                <Button
-                  size="small"
-                  onClick={() => {
-                    const color = prompt('Enter a hex color (e.g. #ff0000)');
-                    if (color) {
-                      editor.chain().focus().setColor(color).run();
-                    }
-                  }}
-                >
-                  Text Color
-                </Button>
-                <Button
-                  size="small"
-                  onClick={() => editor.chain().focus().toggleBold().run()}
-                  variant={editor.isActive('bold') ? 'contained' : 'outlined'}
-                >
-                  Bold
-                </Button>
-                <Button
-                  size="small"
-                  onClick={() => editor.chain().focus().toggleItalic().run()}
-                  variant={editor.isActive('italic') ? 'contained' : 'outlined'}
-                >
-                  Italic
-                </Button>
-                <Button
-                  size="small"
-                  onClick={() => editor.chain().focus().toggleUnderline().run()}
-                  variant={editor.isActive('underline') ? 'contained' : 'outlined'}
-                >
-                  Underline
-                </Button>
-                <Button
-                  size="small"
-                  onClick={() => editor.chain().focus().toggleBulletList().run()}
-                  variant={editor.isActive('bulletList') ? 'contained' : 'outlined'}
-                >
-                  Bullet List
-                </Button>
-                <Button
-                  size="small"
-                  onClick={() => editor.chain().focus().toggleOrderedList().run()}
-                  variant={editor.isActive('orderedList') ? 'contained' : 'outlined'}
-                >
-                  Numbered List
-                </Button>
-                <Button size="small" component="label" variant="outlined">
-                  Upload Image
-                  <input
-                    type="file"
-                    hidden
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        const reader = new FileReader();
-                        reader.onload = () => {
-                          editor
-                            .chain()
-                            .focus()
-                            .setImage({ src: reader.result as string })
-                            .run();
-                        };
-                        reader.readAsDataURL(file); // this will base64 encode for now
-                      }
-                    }}
-                  />
-                </Button>
-              </Box>
+          <Typography textAlign="center" variant="h5">
+            Edit Genesis Publication
+          </Typography>
+          <TiptapEditor value={html} onChange={setHtml} />
+        </Box>
 
-              <EditorContent editor={editor} />
-            </>
-          ) : (
-            <Typography variant="body2" color="text.secondary">
-              Loading editor...
-            </Typography>
-          )}
-        </Paper>
+        {/* Action Row */}
+        <Box display="flex" justifyContent="flex-end" gap={1}>
+          <SuccessButton
+            variant="outlined"
+            size="large"
+            onClick={handleIssueAsset}
+            disabled={loading}
+          >
+            {loading ? 'Issuing...' : 'Issue Asset'}
+          </SuccessButton>
+          {/* Uncomment if you want cancel */}
+          {/* <CancelButton variant="outlined" onClick={() => setEditing(false)}>Cancel</CancelButton> */}
+        </Box>
 
-        <Button variant="contained" sx={{ mt: 3 }} onClick={handleIssueAsset} disabled={loading}>
-          {loading ? 'Issuing...' : 'Issue Asset'}
-        </Button>
-
+        {/* Messages */}
         {error && (
           <Typography color="error" mt={2}>
             {error}

@@ -40,6 +40,20 @@
   padding: 1rem;
 }
 
+.ProseMirror img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.ProseMirror ul {
+  list-style-type: disc;
+}
+
+.ProseMirror ol {
+  list-style-type: decimal;
+}
+
 h1 {
   font-size: 2.2rem;
   font-weight: 600;

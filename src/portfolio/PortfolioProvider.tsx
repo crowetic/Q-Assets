@@ -1,0 +1,277 @@
+// src/portfolio/PortfolioProvider.tsx
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useReducer,
+} from 'react';
+import type { Wallet, PortfolioState, HoldingAggregate, AssetMini } from './portfolioTypes';
+import { getAllAssets, getAssetBalances } from '../utils/qortalAssetRequests'; // you already have these
+import pLimit from 'p-limit';
+import { useAuth } from 'qapp-core';
+
+type Action =
+  | { type: 'INIT_START' }
+  | { type: 'INIT_SUCCESS'; payload: { wallets: Wallet[]; assetsIndex: Record<number, AssetMini> } }
+  | { type: 'INIT_FAIL'; error: string }
+  | { type: 'SET_WALLETS'; wallets: Wallet[] }
+  | { type: 'SET_HOLDINGS'; holdings: Record<number, HoldingAggregate> }
+  | { type: 'SET_ERROR'; error: string | null }
+  | { type: 'SET_LOADING'; loading: boolean };
+
+const initialState: PortfolioState = {
+  wallets: [],
+  assetsIndex: {},
+  holdings: {},
+  loading: false,
+  error: null,
+};
+
+function reducer(state: PortfolioState, action: Action): PortfolioState {
+  switch (action.type) {
+    case 'INIT_START':
+      return { ...state, loading: true, error: null };
+    case 'INIT_SUCCESS':
+      return { ...state, ...action.payload, loading: false, error: null };
+    case 'INIT_FAIL':
+      return { ...state, loading: false, error: action.error };
+    case 'SET_WALLETS':
+      return { ...state, wallets: action.wallets };
+    case 'SET_HOLDINGS':
+      return { ...state, holdings: action.holdings };
+    case 'SET_ERROR':
+      return { ...state, error: action.error };
+    case 'SET_LOADING':
+      return { ...state, loading: action.loading };
+    default:
+      return state;
+  }
+}
+
+interface PortfolioContextValue extends PortfolioState {
+  addWallet: (address: string, label?: string) => boolean;
+  addWalletByNameOrAddress: (input: string, label?: string) => Promise<boolean>;
+  removeWallet: (address: string) => void;
+  refreshHoldings: () => Promise<void>;
+}
+
+const PortfolioContext = createContext<PortfolioContextValue | undefined>(undefined);
+
+export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const { address: userAddress } = useAuth();
+
+  // Load initial wallets from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('qa_portfolio_wallets');
+    const wallets: Wallet[] = saved ? JSON.parse(saved) : [];
+    const skipMine = localStorage.getItem('qa_portfolio_skip_mine') === '1';
+
+    if (userAddress && !skipMine && !wallets.some((w) => w.address === userAddress)) {
+      wallets.unshift({ address: userAddress, label: 'My Account' });
+    }
+    (async () => {
+      try {
+        dispatch({ type: 'INIT_START' });
+        const rawAssets = await getAllAssets(true, 0, 0);
+        const assetsIndex: Record<number, AssetMini> = {};
+        for (const a of rawAssets) {
+          assetsIndex[a.assetId] = {
+            assetId: a.assetId,
+            name: a.name,
+            isDivisible: a.isDivisible,
+            owner: a.owner,
+            description: a.description,
+          };
+        }
+        localStorage.setItem('qa_portfolio_wallets', JSON.stringify(wallets));
+        dispatch({ type: 'INIT_SUCCESS', payload: { wallets, assetsIndex } });
+      } catch (e: any) {
+        dispatch({ type: 'INIT_FAIL', error: String(e?.message || e) });
+      }
+    })();
+  }, [userAddress]);
+
+  // Persist wallets
+  useEffect(() => {
+    localStorage.setItem('qa_portfolio_wallets', JSON.stringify(state.wallets));
+  }, [state.wallets]);
+
+  const addWallet = useCallback(
+    (address: string, label?: string): boolean => {
+      const a = address.trim();
+      if (!a) return false;
+      if (state.wallets.some((w) => w.address === a)) return false;
+      dispatch({ type: 'SET_WALLETS', wallets: [...state.wallets, { address: a, label }] });
+      return true;
+    },
+    [state.wallets]
+  );
+
+  // helpers at top of file (or a small utils module)
+  const isQortalAddress = (s: string) => /^Q[0-9A-Za-z]{25,}$/.test(s);
+
+  async function resolveNameToAddress(name: string): Promise<string | null> {
+    try {
+      const data = await qortalRequest({ action: 'GET_NAME_DATA', name });
+      const owner = data?.owner;
+      return typeof owner === 'string' && owner.startsWith('Q') ? owner : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function normalizeAndVerifyAddress(addr: string): Promise<string | null> {
+    // Some nodes throw for empty accounts; still accept valid-looking addresses
+    try {
+      const acc = await qortalRequest({ action: 'GET_ACCOUNT_DATA', address: addr });
+      if (acc?.address && typeof acc.address === 'string') return acc.address; // canonicalize
+      return addr;
+    } catch {
+      return isQortalAddress(addr) ? addr : null;
+    }
+  }
+
+  const addWalletByNameOrAddress = useCallback(
+    async (input: string, label?: string): Promise<boolean> => {
+      const raw = (input ?? '').trim();
+      if (!raw) return false;
+
+      let finalAddress: string | null = null;
+      let resolvedName: string | undefined;
+
+      if (isQortalAddress(raw)) {
+        // Address provided
+        finalAddress = await normalizeAndVerifyAddress(raw);
+        if (!finalAddress) return false;
+
+        // Optional: show the user's primary name if it exists
+        try {
+          const n = await qortalRequest({ action: 'GET_PRIMARY_NAME', address: finalAddress });
+          if (typeof n === 'string' && n) resolvedName = n;
+        } catch {
+          /* ignore */
+        }
+      } else {
+        // Name provided
+        resolvedName = raw;
+        const addr = await resolveNameToAddress(raw);
+        if (!addr) return false;
+
+        finalAddress = await normalizeAndVerifyAddress(addr);
+        if (!finalAddress) return false;
+      }
+
+      // De-dupe
+      if (state.wallets.some((w) => w.address === finalAddress)) return false;
+
+      // Persist
+      dispatch({
+        type: 'SET_WALLETS',
+        wallets: [...state.wallets, { address: finalAddress, label, name: resolvedName }],
+      });
+      return true;
+    },
+    [state.wallets]
+  );
+
+  const removeWallet = useCallback(
+    (address: string) => {
+      if (address === userAddress) localStorage.setItem('qa_portfolio_skip_mine', '1');
+      const next = state.wallets.filter((w) => w.address !== address);
+      dispatch({ type: 'SET_WALLETS', wallets: next });
+    },
+    [state.wallets, userAddress]
+  );
+
+  const refreshHoldings = useCallback(async () => {
+    // ✅ include auth user even if not tracked
+    const addresses = Array.from(
+      new Set(
+        [...state.wallets.map((w) => w.address), userAddress || undefined].filter(
+          Boolean
+        ) as string[]
+      )
+    );
+
+    if (addresses.length === 0) {
+      dispatch({ type: 'SET_HOLDINGS', holdings: {} });
+      return;
+    }
+
+    dispatch({ type: 'SET_LOADING', loading: true });
+    dispatch({ type: 'SET_ERROR', error: null });
+
+    try {
+      const assetIds = Object.keys(state.assetsIndex).map(Number);
+      const limit = pLimit(4);
+      const chunkSize = 400;
+      const chunks: number[][] = [];
+      for (let i = 0; i < assetIds.length; i += chunkSize)
+        chunks.push(assetIds.slice(i, i + chunkSize));
+
+      const resultsArrays = await Promise.all(
+        chunks.map((chunk) =>
+          limit(() =>
+            getAssetBalances({
+              addresses, // <-- now includes auth address, deduped
+              assetIds: chunk,
+              excludeZero: true,
+            })
+          )
+        )
+      );
+
+      const balances = ([] as any[]).concat(...resultsArrays);
+
+      const holdings: Record<number, HoldingAggregate> = {};
+      for (const b of balances) {
+        const aid = b.assetId as number;
+        const addr = b.address as string;
+        const amount = parseFloat(b.balance);
+        if (!holdings[aid]) holdings[aid] = { assetId: aid, total: 0, perWallet: {} };
+        holdings[aid].total += amount;
+        holdings[aid].perWallet[addr] = (holdings[aid].perWallet[addr] || 0) + amount;
+      }
+
+      dispatch({ type: 'SET_HOLDINGS', holdings });
+    } catch (e: any) {
+      dispatch({ type: 'SET_ERROR', error: String(e?.message || e) });
+    } finally {
+      dispatch({ type: 'SET_LOADING', loading: false });
+    }
+  }, [state.wallets, state.assetsIndex, userAddress]);
+
+  const value = useMemo<PortfolioContextValue>(
+    () => ({
+      ...state,
+      addWallet,
+      addWalletByNameOrAddress,
+      removeWallet,
+      refreshHoldings,
+    }),
+    [state, addWallet, addWalletByNameOrAddress, removeWallet, refreshHoldings]
+  );
+
+  useEffect(() => {
+    if (!Object.keys(state.assetsIndex).length) return;
+    if (!state.wallets.length) {
+      dispatch({ type: 'SET_HOLDINGS', holdings: {} });
+      return;
+    }
+    const t = setTimeout(() => {
+      void refreshHoldings();
+    }, 50);
+    return () => clearTimeout(t);
+  }, [state.assetsIndex, state.wallets, refreshHoldings]);
+
+  return <PortfolioContext.Provider value={value}>{children}</PortfolioContext.Provider>;
+};
+
+export function usePortfolio() {
+  const ctx = useContext(PortfolioContext);
+  if (!ctx) throw new Error('usePortfolio must be used within PortfolioProvider');
+  return ctx;
+}

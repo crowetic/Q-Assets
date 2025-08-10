@@ -4,6 +4,9 @@ import { Typography, Paper, CircularProgress, useTheme, Box } from '@mui/materia
 import { Link } from 'react-router-dom';
 import { useAuth } from 'qapp-core';
 import { formatAssetAmount } from '../utils/qortalAssetRequests';
+import { fetchAssetAvatar } from '../utils/fetchAssetAvatar';
+import { getPrimaryAccountName } from '../utils/qortalApi';
+import pLimit from 'p-limit';
 
 export interface Asset {
   assetId: number;
@@ -15,14 +18,14 @@ export interface Asset {
   isUnspendable: boolean;
 }
 
-interface BalanceEntry {
+export interface BalanceEntry {
   assetId: number;
   address: string;
   balance: string; // Balance comes back normalized already!
   assetName: string;
 }
 
-interface EnrichedAsset extends Asset {
+export interface EnrichedAsset extends Asset {
   totalSupply: number;
   circulating: number;
 }
@@ -31,6 +34,7 @@ const AssetExplorer = () => {
   const [assets, setAssets] = useState<EnrichedAsset[]>([]);
   const [balances, setBalances] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(true);
+  const [avatarMap, setAvatarMap] = useState<Record<number, string | null>>({});
 
   const theme = useTheme();
   const { address: userAddress } = useAuth();
@@ -103,6 +107,31 @@ const AssetExplorer = () => {
         setAssets(enriched);
         localStorage.setItem('allAssets', JSON.stringify(enriched));
         setBalances(balanceMap);
+
+        const limit = pLimit(6); // max 6 concurrent promises
+
+        const avatarEntries: [number, string | null][] = await Promise.all(
+          enriched.map((a) =>
+            limit(async (): Promise<[number, string | null]> => {
+              try {
+                if (a.name == 'QORT' || a.name == 'QORT-from-QORA' || a.name == 'Legacy-QORA') {
+                  const url = await fetchAssetAvatar('Q-Assets', a.name);
+                  return [a.assetId, url ?? null];
+                }
+
+                const issuerName = await getPrimaryAccountName(a.owner);
+                if (!issuerName) return [a.assetId, null];
+
+                const dataUrl = await fetchAssetAvatar(issuerName, a.name);
+                return [a.assetId, dataUrl ?? null];
+              } catch {
+                return [a.assetId, null];
+              }
+            })
+          )
+        );
+
+        setAvatarMap(Object.fromEntries(avatarEntries));
       } catch (err) {
         console.error('Asset load error:', err);
       } finally {
@@ -173,9 +202,18 @@ const AssetExplorer = () => {
                     flexDirection: 'column',
                   }}
                 >
-                  <Box display="flex" flexDirection={{ xs: 'column', sm: 'row' }} gap={2}>
+                  <Box
+                    display="flex"
+                    flexDirection={{ xs: 'column', sm: 'column', md: 'column', lg: 'row' }}
+                    gap={1}
+                  >
                     {/* TEXT BLOCK */}
-                    <Box flex={1}>
+                    <Box
+                      flex={1}
+                      alignItems={'center'}
+                      alignContent={'center'}
+                      justifyContent={'space-evenly'}
+                    >
                       <Typography variant="h4" fontWeight="bold" color="secondary.light">
                         {asset.name}
                       </Typography>
@@ -249,24 +287,37 @@ const AssetExplorer = () => {
                     {/* ASSET AVATAR */}
                     <Box
                       sx={{
-                        width: 64,
-                        height: 64,
+                        width: '12rem',
+                        height: '12rem',
                         flexShrink: 0,
                         display: { xs: 'none', sm: 'block' },
-                        alignSelf: 'flex-start',
+                        alignSelf: 'center',
                       }}
                     >
-                      <img
-                        src={`/_media/${asset.name}/assetAvatar.png`}
-                        alt={`${asset.name} Avatar`}
-                        onError={(e) => (e.currentTarget.style.display = 'none')}
-                        style={{
-                          width: '100%',
-                          height: '100%',
-                          objectFit: 'contain',
-                          borderRadius: 4,
-                        }}
-                      />
+                      {avatarMap[asset.assetId] ? (
+                        <img
+                          src={avatarMap[asset.assetId]!}
+                          alt={`${asset.name} Avatar`}
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'contain',
+                            borderRadius: 4,
+                          }}
+                          onError={(e) => (e.currentTarget.style.display = 'none')}
+                        />
+                      ) : (
+                        <img
+                          src="/asset-placeholder.svg" // or a tiny inline SVG/emoji/etc.
+                          alt="No avatar"
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'contain',
+                            opacity: 0.5,
+                          }}
+                        />
+                      )}
                     </Box>
                   </Box>
                 </Paper>

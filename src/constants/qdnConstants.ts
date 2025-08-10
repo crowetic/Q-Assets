@@ -17,8 +17,11 @@ export async function getAssetIdentifiers(assetName: string, assetId?: number): 
     structuredMeta: Service;
   };
 }> {
-  // const { assetId } = await getAssetInfo({ assetName });
-  if (!assetId) assetId = await getAssetInfo({ assetName });
+  
+  if (assetId == null) {
+    const assetInfo = await getAssetInfo({ assetName });
+    assetId = assetInfo.assetId; 
+  }
   
   const prefix = `asset${assetId}_${assetName}`;
 

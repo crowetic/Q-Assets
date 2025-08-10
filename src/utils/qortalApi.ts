@@ -1,19 +1,27 @@
-export async function signAndBroadcast(rawTx: string): Promise<string> {
-  const { signedBytes } = await qortalRequest({
+
+
+export async function signAndBroadcast(rawTx: string): Promise<object> {
+  const signedBytes  = await qortalRequest({
     action: "SIGN_TRANSACTION",
     unsignedBytes: rawTx
   });
 
+  console.log('signedBytes from signAndBroadcast',signedBytes)
   const res = await fetch("/transactions/process", {
     method: "POST",
-    headers: { "Content-Type": "text/plain" },
+    headers: {
+      "Content-Type": "text/plain",
+      "X-API-VERSION": "2"
+    },
     body: signedBytes
   });
 
-  if (!res.ok) throw new Error(await res.text());
+  console.log('finalResponse',res)
+  if (!res.ok) throw new Error();
 
-  return await res.text();
+  return res;
 }
+
 
 
 export const getPrimaryAccountName = async (address: string): Promise<string> => {
@@ -33,43 +41,69 @@ export async function getAccount(address: string): Promise<any> {
   return await qortalRequest({ action: 'GET_ACCOUNT_DATA', address });
 }
 
+
+
+async function isValidQortalTx(base58Tx: string, txType: string): Promise<boolean> {
+  const res = await fetch(`/transactions/decode?ignoreValidityChecks=false`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: base58Tx
+  });
+
+  if (!res.ok) return false;
+
+  const tx = await res.json();
+  return tx?.type === txType;
+}
+
+
+
 export async function createIssueAssetTransaction(
-  issuerPublicKey: string,
   issuerAddress: string,
+  issuerPublicKey: string,
   assetName: string,
   description: string,
   quantity: number,
-  divisible: boolean,
   data?: string,
-  unspendable = false
+  divisible: boolean = true,
+  unspendable: boolean = false,
+  
 ): Promise<string> {
-
   const account = await getAccount(issuerAddress);
-
   const txBody = {
     timestamp: Date.now(),
     reference: account.reference,
-    fee: 0,
+    fee: 0.01,
     txGroupId: 0,
+    recipient: null,
     issuerPublicKey,
     assetName,
     description,
     quantity,
-    divisible,
-    unspendable,
-    data: data ? data : undefined,
+    data: data ? data : "none",
+    isDivisible: divisible,
+    isUnspendable: unspendable,
   };
-
   const result = await fetch('/assets/issue', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify(txBody),
   });
+  console.log('txBody', txBody)
 
-  if (!result.ok) throw new Error(`Failed to create issue asset tx: ${result.statusText}`);
+  if (!result.ok) {
+    throw new Error(`Issue asset failed: ${result.status} ${result.statusText}`);
+  }
 
-  return await result.text(); // raw unsigned base58 tx
+  const sig = await result.text();
+  if (!await isValidQortalTx(sig, "ISSUE_ASSET")) throw new Error(`response from issueAssetTransaction doesn't seem to be a signature: ${sig}`);
+
+  return sig;
 }
+
+
 
 export async function issueAsset(
   issuerAddress: string,
@@ -77,20 +111,22 @@ export async function issueAsset(
   assetName: string,
   description: string,
   quantity: number,
-  divisible: boolean,
   data?: string,
-  unspendable = true
-): Promise<string> {
+  divisible: boolean = true,
+  unspendable: boolean = false,
+  
+): Promise<object> {
   const unsigned = await createIssueAssetTransaction(
     issuerAddress,
     issuerPublicKey,
     assetName,
     description,
     quantity,
-    divisible,
     data,
-    unspendable
+    divisible,
+    unspendable,
   );
 
+  console.log('unsignedTx', unsigned)
   return await signAndBroadcast(unsigned);
 }

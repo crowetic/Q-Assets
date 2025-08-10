@@ -1,211 +1,722 @@
-import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import {
   Typography,
   Box,
+  Card,
+  CardContent,
+  CardHeader,
+  Avatar,
   Paper,
-  Divider,
-  Link as MuiLink,
+  Link,
+  Collapse,
   Button,
-  TextField,
   Alert,
+  Chip,
+  useTheme,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  Switch,
+  FormControlLabel,
+  Stack,
+  IconButton,
 } from '@mui/material';
+import Grid from '@mui/material/Grid';
+import DeleteIcon from '@mui/icons-material/Delete';
+import AddIcon from '@mui/icons-material/Add';
+import { useParams } from 'react-router-dom';
 import { fetchAssetAvatar } from '../utils/fetchAssetAvatar';
 import { fetchAssetPublication } from '../utils/fetchAssetPublication';
-import { fetchAssetGroupMetadata } from '../utils/fetchAssetGroups';
-import { publishAssetPublication } from '../utils/publishAssetPublication';
 import { useAuth } from 'qapp-core';
-import { fileToBase64 } from '../utils/data';
 import { getPrimaryAccountName } from '../utils/qortalApi';
 import { getAssetIdentifiers } from '../constants/qdnConstants';
-import type { AssetPublication } from '../types/AssetPublicationMetadata';
+import { fileToBase64 } from '../utils/data';
+import { publishAssetPublication } from '../utils/publishAssetPublication';
 import { formatAssetAmount } from '../utils/qortalAssetRequests';
+import type { AssetPublication } from '../types/AssetPublicationMetadata';
+import type { EnrichedAsset } from './AssetExplorer';
+import TiptapEditor from '../components/TipTapEditor';
+import EditToggleButton from '../components/buttons/EditToggleButton';
+import InfoOutlineButton from '../components/buttons/InfoOutlineButton';
+import CancelButton from '../components/buttons/CancelButton';
+import SuccessButton from '../components/buttons/SuccessButton';
+import { useRef } from 'react';
 
 export default function AssetDetail() {
   const { assetId } = useParams<{ assetId: string }>();
-  const [asset, setAsset] = useState<any>(null);
+  const [asset, setAsset] = useState<EnrichedAsset | null>(null);
   const [avatar, setAvatar] = useState<string | null>(null);
   const [assetPub, setAssetPub] = useState<AssetPublication | null>(null);
-  const [groupMeta, setGroupMeta] = useState<any>(null);
   const [html, setHtml] = useState('');
   const { address: userAddress, name: userName } = useAuth();
   const [issuerName, setIssuerName] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const theme = useTheme();
+  // Primary Group State
+  const [openPrimaryDlg, setOpenPrimaryDlg] = useState(false);
+  const [primaryForm, setPrimaryForm] = useState(
+    assetPub?.primaryGroup ?? { name: '', id: '', joinLink: '', isPrivate: false }
+  );
+  // Extra Groups
+  const [openExtraDlg, setOpenExtraDlg] = useState(false);
+  const [extraGroupsForm, setExtraGroupsForm] = useState(assetPub?.extraGroups ?? []);
+  // News
+  const [openNewsDlg, setOpenNewsDlg] = useState(false);
+  const [newsForm, setNewsForm] = useState(assetPub?.news ?? []);
+
+  type KV = { key: string; value: string };
+  const [openExFieldDlg, setOpenExFieldDlg] = useState(false);
+  const [kvForm, setKvForm] = useState<KV[]>(
+    assetPub?.customFields
+      ? Object.entries(assetPub.customFields).map(([key, value]) => ({ key, value }))
+      : []
+  );
 
   const isIssuer = asset && userAddress && asset.owner === userAddress;
-  const canPublish = isIssuer && issuerName && issuerName === userName;
+  const canPublish = isIssuer && issuerName && issuerName === (userName as string | undefined);
 
   useEffect(() => {
     async function loadData() {
-      const assetList = JSON.parse(localStorage.getItem('allAssets') || '[]');
-      const a = assetList.find((a: any) => `${a.assetId}` === `${assetId}`);
+      let assetList = JSON.parse(localStorage.getItem('allAssets') || '[]');
+
+      const a = assetList.find((a: EnrichedAsset) => `${a.assetId}` === `${assetId}`);
+
       if (!a) return;
-
       setAsset(a);
-
       const name = await getPrimaryAccountName(a.owner);
       setIssuerName(name);
 
       if (!name) return;
-
-      const [avatar, pub, groups] = await Promise.all([
+      const [avatar, pub] = await Promise.all([
         fetchAssetAvatar(name, a.name),
         fetchAssetPublication(name, a.name),
-        fetchAssetGroupMetadata(name, a.name),
       ]);
-
       setAvatar(avatar);
       setAssetPub(pub);
-      setGroupMeta(groups);
       setHtml(pub?.html || '');
     }
-
     loadData();
   }, [assetId]);
+
+  useEffect(() => {
+    setPrimaryForm(assetPub?.primaryGroup ?? { name: '', id: '', joinLink: '', isPrivate: false });
+    setExtraGroupsForm(assetPub?.extraGroups ?? []);
+    setNewsForm(assetPub?.news ?? []);
+    setKvForm(
+      assetPub?.customFields
+        ? Object.entries(assetPub.customFields).map(([key, value]) => ({ key, value }))
+        : []
+    );
+  }, [assetPub]);
 
   if (!asset) return <Typography>Loading asset...</Typography>;
 
   return (
-    <Box p={4}>
-      <Typography variant="h3" gutterBottom>
-        {asset.name}
-      </Typography>
+    <Box
+      p={'1rem'}
+      display="flex"
+      flexDirection="column"
+      justifyContent="stretch"
+      alignItems="stretch"
+    >
+      {/* Header */}
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexDirection: 'column',
+          minHeight: '15rem',
+        }}
+      >
+        <Typography variant="h3" textAlign="center">
+          Asset Details
+        </Typography>
 
-      <Box display="flex" gap={3} flexDirection={{ xs: 'column', md: 'row' }}>
-        <Box flex={1}>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="body1">
-              <strong>Asset ID:</strong> {asset.assetId}
+        <Card
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+            p: 3,
+            mb: 4,
+            justifyContent: 'center',
+            textAlign: 'center',
+            maxWidth: '30%',
+          }}
+        >
+          {avatar && <Avatar src={avatar} sx={{ width: '10rem', height: '10rem' }} />}
+          <Box>
+            <Typography variant="h4">{asset.name}</Typography>
+            <Typography variant="subtitle1">
+              <span>{asset.description}</span>
             </Typography>
-            <Typography variant="body1">
-              <strong>Total Supply:</strong>{' '}
-              {formatAssetAmount(asset.totalSupply, asset.isDivisible)}
-            </Typography>
-            <Typography variant="body1">
-              <strong>Circulating:</strong>{' '}
-              {formatAssetAmount(asset.circulating, asset.isDivisible)}
-            </Typography>
-            <Typography variant="body1" sx={{ mt: 2 }}>
-              {asset.description}
-            </Typography>
-          </Paper>
-
-          <Divider sx={{ my: 3 }} />
-          <Typography variant="h5">Genesis Publication</Typography>
-          {assetPub?.html ? (
-            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-              {assetPub.html}
-            </Typography>
-          ) : (
-            <Typography color="text.secondary">None published</Typography>
-          )}
-
-          <Divider sx={{ my: 3 }} />
-          <Typography variant="h5">Primary Group Data</Typography>
-          {assetPub?.primaryGroup ? (
-            <>
-              <Typography variant="body1">
-                <strong>Name:</strong> {assetPub.primaryGroup.name}
+            <Box mt={1}>
+              <Chip label={`Asset ID: ${asset.assetId}`} />
+              <Typography>
+                Divisible:{' '}
+                <span style={{ color: theme.palette.secondary.light }}>
+                  {asset.isDivisible ? 'Yes' : 'No'}
+                </span>
               </Typography>
-              <Typography variant="body1">
-                <strong>Group ID:</strong> {assetPub.primaryGroup.id}
+              <Typography>
+                Unspendable:{' '}
+                <span style={{ color: theme.palette.secondary.light }}>
+                  {asset.isUnspendable ? 'Yes' : 'No'}
+                </span>
               </Typography>
-              <MuiLink href={assetPub.primaryGroup.joinLink} target="_blank">
-                Join Group
-              </MuiLink>
-            </>
-          ) : (
-            <Typography color="text.secondary">No group metadata published</Typography>
-          )}
+            </Box>
+          </Box>
+        </Card>
+      </Box>
 
-          {isIssuer && issuerName !== userName && (
-            <Alert severity="warning" sx={{ mt: 2 }}>
-              You're the asset owner, but your current name <strong>{userName}</strong> does not
-              match the publishing name <strong>{issuerName}</strong>. Switch names to manage this
-              asset.
-            </Alert>
-          )}
-
-          {canPublish && (
-            <>
-              <Divider sx={{ my: 3 }} />
-              <Typography variant="h5" gutterBottom>
-                Manage Your Asset
-              </Typography>
-
-              {/* Upload avatar */}
-              <Box mt={2}>
-                <Typography variant="subtitle1">Update Asset Avatar</Typography>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const base64 = await fileToBase64(file);
-                      const { identifiers, services } = await getAssetIdentifiers(asset.name);
-                      await qortalRequest({
-                        action: 'PUBLISH_QDN_RESOURCE',
-                        name: userName,
-                        service: services.avatar,
-                        identifier: identifiers.avatar,
-                        data64: base64,
-                      });
-                      alert('Avatar published!');
-                      setAvatar(`data:image/*;base64,${base64}`);
-                    }
-                  }}
+      {/* Grid Info */}
+      <Grid container spacing={1} sx={{ display: 'flex', flexDirection: 'row' }}>
+        {/* Supply */}
+        <Grid size={{ sm: 4, md: 4, lg: 4 }} minHeight={{ sm: '10rem', md: '10rem', lg: '10rem' }}>
+          <Typography variant="h4" textAlign="center">
+            Supply
+          </Typography>
+          <Card
+            sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignContent: 'center',
+              justifyContent: 'space-evenly',
+              width: '100%',
+              minHeight: '7rem',
+            }}
+          >
+            <CardContent sx={{}}>
+              <Box display="flex" alignItems="center" gap={1}>
+                <Typography>Circulating:</Typography>
+                <Chip
+                  label={formatAssetAmount(asset.circulating, asset.isDivisible)}
+                  sx={{ color: theme.palette.text.primary }}
                 />
               </Box>
+              <Typography>
+                Total:{' '}
+                <span style={{ color: theme.palette.secondary.light }}>
+                  {formatAssetAmount(asset.totalSupply, asset.isDivisible)}
+                </span>
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
 
-              {/* Genesis publication */}
-              <Box mt={4}>
-                <Typography variant="subtitle1">Update Genesis Publication</Typography>
-                <TextField
-                  fullWidth
-                  multiline
-                  minRows={4}
-                  placeholder="Write or update the genesis post..."
-                  value={html}
-                  onChange={(e) => setHtml(e.target.value)}
-                />
-              </Box>
+        {/* Issuer */}
+        <Grid size={{ sm: 4, md: 4, lg: 4 }} sx={{ display: 'flex', flexDirection: 'column' }}>
+          <Typography variant="h4" textAlign="center">
+            Issuer
+          </Typography>
+          <Card
+            sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignContent: 'center',
+              justifyContent: 'space-evenly',
+              width: '100%',
+              minHeight: '7rem',
+            }}
+          >
+            <CardContent sx={{}}>
+              <Typography>
+                Name:{' '}
+                <span style={{ color: theme.palette.primary.contrastText }}>{issuerName}</span>
+              </Typography>
+              <Typography>
+                Address:{' '}
+                <span style={{ color: theme.palette.primary.contrastText }}>{asset.owner}</span>
+              </Typography>
+            </CardContent>
+          </Card>
+          {canPublish ? (
+            <Box
+              sx={{
+                mt: 'auto',
+                p: 1,
+                display: 'flex',
+                alignContent: 'center',
+                justifyContent: 'space-evenly',
+              }}
+            >
+              <InfoOutlineButton onClick={() => setOpenNewsDlg(true)}>
+                Add/Edit News
+              </InfoOutlineButton>
+              <InfoOutlineButton onClick={() => setOpenExFieldDlg(true)}>
+                Add/Edit Custom Fields
+              </InfoOutlineButton>
+            </Box>
+          ) : null}
+        </Grid>
 
-              {/* Save publication */}
-              <Button
-                variant="contained"
-                sx={{ mt: 2 }}
-                onClick={async () => {
-                  const pub: AssetPublication = {
-                    description: asset.description,
-                    html,
-                    primaryGroup: assetPub?.primaryGroup ?? undefined,
-                    extraGroups: assetPub?.extraGroups ?? [],
-                    news: assetPub?.news ?? [],
-                    customFields: assetPub?.customFields ?? {},
-                  };
+        {/* Primary Asset Group */}
+        <Grid size={{ sm: 4, md: 4, lg: 4 }} sx={{ display: 'flex', flexDirection: 'column' }}>
+          <Typography variant="h4" textAlign="center">
+            Primary Asset Group
+          </Typography>
+          <Card
+            sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignContent: 'center',
+              justifyContent: 'space-evenly',
+              width: '100%',
+              minHeight: '7rem',
+            }}
+          >
+            <CardContent sx={{}}>
+              {assetPub?.primaryGroup ? (
+                <>
+                  <Typography>
+                    Name:{' '}
+                    <span style={{ color: theme.palette.primary.contrastText }}>
+                      {assetPub.primaryGroup.name}
+                    </span>
+                  </Typography>
+                  <Typography>
+                    GroupID:{' '}
+                    <span style={{ color: theme.palette.secondary.light }}>
+                      {assetPub.primaryGroup.id}
+                    </span>
+                  </Typography>
+                </>
+              ) : (
+                <Typography color="text.secondary">No group data</Typography>
+              )}
+            </CardContent>
+          </Card>
+          {canPublish ? (
+            // <>
+            <Box
+              sx={{
+                mt: 'auto',
+                p: 1,
+                display: 'flex',
+                alignContent: 'center',
+                justifyContent: 'space-evenly',
+              }}
+            >
+              <InfoOutlineButton onClick={() => setOpenPrimaryDlg(true)}>
+                Add/Edit Primary Group
+              </InfoOutlineButton>
+              <InfoOutlineButton onClick={() => setOpenExtraDlg(true)}>
+                Add/Edit Extra Groups
+              </InfoOutlineButton>
+            </Box>
+          ) : // </>
+          null}
+        </Grid>
+      </Grid>
 
-                  await publishAssetPublication(userName, asset.name, pub);
-                  alert('Publication updated!');
-                  setAssetPub(pub);
-                }}
-              >
-                Save Publication
-              </Button>
-            </>
-          )}
+      {/* Genesis Publication */}
+      <Box mt={4}>
+        <Box display="flex" alignItems="center" justifyContent="center" mb={1}>
+          <Typography variant="h4" textAlign="center">
+            Genesis Publication
+          </Typography>
         </Box>
 
-        {/* Avatar Display */}
-        {avatar && (
-          <Box width={128} height={128}>
-            <img
-              src={avatar}
-              alt="Asset Avatar"
-              style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 8 }}
+        {assetPub?.html ? (
+          <Paper elevation={2} sx={{ p: 3, backgroundColor: theme.palette.primary.dark }}>
+            <Box
+              sx={{
+                typography: 'body1',
+                '& h1, h2, h3, h4, h5, h6': { mt: 2 },
+                '& p': { mt: 1.5 },
+              }}
+              dangerouslySetInnerHTML={{ __html: assetPub.html }}
+            />
+          </Paper>
+        ) : (
+          <Alert severity="info">No publication found.</Alert>
+        )}
+        {canPublish ? (
+          <Box display="flex" alignItems="center" justifyContent="center" gap={2} mb={1} p={2}>
+            <Typography>You are the ISSUER of this asset. Click to edit.</Typography>
+            <EditToggleButton
+              editing={editing}
+              onClick={() => setEditing((s) => !s)}
+              aria-expanded={editing}
+              aria-controls="asset-editor-panel"
+            >
+              {editing ? 'CLOSE EDITOR' : ' EDIT PUBLICATION / PUBLISH CHANGES'}
+            </EditToggleButton>
+          </Box>
+        ) : null}
+      </Box>
+
+      {/* All Dialogs for Issuer Editing -------------------------------------------------------------------------------------------*/}
+      <Dialog
+        open={openPrimaryDlg}
+        onClose={() => setOpenPrimaryDlg(false)}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Edit Primary Group</DialogTitle>
+        <DialogContent dividers>
+          <Box sx={{ display: 'grid', gap: 2, mt: 1 }}>
+            <TextField
+              label="Name"
+              value={primaryForm.name}
+              onChange={(e) => setPrimaryForm((s) => ({ ...s, name: e.target.value }))}
+              size="small"
+            />
+            <TextField
+              label="Group ID"
+              value={primaryForm.id}
+              onChange={(e) => setPrimaryForm((s) => ({ ...s, id: e.target.value }))}
+              size="small"
+            />
+            <TextField
+              label="Join Link"
+              value={primaryForm.joinLink}
+              onChange={(e) => setPrimaryForm((s) => ({ ...s, joinLink: e.target.value }))}
+              size="small"
+            />
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={Boolean(primaryForm.isPrivate)}
+                  onChange={(e) => setPrimaryForm((s) => ({ ...s, isPrivate: e.target.checked }))}
+                />
+              }
+              label="Private group"
             />
           </Box>
-        )}
-      </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenPrimaryDlg(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              setAssetPub((prev) => ({
+                ...(prev ?? {}),
+                primaryGroup: { ...primaryForm },
+              }));
+              setOpenPrimaryDlg(false);
+            }}
+          >
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={openExtraDlg} onClose={() => setOpenExtraDlg(false)} fullWidth maxWidth="md">
+        <DialogTitle>Manage Extra Groups</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2}>
+            {extraGroupsForm.map((g, i) => (
+              <Box
+                key={i}
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr 2fr auto auto',
+                  gap: 1,
+                  alignItems: 'center',
+                }}
+              >
+                <TextField
+                  label="Name"
+                  value={g.name}
+                  size="small"
+                  onChange={(e) =>
+                    setExtraGroupsForm((s) =>
+                      s.map((x, idx) => (idx === i ? { ...x, name: e.target.value } : x))
+                    )
+                  }
+                />
+                <TextField
+                  label="Group ID"
+                  value={g.id}
+                  size="small"
+                  onChange={(e) =>
+                    setExtraGroupsForm((s) =>
+                      s.map((x, idx) => (idx === i ? { ...x, id: e.target.value } : x))
+                    )
+                  }
+                />
+                <TextField
+                  label="Join Link"
+                  value={g.joinLink}
+                  size="small"
+                  onChange={(e) =>
+                    setExtraGroupsForm((s) =>
+                      s.map((x, idx) => (idx === i ? { ...x, joinLink: e.target.value } : x))
+                    )
+                  }
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={Boolean(g.isPrivate)}
+                      onChange={(e) =>
+                        setExtraGroupsForm((s) =>
+                          s.map((x, idx) => (idx === i ? { ...x, isPrivate: e.target.checked } : x))
+                        )
+                      }
+                    />
+                  }
+                  label="Private"
+                />
+                <IconButton
+                  color="error"
+                  onClick={() => setExtraGroupsForm((s) => s.filter((_, idx) => idx !== i))}
+                >
+                  <DeleteIcon />
+                </IconButton>
+              </Box>
+            ))}
+            <Button
+              startIcon={<AddIcon />}
+              onClick={() =>
+                setExtraGroupsForm((s) => [
+                  ...s,
+                  { name: '', id: '', joinLink: '', isPrivate: false },
+                ])
+              }
+            >
+              Add Group
+            </Button>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenExtraDlg(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              setAssetPub((prev) => ({ ...(prev ?? {}), extraGroups: extraGroupsForm }));
+              setOpenExtraDlg(false);
+            }}
+          >
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={openNewsDlg} onClose={() => setOpenNewsDlg(false)} fullWidth maxWidth="md">
+        <DialogTitle>Manage News</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2}>
+            {newsForm.map((n, i) => (
+              <Box
+                key={i}
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: '2fr 1fr 2fr auto',
+                  gap: 1,
+                  alignItems: 'center',
+                }}
+              >
+                <TextField
+                  label="Title"
+                  value={n.title}
+                  size="small"
+                  onChange={(e) =>
+                    setNewsForm((s) =>
+                      s.map((x, idx) => (idx === i ? { ...x, title: e.target.value } : x))
+                    )
+                  }
+                />
+                <TextField
+                  label="Date (YYYY-MM-DD)"
+                  value={n.date}
+                  size="small"
+                  onChange={(e) =>
+                    setNewsForm((s) =>
+                      s.map((x, idx) => (idx === i ? { ...x, date: e.target.value } : x))
+                    )
+                  }
+                />
+                <TextField
+                  label="Post ID"
+                  value={n.postId}
+                  size="small"
+                  onChange={(e) =>
+                    setNewsForm((s) =>
+                      s.map((x, idx) => (idx === i ? { ...x, postId: e.target.value } : x))
+                    )
+                  }
+                />
+                <IconButton
+                  color="error"
+                  onClick={() => setNewsForm((s) => s.filter((_, idx) => idx !== i))}
+                >
+                  <DeleteIcon />
+                </IconButton>
+              </Box>
+            ))}
+            <Button
+              startIcon={<AddIcon />}
+              onClick={() =>
+                setNewsForm((s) => [
+                  ...s,
+                  { title: '', date: new Date().toISOString().slice(0, 10), postId: '' },
+                ])
+              }
+            >
+              Add News Item
+            </Button>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenNewsDlg(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              setAssetPub((prev) => ({ ...(prev ?? {}), news: newsForm }));
+              setOpenNewsDlg(false);
+            }}
+          >
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={openExFieldDlg}
+        onClose={() => setOpenExFieldDlg(false)}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Manage Custom Fields</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2}>
+            {kvForm.map((row, i) => (
+              <Box
+                key={i}
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 2fr auto',
+                  gap: 1,
+                  alignItems: 'center',
+                }}
+              >
+                <TextField
+                  label="Key"
+                  value={row.key}
+                  size="small"
+                  onChange={(e) =>
+                    setKvForm((s) =>
+                      s.map((x, idx) => (idx === i ? { ...x, key: e.target.value } : x))
+                    )
+                  }
+                />
+                <TextField
+                  label="Value"
+                  value={row.value}
+                  size="small"
+                  onChange={(e) =>
+                    setKvForm((s) =>
+                      s.map((x, idx) => (idx === i ? { ...x, value: e.target.value } : x))
+                    )
+                  }
+                />
+                <IconButton
+                  color="error"
+                  onClick={() => setKvForm((s) => s.filter((_, idx) => idx !== i))}
+                >
+                  <DeleteIcon />
+                </IconButton>
+              </Box>
+            ))}
+            <Button
+              startIcon={<AddIcon />}
+              onClick={() => setKvForm((s) => [...s, { key: '', value: '' }])}
+            >
+              Add Field
+            </Button>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenExFieldDlg(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              const obj = kvForm.reduce<Record<string, string>>((acc, { key, value }) => {
+                if (key.trim()) acc[key.trim()] = value;
+                return acc;
+              }, {});
+              setAssetPub((prev) => ({ ...(prev ?? {}), customFields: obj }));
+              setOpenExFieldDlg(false);
+            }}
+          >
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+      {/* End of Dialogs ------------------------------------------------------------------------------------------------- */}
+
+      {/* Editor for Issuer */}
+      <Collapse
+        in={Boolean(canPublish && editing)}
+        unmountOnExit
+        onEntered={() => editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+      >
+        <Paper id="asset-editor-panel" ref={editorRef} elevation={3} sx={{ mt: 2, p: 3 }}>
+          <Typography textAlign="center" variant="h4" gutterBottom>
+            Edit Asset Publication / Publish All Edits
+          </Typography>
+
+          {/* Avatar Upload */}
+          <Box mt={2}>
+            <Typography variant="subtitle1">Update Avatar</Typography>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  const base64 = await fileToBase64(file);
+                  const { identifiers, services } = await getAssetIdentifiers(asset.name);
+                  await qortalRequest({
+                    action: 'PUBLISH_QDN_RESOURCE',
+                    name: userName as string | undefined,
+                    service: services.avatar,
+                    identifier: identifiers.avatar,
+                    data64: base64,
+                  });
+                  alert('Avatar published!');
+                  setAvatar(`data:image/*;base64,${base64}`);
+                }
+              }}
+            />
+          </Box>
+
+          <Box mt={3}>
+            <Typography textAlign="center" variant="h5">
+              Edit Genesis Publication
+            </Typography>
+            <TiptapEditor value={html} onChange={setHtml} />
+          </Box>
+
+          <Box mt={2} display="flex" justifyContent={'flex-end'} gap={1}>
+            <SuccessButton
+              onClick={async () => {
+                const pub: AssetPublication = {
+                  description: asset.description,
+                  html,
+                  primaryGroup: assetPub?.primaryGroup ?? undefined,
+                  extraGroups: assetPub?.extraGroups ?? [],
+                  news: assetPub?.news ?? [],
+                  customFields: assetPub?.customFields ?? {},
+                };
+                await publishAssetPublication(userName as string, asset.name, pub);
+                alert('Publication updated!');
+                setAssetPub(pub);
+                setEditing(false); // close after save, because we’re merciful
+              }}
+            >
+              Publish All Changes
+            </SuccessButton>
+            <CancelButton onClick={() => setEditing(false)}>Cancel</CancelButton>
+          </Box>
+        </Paper>
+      </Collapse>
     </Box>
   );
 }

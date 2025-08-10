@@ -3,18 +3,20 @@ import type { AssetPublication } from '../types/AssetPublicationMetadata';
 import { getAssetIdentifiers } from '../constants/qdnConstants';
 import { useAuth } from 'qapp-core';
 
-export async function publishAssetPublication(owner: string, assetName: string, pub: AssetPublication) {
-  const [genPubId] = (await getAssetIdentifiers(assetName)).identifiers.genesisPost
+export const publishAssetPublication = async (owner: string, assetName: string, pub: AssetPublication) => {
+  const publishInfo = await getAssetIdentifiers(assetName)
+  const identifier = publishInfo.identifiers.genesisPost 
+  const service = publishInfo.services.genesisPost
   const data64 = await objectToBase64(pub);
-  const { name: userName } = useAuth();
+  const { name } = useAuth();
 
-  if (userName != owner) return 
+  if (name != owner) return 
 
   await qortalRequest({
     action: 'PUBLISH_QDN_RESOURCE',
-    name: userName,
-    service: 'JSON',
-    identifier: genPubId,
+    name,
+    service,
+    identifier,
     data64,
   });
 }
