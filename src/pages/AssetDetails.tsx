@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import {
   Typography,
   Box,
@@ -36,17 +36,33 @@ import { fileToBase64 } from '../utils/data';
 import { publishAssetPublication } from '../utils/publishAssetPublication';
 import { formatAssetAmount } from '../utils/qortalAssetRequests';
 import type { AssetPublication } from '../types/AssetPublicationMetadata';
-import type { EnrichedAsset } from './AssetExplorer';
+import { getAssetBalances } from '../utils/qortalAssetRequests';
 import TiptapEditor from '../components/TipTapEditor';
 import EditToggleButton from '../components/buttons/EditToggleButton';
 import InfoOutlineButton from '../components/buttons/InfoOutlineButton';
 import CancelButton from '../components/buttons/CancelButton';
 import SuccessButton from '../components/buttons/SuccessButton';
-import { useRef } from 'react';
+import {
+  ensureAssetsIndexLoaded,
+  ensureAssetMini,
+  readAssetsIndexSync,
+} from '../bootstrap/assetsBootstrap';
+
+type Enriched = {
+  assetId: number;
+  name: string;
+  description?: string;
+  owner: string;
+  quantity: number;
+  isDivisible: boolean;
+  isUnspendable: boolean;
+  totalSupply: number;
+  circulating: number;
+};
 
 export default function AssetDetail() {
   const { assetId } = useParams<{ assetId: string }>();
-  const [asset, setAsset] = useState<EnrichedAsset | null>(null);
+  const [asset, setAsset] = useState<Enriched | null>(null);
   const [avatar, setAvatar] = useState<string | null>(null);
   const [assetPub, setAssetPub] = useState<AssetPublication | null>(null);
   const [html, setHtml] = useState('');
@@ -77,29 +93,118 @@ export default function AssetDetail() {
 
   const isIssuer = asset && userAddress && asset.owner === userAddress;
   const canPublish = isIssuer && issuerName && issuerName === (userName as string | undefined);
+  const id = useMemo(() => Number(assetId), [assetId]);
 
   useEffect(() => {
-    async function loadData() {
-      let assetList = JSON.parse(localStorage.getItem('allAssets') || '[]');
+    if (!editing) setHtml(assetPub?.html ?? '');
+  }, [assetPub, editing]);
 
-      const a = assetList.find((a: EnrichedAsset) => `${a.assetId}` === `${assetId}`);
+  // When toggling into edit mode, ensure editor is seeded
+  useEffect(() => {
+    if (editing) setHtml(assetPub?.html ?? '');
+  }, [editing, assetPub]);
 
-      if (!a) return;
-      setAsset(a);
-      const name = await getPrimaryAccountName(a.owner);
-      setIssuerName(name);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!Number.isFinite(id)) return;
 
-      if (!name) return;
-      const [avatar, pub] = await Promise.all([
-        fetchAssetAvatar(name, a.name),
-        fetchAssetPublication(name, a.name),
-      ]);
-      setAvatar(avatar);
-      setAssetPub(pub);
-      setHtml(pub?.html || '');
-    }
-    loadData();
-  }, [assetId]);
+      try {
+        // 1) Try sync cache
+        let mini = readAssetsIndexSync()?.[id] ?? null;
+
+        // 2) Ensure index (fast if fresh)
+        if (!mini) {
+          const idx = await ensureAssetsIndexLoaded();
+          mini = idx[id] ?? null;
+        }
+
+        // 3) Single-asset fallback
+        if (!mini) {
+          mini = await ensureAssetMini(id);
+        }
+
+        if (!mini) return; // not found
+
+        // issuer name
+        let iname = '';
+        try {
+          iname = await getPrimaryAccountName(mini.owner);
+        } catch {}
+        if (!cancelled) setIssuerName(iname || null);
+
+        // total & circulating
+        const isQort = mini.assetId === 0;
+
+        // Total supply
+        let totalSupply: number;
+        if (isQort) {
+          // /stats/supply/circulating returns text/plain
+          const txt = await fetch('/stats/supply/circulating')
+            .then((r) => r.text())
+            .catch(() => '0');
+          const n = parseFloat(txt);
+          totalSupply = Number.isFinite(n) ? n : 0;
+        } else {
+          totalSupply = mini.quantity / 1e8;
+        }
+
+        // Issuer balance (getAssetBalances already returns human-normalized values)
+        let issuerBal = 0;
+        if (!isQort) {
+          try {
+            const res = await getAssetBalances({
+              addresses: [mini.owner],
+              assetIds: [mini.assetId],
+              excludeZero: true,
+            });
+            issuerBal = res?.length ? parseFloat(res[0].balance) : 0;
+          } catch {
+            issuerBal = 0;
+          }
+        }
+
+        // Circulating
+        const circulating = isQort ? totalSupply : Math.max(0, totalSupply - issuerBal);
+
+        // If you’re building an `asset` object:
+        const enriched = {
+          ...mini,
+          totalSupply,
+          circulating,
+        };
+        setAsset(enriched);
+        if (!cancelled) setAsset(enriched);
+
+        // Avatar
+        try {
+          let avatarIssuer =
+            mini.name === 'QORT' || mini.name === 'QORT-from-QORA' || mini.name === 'Legacy-QORA'
+              ? 'Q-Assets'
+              : iname;
+
+          if (avatarIssuer) {
+            const url = await fetchAssetAvatar(avatarIssuer, mini.name);
+            if (!cancelled) setAvatar(url);
+          }
+        } catch {}
+
+        // Publication
+        try {
+          if (iname) {
+            const pub = await fetchAssetPublication(iname, mini.name);
+            if (!cancelled) setAssetPub(pub);
+          }
+        } catch {}
+      } catch (e) {
+        // swallow; page renders with error states below if needed
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
   useEffect(() => {
     setPrimaryForm(assetPub?.primaryGroup ?? { name: '', id: '', joinLink: '', isPrivate: false });

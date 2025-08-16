@@ -119,3 +119,22 @@ export function base64ToObject(base64: string){
 
 	return toObject
 }
+
+// utils/base64.ts
+export function utf8ToBase64(input: string): string {
+  const bytes = new TextEncoder().encode(input);
+  let binary = '';
+  const chunkSize = 0x8000; // avoid call stack / argument length limits
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+export function base64ToUtf8(b64: string): string {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}

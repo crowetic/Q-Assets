@@ -1,6 +1,14 @@
 import { getAssetInfo } from "../utils/qortalAssetRequests";
 import type { Service } from "qapp-core"; // or your local types
 
+export const Q_ASSET_APP_PUBLISHER: string = 'Q-Assets'
+export const Q_ASSET_APP_VERSION: number = 0.1
+export const isBeta: boolean = true
+
+export const Q_ASSET_VERSION: string = isBeta ? Q_ASSET_APP_VERSION + "b" : Q_ASSET_APP_VERSION.toString() 
+export const ASSETS_KEY = "qa_assets_index" + Q_ASSET_APP_VERSION
+
+
 export async function getAssetIdentifiers(assetName: string, assetId?: number): Promise<{
   assetId?: number;
   assetName: string;

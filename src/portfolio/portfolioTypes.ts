@@ -10,7 +10,7 @@ export interface HoldingPerWallet {
 
 export interface HoldingAggregate {
   assetId: number;
-  total: number;                // sum of perWallet
+  total: number;                // sum of 'perWallet'
   perWallet: HoldingPerWallet;
 }
 
@@ -18,6 +18,7 @@ export interface AssetMini {
   assetId: number;
   name: string;
   isDivisible: boolean;
+  isUnspendable: boolean;   
   owner: string;
   description?: string;
 }

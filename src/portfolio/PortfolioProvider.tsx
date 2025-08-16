@@ -11,6 +11,7 @@ import type { Wallet, PortfolioState, HoldingAggregate, AssetMini } from './port
 import { getAllAssets, getAssetBalances } from '../utils/qortalAssetRequests'; // you already have these
 import pLimit from 'p-limit';
 import { useAuth } from 'qapp-core';
+import { ensureAssetsIndexLoaded, readAssetsIndexSync } from '../bootstrap/assetsBootstrap';
 
 type Action =
   | { type: 'INIT_START' }
@@ -75,19 +76,16 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     (async () => {
       try {
         dispatch({ type: 'INIT_START' });
-        const rawAssets = await getAllAssets(true, 0, 0);
-        const assetsIndex: Record<number, AssetMini> = {};
-        for (const a of rawAssets) {
-          assetsIndex[a.assetId] = {
-            assetId: a.assetId,
-            name: a.name,
-            isDivisible: a.isDivisible,
-            owner: a.owner,
-            description: a.description,
-          };
+        const cached = readAssetsIndexSync();
+        if (cached) {
+          dispatch({ type: 'INIT_SUCCESS', payload: { wallets, assetsIndex: cached } });
         }
+        const fresh = await ensureAssetsIndexLoaded();
+        if (!cached || Object.keys(fresh).length !== Object.keys(cached).length) {
+          dispatch({ type: 'INIT_SUCCESS', payload: { wallets, assetsIndex: fresh } });
+        }
+
         localStorage.setItem('qa_portfolio_wallets', JSON.stringify(wallets));
-        dispatch({ type: 'INIT_SUCCESS', payload: { wallets, assetsIndex } });
       } catch (e: any) {
         dispatch({ type: 'INIT_FAIL', error: String(e?.message || e) });
       }

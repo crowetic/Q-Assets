@@ -24,6 +24,92 @@ export async function signAndBroadcast(rawTx: string): Promise<object> {
 
 
 
+// --- helpers ---
+
+async function resolveRecipientToAddress(recipient: string): Promise<string> {
+  const looksLikeAddress = /^Q[0-9A-Za-z]{25,}$/.test(recipient.trim());
+  if (looksLikeAddress) return recipient.trim();
+
+  // Treat as Qortal name → owner address
+  try {
+    const data = await qortalRequest({ action: 'GET_NAME_DATA', name: recipient.trim() });
+    const addr = data?.owner;
+    if (typeof addr === 'string' && addr.startsWith('Q')) return addr;
+  } catch { /* ignore */ }
+
+  throw new Error(`Recipient is not a valid address or resolvable Qortal name: ${recipient}`);
+}
+
+// --- core: create unsigned TRANSFER_ASSET ---
+
+export async function createTransferAssetTransaction(
+  senderAddress: string,
+  senderPublicKey: string,
+  recipient: string,            // Qortal name or address
+  assetId: number,
+  amount: number,               // amount in the asset's native units; ensure you pass atomic if your API expects it
+  opts?: {
+    fee?: number;               // default 0.01
+    txGroupId?: number;         // default 0
+  }
+): Promise<string> {
+  const account = await getAccount(senderAddress);
+  const recipientAddress = await resolveRecipientToAddress(recipient);
+
+  const txBody = {
+    timestamp: Date.now(),
+    reference: account.reference,
+    fee: opts?.fee ?? 0.01,
+    txGroupId: opts?.txGroupId ?? 0,
+    recipient: recipientAddress,
+    senderPublicKey,
+    amount,
+    assetId,
+  };
+
+  const res = await fetch('/assets/transfer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(txBody),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Transfer asset failed: ${res.status} ${res.statusText} ${text}`);
+  }
+
+  const unsigned = await res.text();
+  if (!await isValidQortalTx(unsigned, 'TRANSFER_ASSET')) {
+    throw new Error(`Response from /assets/transfer doesn't look like a TRANSFER_ASSET; got: ${unsigned.slice(0, 16)}…`);
+  }
+
+  return unsigned;
+}
+
+// --- convenience: build → sign → broadcast ---
+
+export async function transferAsset(
+  senderAddress: string,
+  senderPublicKey: string,
+  recipient: string,       // name or address
+  assetId: number,
+  amount: number,
+  opts?: { fee?: number; txGroupId?: number }
+): Promise<object> {
+  const unsigned = await createTransferAssetTransaction(
+    senderAddress,
+    senderPublicKey,
+    recipient,
+    assetId,
+    amount,
+    opts
+  );
+
+  return await signAndBroadcast(unsigned);
+}
+
+
+
 export const getPrimaryAccountName = async (address: string): Promise<string> => {
   try {
     const name = await qortalRequest({
@@ -130,3 +216,6 @@ export async function issueAsset(
   console.log('unsignedTx', unsigned)
   return await signAndBroadcast(unsigned);
 }
+
+
+

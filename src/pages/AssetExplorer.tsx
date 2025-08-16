@@ -7,6 +7,7 @@ import { formatAssetAmount } from '../utils/qortalAssetRequests';
 import { fetchAssetAvatar } from '../utils/fetchAssetAvatar';
 import { getPrimaryAccountName } from '../utils/qortalApi';
 import pLimit from 'p-limit';
+import { ensureAssetsIndexLoaded } from '../bootstrap/assetsBootstrap';
 
 export interface Asset {
   assetId: number;
@@ -42,7 +43,9 @@ const AssetExplorer = () => {
   useEffect(() => {
     async function loadAssets() {
       try {
-        const rawAssets: Asset[] = await getAllAssets(true, 0, 0);
+        setLoading(true);
+        const assetIndex = await ensureAssetsIndexLoaded();
+        const rawAssets: Asset[] = Object.values(assetIndex) as Asset[];
         const qortCirculating = await fetch('/stats/supply/circulating').then((res) => res.json());
         const assetIds: number[] = rawAssets.map((a) => a.assetId);
         const issuerAddresses: string[] = [...new Set(rawAssets.map((a) => a.owner))];

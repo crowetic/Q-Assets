@@ -5,7 +5,9 @@ import AssetExplorer from '../pages/AssetExplorer';
 import AssetDetail from '../pages/AssetDetails';
 import Portfolio from '../pages/Portfolio';
 import IssueAsset from '../pages/IssueAsset';
-import TradeAsset from '../pages/TradeAsset';
+import TradeMarkets from '../pages/TradeMarkets';
+import TradePair from '../pages/TradePair';
+import Information from '../pages/Information';
 import { PortfolioProvider } from '../portfolio/PortfolioProvider';
 
 function PortfolioProviderLayout() {
@@ -35,7 +37,9 @@ export function Routes() {
           children: [{ path: 'portfolio', element: <Portfolio /> }],
         },
         { path: 'issue', element: <IssueAsset /> },
-        { path: 'trade', element: <TradeAsset /> },
+        { path: 'trade', element: <TradeMarkets /> },
+        { path: 'trade/:assetId', element: <TradePair /> },
+        { path: 'info', element: <Information /> },
       ],
     },
   ];

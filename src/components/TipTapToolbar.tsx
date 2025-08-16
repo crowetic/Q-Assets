@@ -24,6 +24,21 @@ export function TipTapToolbar({ editor }: { editor: Editor }) {
     },
   });
 
+  const buttonStyle2 = (active: boolean) => ({
+    borderRadius: '6px',
+    backgroundColor: active ? theme.palette.info.light : theme.palette.primary.dark,
+    color: active ? theme.palette.text.primary : theme.palette.text.primary,
+    borderSize: '1rem',
+    borderColor: active ? theme.palette.secondary.light : theme.palette.secondary.dark,
+    textTransform: 'none',
+    fontWeight: 600,
+    boxShadow: 'none',
+    '&:hover': {
+      backgroundColor: theme.palette.secondary.dark,
+      color: theme.palette.primary.contrastText,
+    },
+  });
+
   const handleAddImage = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -121,11 +136,6 @@ export function TipTapToolbar({ editor }: { editor: Editor }) {
         Text Color
       </Button>
 
-      <Button size="small" component="label" sx={buttonStyle(false)}>
-        Add Image
-        <input type="file" hidden accept="image/*" onChange={handleAddImage} />
-      </Button>
-
       <Button
         size="small"
         sx={buttonStyle(editor.isActive('bulletList'))}
@@ -139,6 +149,10 @@ export function TipTapToolbar({ editor }: { editor: Editor }) {
         onClick={() => editor.chain().focus().toggleOrderedList().run()}
       >
         Numbered
+      </Button>
+      <Button size="small" component="label" sx={buttonStyle2(false)}>
+        Add Image
+        <input type="file" hidden accept="image/*" onChange={handleAddImage} />
       </Button>
     </Box>
   );
