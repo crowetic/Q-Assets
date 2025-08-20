@@ -8,7 +8,6 @@ import {
   Typography,
   CircularProgress,
   IconButton,
-  Stack,
   Tooltip,
 } from '@mui/material';
 import { Delete, Launch, Send as SendIcon, SwapHoriz, ReceiptLong } from '@mui/icons-material';
@@ -41,7 +40,7 @@ export default function PortfolioPage() {
   const [adding, setAdding] = useState(false);
   const [authName, setAuthName] = useState<string | null>(null);
   const trackedSet = useMemo(() => new Set(wallets.map((w) => w.address)), [wallets]);
-  const [sending, setSending] = useState(false);
+  // const [sending, setSending] = useState(false);
   const [sendDialog, setSendDialog] = useState<{ open: boolean; assetId: number }>({
     open: false,
     assetId: 0,
@@ -54,12 +53,12 @@ export default function PortfolioPage() {
 
   const { address: authAddress, publicKey: authPublicKey } = useAuth();
 
-  const parseHumanAmount = (s: string): number | null => {
-    // disallow exponentials/commas/spaces beyond trim
-    if (!/^\d+(\.\d+)?$/.test(s)) return null;
-    const n = Number(s);
-    return Number.isFinite(n) && n > 0 ? n : null;
-  };
+  // const parseHumanAmount = (s: string): number | null => {
+  //   // disallow exponentials/commas/spaces beyond trim
+  //   if (!/^\d+(\.\d+)?$/.test(s)) return null;
+  //   const n = Number(s);
+  //   return Number.isFinite(n) && n > 0 ? n : null;
+  // };
 
   // Resolve primary name for authenticated account (for header prettiness)
   useEffect(() => {
@@ -233,11 +232,11 @@ export default function PortfolioPage() {
   // Actions (Wallet section)
   const hasAuth = !!authAddress;
 
-  const onShowTx = (assetId: number) => {
-    if (!hasAuth) return;
-    // route or drawer — adjust to your app
-    navigate(`/assets/${assetId}?tab=tx&address=${authAddress}`);
-  };
+  // const onShowTx = (assetId: number) => {
+  //   if (!hasAuth) return;
+  //   // route or drawer — adjust to your app
+  //   navigate(`/assets/${assetId}?tab=tx&address=${authAddress}`);
+  // };
 
   const handleSendConfirm = async (recipient: string, amount: number) => {
     const meta = assetsIndex[sendDialog.assetId];

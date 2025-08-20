@@ -58,19 +58,19 @@ export function buildOhlcStrict(
   if (!rows.length) return [];
 
   // bucket index function
-  const b0 = Math.floor(rows[0].ts / intervalMs);
+  // const b0 = Math.floor(rows[0].ts / intervalMs);
   const bucketOf = (ts: number) => Math.floor(ts / intervalMs);
 
   const out: OhlcPoint[] = [];
   let curIdx = bucketOf(rows[0].ts);
   let o = rows[0].price, h = rows[0].price, l = rows[0].price, v = rows[0].qty ?? 0;
-  let first = rows[0].price;
+  // let first = rows[0].price;
   let last  = rows[0].price;
 
   const flush = (idx: number) => {
     out.push({
       t: idx * intervalMs,         // ms (your CandleChart converts to seconds)
-      o: first,
+      o,
       h,
       l,
       c: last,
@@ -91,7 +91,7 @@ export function buildOhlcStrict(
 
       // start new bucket
       curIdx = bi;
-      first = o = h = l = last = r.price;
+      o = h = l = last = r.price;
       v = r.qty ?? 0;
     } else {
       // same bucket → update stats

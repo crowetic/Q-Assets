@@ -11,7 +11,7 @@ import {
   YAxis,
   Brush,
 } from 'recharts';
-import type { LinePoint, OhlcPoint, DepthPoint } from '../../utils/chartTransforms';
+import type { OhlcPoint, DepthPoint } from '../../utils/chartTransforms';
 
 function tsFormatter(ts: number) {
   const d = new Date(ts);
@@ -161,10 +161,10 @@ export const DepthChart = memo(function DepthChart({
   asks: DepthPoint[];
 }) {
   // Merge to a single array just for axes domain (Recharts quirk); we render two series.
-  const domain = [
-    ...bids.map((b) => ({ price: b.price, qty: b.cum })),
-    ...asks.map((a) => ({ price: a.price, qty: a.cum })),
-  ];
+  // const domain = [
+  //   ...bids.map((b) => ({ price: b.price, qty: b.cum })),
+  //   ...asks.map((a) => ({ price: a.price, qty: a.cum })),
+  // ];
   return (
     <ResponsiveContainer width="100%" height={220}>
       <AreaChart>

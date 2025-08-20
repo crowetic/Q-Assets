@@ -1,11 +1,11 @@
-import { useTheme } from '@mui/material/styles';
+// import { useTheme } from '@mui/material/styles';
 import { useNavigate } from 'react-router-dom';
 import HoverPanel from '../components/HoverPanel';
-import { Box, Typography } from '@mui/material';
+import { Box } from '@mui/material';
 // import { Grid } from '@mui/material';
 
 const Home = () => {
-  const theme = useTheme();
+  // const theme = useTheme();
   const navigate = useNavigate();
 
   const panels = [

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Paper,
@@ -30,7 +30,7 @@ import {
   NormalizedOrder,
 } from '../utils/markets';
 import { VolumeBars, DepthChart } from '../components/trade/PairCharts';
-import { buildOhlc, buildDepth, buildOhlcStrict } from '../utils/chartTransforms';
+import { buildOhlc, buildDepth } from '../utils/chartTransforms';
 // import SuccessButton from '../components/buttons/SuccessButton'; // +++
 import SellButton from '../components/buttons/SellButton';
 import BuyButton from '../components/buttons/BuyButton';
@@ -57,7 +57,7 @@ export default function TradePair() {
   // Order book + trades
   const [bids, setBids] = useState<BookOrder[]>([]);
   const [asks, setAsks] = useState<BookOrder[]>([]);
-  const [trades, setTrades] = useState<Trade[]>([]);
+  // const [trades, setTrades] = useState<Trade[]>([]);
   const [chartTrades, setChartTrades] = useState<Trade[]>([]);
   const [sweptTotalQort, setSweptTotalQort] = useState<number | null>(null);
   const [sweptAvgPrice, setSweptAvgPrice] = useState<number | null>(null);
@@ -92,9 +92,9 @@ export default function TradePair() {
     return allTrades.slice(start, end);
   }, [allTrades, tradesPage]);
 
-  useEffect(() => {
-    setTrades(pagedTrades);
-  }, [pagedTrades]);
+  // useEffect(() => {
+  //   setTrades(pagedTrades);
+  // }, [pagedTrades]);
 
   function fmt(n: number | null | undefined, dp = 8) {
     if (n == null || !Number.isFinite(n)) return '—';
@@ -280,20 +280,20 @@ export default function TradePair() {
         const realBids = [...realBidsRaw].sort((a, b) => b.priceQortPerAsset - a.priceQortPerAsset); // high->low
         const realAsks = [...realAsksRaw].sort((a, b) => a.priceQortPerAsset - b.priceQortPerAsset); // low->high
 
-        const bestBid = realBids[0]?.priceQortPerAsset ?? 0;
-        const bestAsk = realAsks[0]?.priceQortPerAsset ?? 0;
+        // const bestBid = realBids[0]?.priceQortPerAsset ?? 0;
+        // const bestAsk = realAsks[0]?.priceQortPerAsset ?? 0;
 
         const envAll = await fetchQortToAssetTrades(id, windowStart, 500, 20000);
 
-        type Side = 'buy' | 'sell';
-        const decideSide = (price: number): Side => {
-          if (bestBid === 0 && bestAsk === 0) return 'buy';
-          if (bestBid === 0) return 'sell';
-          if (bestAsk === 0) return 'buy';
-          return Math.abs(price - bestAsk) < Math.abs(price - bestBid) ? 'sell' : 'buy';
-        };
+        // type Side = 'buy' | 'sell';
+        // const decideSide = (price: number): Side => {
+        //   if (bestBid === 0 && bestAsk === 0) return 'buy';
+        //   if (bestBid === 0) return 'sell';
+        //   if (bestAsk === 0) return 'buy';
+        //   return Math.abs(price - bestAsk) < Math.abs(price - bestBid) ? 'sell' : 'buy';
+        // };
 
-        function classifySideFromEnvelope(env: any, pairAssetId: number): 'buy' | 'sell' {
+        function classifySideFromEnvelope(env: any): 'buy' | 'sell' {
           const io = env?.initiatingOrder;
           if (io && typeof io.haveAssetId === 'number') {
             return io.haveAssetId === 0 ? 'buy' : 'sell';
@@ -320,7 +320,7 @@ export default function TradePair() {
                 ? Number(io.price)
                 : Number(t?.initiatorAmount ?? 0) / Math.max(1e-12, qtyAsset);
             const ts = Number(t?.timestamp ?? io?.timestamp ?? 0); // ms in your sample
-            const side = classifySideFromEnvelope(env, id); // <-- authoritative
+            const side = classifySideFromEnvelope(env); // <-- authoritative
 
             return Number.isFinite(price) && qtyAsset > 0 && ts > 0
               ? ({ price, quantity: qtyAsset, side, ts } as Trade)
@@ -348,7 +348,7 @@ export default function TradePair() {
           setAsks(realAsks);
           setAllTrades(fullNewestFirst);
           setTradesPage(0);
-          setTrades(fullNewestFirst.slice(0, TRADES_PAGE_SIZE));
+          // setTrades(fullNewestFirst.slice(0, TRADES_PAGE_SIZE));
           setChartTrades(chartPts);
         }
 
@@ -706,7 +706,7 @@ export default function TradePair() {
                             setSweptAvgPrice(null);
                             return;
                           }
-                          const { qty, proceeds } = sweepBidsTo(p);
+                          const { qty } = sweepBidsTo(p);
                           const qClamped = quantQtyAsset(qty, divisible);
                           const proceedsClamped = quantQort(p * qClamped);
                           setPrice(String(p));
@@ -765,7 +765,7 @@ export default function TradePair() {
                             setSweptAvgPrice(null);
                             return;
                           }
-                          const { qty, cost } = sweepAsksTo(p);
+                          const { qty } = sweepAsksTo(p);
                           const qClamped = quantQtyAsset(qty, divisible);
                           const costClamped = quantQort(p * qClamped);
                           setPrice(String(p));

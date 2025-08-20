@@ -40,9 +40,9 @@ export default function IssueAsset() {
   const [groupName, setGroupName] = useState('');
   const [groupId, setGroupId] = useState('');
   const [groupLink, setGroupLink] = useState('');
-  const [groupIsPrivate, setGroupIsPrivate] = useState(false);
+  // const [groupIsPrivate, setGroupIsPrivate] = useState(false);
   const [avatarBase64, setAvatarBase64] = useState<string>('');
-  const [newAssetID, setNewAssetID] = useState<number>(0);
+  // const [newAssetID, setNewAssetID] = useState<number>(0);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,7 +94,7 @@ export default function IssueAsset() {
     setGroupName('');
     setGroupId('');
     setGroupLink('');
-    setGroupIsPrivate(false);
+    // setGroupIsPrivate(false);
     setAttemptedSubmit(false);
     setAvatarBase64('');
     setHtml('');
@@ -339,7 +339,7 @@ export default function IssueAsset() {
           control={
             <Checkbox
               checked={false} // set to groupIsPrivate later
-              onChange={(e) => setGroupIsPrivate(e.target.checked)}
+              // onChange={(e) => setGroupIsPrivate(e.target.checked)}
               disabled={true}
             />
           }

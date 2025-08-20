@@ -8,7 +8,7 @@ import React, {
   useReducer,
 } from 'react';
 import type { Wallet, PortfolioState, HoldingAggregate, AssetMini } from './portfolioTypes';
-import { getAllAssets, getAssetBalances } from '../utils/qortalAssetRequests'; // you already have these
+import { getAssetBalances } from '../utils/qortalAssetRequests'; // you already have these
 import pLimit from 'p-limit';
 import { useAuth } from 'qapp-core';
 import { ensureAssetsIndexLoaded, readAssetsIndexSync } from '../bootstrap/assetsBootstrap';

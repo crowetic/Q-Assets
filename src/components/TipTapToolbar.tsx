@@ -17,8 +17,8 @@ import DataObjectIcon from '@mui/icons-material/DataObject';
 import type { Editor } from '@tiptap/react';
 // import InfoOutlineButton from './buttons/InfoOutlineButton';
 // import { BorderColor } from '@mui/icons-material';
-import { ThemeColorToken, themedColorCSS, THEME_COLOR_TOKENS } from '../tiptap/themeColorTokens';
-import { ThemedColor } from '../tiptap/marks/ThemedColor';
+import { ThemeColorToken, THEME_COLOR_TOKENS } from '../tiptap/themeColorTokens';
+// import { ThemedColor } from '../tiptap/marks/ThemedColor';
 
 type Props = { editor: Editor };
 

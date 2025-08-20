@@ -4,7 +4,6 @@ import {
   Box,
   Card,
   CardContent,
-  CardHeader,
   Avatar,
   Paper,
   Link,
@@ -446,7 +445,7 @@ export default function AssetDetail() {
               <Card sx={{ mt: 1 }}>
                 <CardContent>
                   <Stack spacing={1}>
-                    {assetPub!.extraGroups!.map((g, i) => (
+                    {assetPub!.extraGroups!.map((g) => (
                       <>
                         <Typography>
                           Name:{' '}

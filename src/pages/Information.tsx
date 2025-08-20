@@ -30,7 +30,6 @@ import {
   loadWikiMenu,
   saveWikiMenu,
   publishWikiSection,
-  isNameInManagementGroup,
   isUserInManagementGroup,
   isAddressAdminInManagementGroup,
   // type LoadedSection,
@@ -44,7 +43,7 @@ import { useTheme } from '@mui/material';
 import { Theme } from '@mui/material';
 // import EditIcon from '@mui/icons-material/Edit';
 import EditToggleButton from '../components/buttons/EditToggleButton';
-import { Edit } from '@mui/icons-material';
+// import { Edit } from '@mui/icons-material';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Q_ASSET_VERSION } from '../constants/qdnConstants';
 import { prepareHtmlForPublish } from '../utils/publicationPublisher';

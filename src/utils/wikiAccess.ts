@@ -1,7 +1,7 @@
 import pLimit from 'p-limit';
 import { WIKI_GROUP_ID, WIKI_IDENTIFIER_PREFIX, WIKI_SECTIONS } from '../constants/wiki';
 import { getPrimaryAccountName } from '../utils/qortalApi';
-import { base64ToObject, base64ToUtf8, uint8ArrayToBase64, utf8ToBase64 } from './data';
+import { base64ToObject, base64ToUtf8, utf8ToBase64 } from './data';
 import { objectToBase64 } from 'qapp-core';
 
 // -------------------------------------------------------------
@@ -35,16 +35,16 @@ const normAddr = (s?: string) => (s || '').trim();
 // -------------------------------------------------------------
 // Group fetchers (paged)
 // -------------------------------------------------------------
-async function fetchMembersPage(opts: { onlyAdmins: boolean; offset: number; limit: number }) {
-  const { onlyAdmins, offset, limit } = opts;
-  const url =
-    `/groups/members/${WIKI_GROUP_ID}` +
-    `?onlyAdmins=${onlyAdmins ? 'true' : 'false'}` +
-    `&limit=${limit}&offset=${offset}&reverse=true`;
-  const res = await fetch(url, { headers: { accept: 'application/json' } });
-  if (!res.ok) throw new Error(`Group members fetch failed: ${res.status} ${res.statusText}`);
-  return (await res.json()) as GroupMemberRow[];
-}
+// async function fetchMembersPage(opts: { onlyAdmins: boolean; offset: number; limit: number }) {
+//   const { onlyAdmins, offset, limit } = opts;
+//   const url =
+//     `/groups/members/${WIKI_GROUP_ID}` +
+//     `?onlyAdmins=${onlyAdmins ? 'true' : 'false'}` +
+//     `&limit=${limit}&offset=${offset}&reverse=true`;
+//   const res = await fetch(url, { headers: { accept: 'application/json' } });
+//   if (!res.ok) throw new Error(`Group members fetch failed: ${res.status} ${res.statusText}`);
+//   return (await res.json()) as GroupMemberRow[];
+// }
 
 type GroupMembersResponse =
   | { memberCount?: number; adminCount?: number; members?: GroupMemberRow[] }
@@ -72,10 +72,10 @@ async function fetchAllRows(onlyAdmins: boolean): Promise<GroupMemberRow[]> {
   return onlyAdmins ? rows.filter(r => r.isAdmin === true) : rows;
 }
 
-// (Kept for compatibility with your existing call sites; delegates to fetchAllRows)
-async function fetchAll(onlyAdmins: boolean): Promise<GroupMemberRow[]> {
-  return fetchAllRows(onlyAdmins);
-}
+// // (Kept for compatibility with your existing call sites; delegates to fetchAllRows)
+// async function fetchAll(onlyAdmins: boolean): Promise<GroupMemberRow[]> {
+//   return fetchAllRows(onlyAdmins);
+// }
 
 // -------------------------------------------------------------
 // Address sets (fast membership checks) with cache
@@ -189,21 +189,21 @@ export async function isUserInManagementGroup(opts: { address?: string | null; n
 // -------------------------------------------------------------
 
 
-async function fetchQdnDocument(name: string, identifier: string): Promise<string | null> {
-  try {
-    const res = await qortalRequest({
-      action: 'FETCH_QDN_RESOURCE',
-      name,
-      service: 'DOCUMENT',
-      identifier,
-      encoding: 'base64',
-    } as any);
-    const final = base64ToUtf8(res)
-    return final;
-  } catch {
-    return null;
-  }
-}
+// async function fetchQdnDocument(name: string, identifier: string): Promise<string | null> {
+//   try {
+//     const res = await qortalRequest({
+//       action: 'FETCH_QDN_RESOURCE',
+//       name,
+//       service: 'DOCUMENT',
+//       identifier,
+//       encoding: 'base64',
+//     } as any);
+//     const final = base64ToUtf8(res)
+//     return final;
+//   } catch {
+//     return null;
+//   }
+// }
 
 async function fetchDocHtml(name: string, identifier: string): Promise<string | null> {
   try {

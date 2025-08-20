@@ -1,6 +1,6 @@
 // src/utils/markets.ts
 import { getAssetBalances } from '../utils/qortalAssetRequests';
-import { useAuth } from 'qapp-core';
+// import { useAuth } from 'qapp-core';
 
 // Types you can reuse in the UI
 export type BookOrder = {
@@ -198,18 +198,18 @@ export function rowToFill(
 
 
 // Limit concurrency so we don't blast the node
-async function pMap<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = [];
-  let i = 0;
-  const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
-    while (i < items.length) {
-      const idx = i++;
-      out[idx] = await fn(items[idx]);
-    }
-  });
-  await Promise.all(workers);
-  return out;
-}
+// async function pMap<T, R>(items: T[], limit: number, fn: (x: T) => Promise<R>): Promise<R[]> {
+//   const out: R[] = [];
+//   let i = 0;
+//   const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+//     while (i < items.length) {
+//       const idx = i++;
+//       out[idx] = await fn(items[idx]);
+//     }
+//   });
+//   await Promise.all(workers);
+//   return out;
+// }
 
 
 // --- Decimals resolver (minimal) ---
@@ -720,7 +720,7 @@ const isStr = (x: any): x is string => typeof x === 'string' && x.length > 0;
 
 
 /** Determine user's side from an envelope by comparing creators to user's address. */
-function sideFromEnvelopeForUser(row: any, userAddress: string, pairAssetId: number): 'buy' | 'sell' {
+function sideFromEnvelopeForUser(row: any, userAddress: string, ): 'buy' | 'sell' {
   const init = row?.initiatingOrder;
   const targ = row?.targetOrder;
   const mine =
@@ -775,7 +775,7 @@ export async function getMyFillsForPair(
       })
       .map((row: any) => {
         const base = decodePairTradeEnvelope(row, pairAssetId);
-        const side = sideFromEnvelopeForUser(row, address, pairAssetId);
+        const side = sideFromEnvelopeForUser(row, address );
         return {
           orderId: String(row?.initiatingOrder?.orderId ?? row?.targetOrder?.orderId ?? ''),
           side,

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getAllAssets, getAssetBalances } from '../utils/qortalAssetRequests';
+import { getAssetBalances } from '../utils/qortalAssetRequests';
 import { Typography, Paper, CircularProgress, useTheme, Box } from '@mui/material';
 import { Link } from 'react-router-dom';
 import { useAuth } from 'qapp-core';
