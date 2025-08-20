@@ -337,7 +337,7 @@ const AssetExplorer = () => {
                         />
                       ) : (
                         <img
-                          src="/asset-placeholder.svg" // or a tiny inline SVG/emoji/etc.
+                          src="/src/core-assets/asset-placeholder.svg" // or a tiny inline SVG/emoji/etc.
                           alt="No avatar"
                           style={{
                             width: '100%',

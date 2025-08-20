@@ -28,9 +28,9 @@ function canonicalCoreKey(assetName: string): CoreKey | null {
 // local static assets shipped with the app (ensure these files exist)
 function staticCoreAssetPath(key: CoreKey): string {
   switch (key) {
-    case 'qort': return '/core-assets/QORT-logo-512.png';
-    case 'legacy-qora': return '/core-assets/QORA-logo-GOOD.png';
-    case 'qort-from-qora': return '/core-assets/QORT-to-QORA-logo.png';
+    case 'qort': return '/src/core-assets/QORT-logo-512.png';
+    case 'legacy-qora': return '/src/core-assets/QORA-logo-GOOD.png';
+    case 'qort-from-qora': return '/src/core-assets/QORT-to-QORA-logo.png';
   }
 }
 

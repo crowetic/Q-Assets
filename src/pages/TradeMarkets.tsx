@@ -190,7 +190,7 @@ export default function TradeMarkets() {
                     />
                   ) : (
                     <img
-                      src="/img/asset-placeholder.svg"
+                      src="/src/core-assets/asset-placeholder.svg"
                       alt=""
                       loading="lazy"
                       style={{ width: '70%', height: '70%', opacity: 0.6 }}

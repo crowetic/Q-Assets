@@ -353,7 +353,7 @@ export default function PortfolioPage() {
                         />
                       ) : (
                         <img
-                          src="/img/asset-placeholder.svg"
+                          src="/src/core-assets/asset-placeholder.svg"
                           alt=""
                           style={{ width: '75%', height: '75%', opacity: 0.7 }}
                         />
@@ -634,7 +634,7 @@ export default function PortfolioPage() {
                       />
                     ) : (
                       <img
-                        src="/img/asset-placeholder.svg"
+                        src="/src/core-assets/asset-placeholder.svg"
                         alt=""
                         style={{ width: '70%', height: '70%', opacity: 0.6 }}
                       />

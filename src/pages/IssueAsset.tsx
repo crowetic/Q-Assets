@@ -188,80 +188,90 @@ export default function IssueAsset() {
   return (
     <Box
       sx={{
-        width: '100%',
-        maxWidth: 'calc(95vw - 10rem)',
-        minHeight: '75vh',
         display: 'flex',
         flexDirection: 'column',
+        alignItems: 'stretch',
+        width: '100%',
+        // A comfortable content max-width; scales well on tablets/desktops, not restrictive on phones.
+        maxWidth: { xs: '100%', sm: '90%', md: '90%', lg: '80%' },
+        // Center horizontally on wide screens, fill on phones.
         mx: 'auto',
-        px: { xs: 2, sm: 3 },
+        // Responsive horizontal padding in rem (no pixel coupling)
+        px: { xs: '1rem', sm: '1.5rem', md: '2rem' },
+        // Breathing room top/bottom without forcing huge vh on small screens
+        py: { xs: '1rem', sm: '1.5rem' },
       }}
     >
-      <Paper sx={{ p: 3 }}>
-        <Typography
-          variant="h4"
-          gutterBottom
-          color="primary.contrastText"
-          textAlign="center"
-          padding="0.2rem"
-          fontWeight={700}
-        >
-          Issue New Asset
-        </Typography>
+      <Paper
+        sx={{
+          // Paper should stretch the container width
+          width: '100%',
+          // Use rem for padding; keep it modest on phones
+          p: { xs: '1rem', sm: '1.25rem', md: '1.5rem' },
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '1rem', // global vertical rhythm
+        }}
+      >
+        <Box component="section" sx={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          <Typography variant="h5" sx={{ fontWeight: 600 }} color="primary.contrastText">
+            Asset Information
+          </Typography>
 
-        {/* Asset Info */}
-        <Typography variant="h5" fontWeight={600} color="primary.contrastText">
-          Asset Information
-        </Typography>
-        <TextField
-          required
-          fullWidth
-          label="Asset Name"
-          value={assetName}
-          error={!assetName && attemptedSubmit}
-          onChange={(e) => setAssetName(e.target.value)}
-          helperText={!assetName && attemptedSubmit ? 'Asset name is required' : ''}
-          sx={{ mb: 2 }}
-        />
-        <TextField
-          fullWidth
-          label="Description"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          sx={{ mb: 2 }}
-        />
-        <TextField
-          required
-          fullWidth
-          type="number"
-          label="Quantity"
-          value={quantity}
-          error={!quantity && attemptedSubmit}
-          onChange={(e) => setQuantity(parseInt(e.target.value))}
-          helperText={!quantity && attemptedSubmit ? 'Quantity is required' : ''}
-          sx={{ mb: 2 }}
-        />
+          <TextField
+            required
+            fullWidth
+            label="Asset Name"
+            value={assetName}
+            error={!assetName && attemptedSubmit}
+            onChange={(e) => setAssetName(e.target.value)}
+            helperText={!assetName && attemptedSubmit ? 'Asset name is required' : ''}
+          />
+
+          <TextField
+            fullWidth
+            multiline
+            minRows={2}
+            label="Description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+
+          <TextField
+            required
+            fullWidth
+            type="number"
+            inputProps={{ min: 0 }}
+            label="Quantity"
+            value={quantity}
+            error={!quantity && attemptedSubmit}
+            onChange={(e) => setQuantity(Number(e.target.value))}
+            helperText={!quantity && attemptedSubmit ? 'Quantity is required' : ''}
+          />
+        </Box>
 
         {/* Avatar */}
         {!avatarBase64 && (
-          <>
-            <Typography variant="h5" fontWeight={550} color="primary.contrastText">
-              Include Asset Avatar?
-            </Typography>
-            <InfoOutlineButton size="small" variant="outlined" sx={{ mb: 2 }}>
-              Select Avatar Image
-              <input
-                type="file"
-                hidden
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    setAvatarBase64(await fileToBase64(file));
-                  }
-                }}
-              />
-            </InfoOutlineButton>
-          </>
+          <Box component="section" sx={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <>
+              <Typography variant="h5" fontWeight={550} color="primary.contrastText">
+                Include Asset Avatar?
+              </Typography>
+              <InfoOutlineButton size="small" variant="outlined" sx={{ mb: 2 }}>
+                Select Avatar Image
+                <input
+                  type="file"
+                  hidden
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setAvatarBase64(await fileToBase64(file));
+                    }
+                  }}
+                />
+              </InfoOutlineButton>
+            </>
+          </Box>
         )}
 
         <Divider sx={{ my: 3 }} />

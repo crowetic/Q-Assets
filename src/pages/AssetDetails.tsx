@@ -97,18 +97,19 @@ export default function AssetDetail() {
     assetPub?.dividendPeriod ?? '1M'
   );
 
-  const isIssuer = asset && userAddress && asset.owner === userAddress;
+  // const isIssuer = asset && userAddress && asset.owner === userAddress;
+  const isIssuer = !!asset && !!userAddress && asset.owner === userAddress;
+
   const canPublish = isIssuer && issuerName && issuerName === (userName as string | undefined);
   const id = useMemo(() => Number(assetId), [assetId]);
 
   useEffect(() => {
+    if (editing) setHtml(assetPub?.html ?? '');
+  }, [editing]);
+
+  useEffect(() => {
     if (!editing) setHtml(assetPub?.html ?? '');
   }, [assetPub, editing]);
-
-  // When toggling into edit mode, ensure editor is seeded
-  useEffect(() => {
-    if (editing) setHtml(assetPub?.html ?? '');
-  }, [editing, assetPub]);
 
   useEffect(() => {
     let cancelled = false;
