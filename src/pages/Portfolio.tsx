@@ -266,7 +266,7 @@ export default function PortfolioPage() {
 
   const onTrade = (assetId: number) => {
     if (!hasAuth) return;
-    navigate(`/trade?assetId=${assetId}&from=${authAddress}`);
+    navigate(`/trade/${assetId}`);
   };
 
   const onViewDetails = (assetId: number) => {

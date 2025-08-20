@@ -3,6 +3,7 @@ import type { AssetPublication } from '../types/AssetPublicationMetadata';
 import { getAssetIdentifiers } from '../constants/qdnConstants';
 import { useAuth } from 'qapp-core';
 
+
 export const publishAssetPublication = async (owner: string, assetName: string, pub: AssetPublication) => {
   const publishInfo = await getAssetIdentifiers(assetName)
   const identifier = publishInfo.identifiers.genesisPost 

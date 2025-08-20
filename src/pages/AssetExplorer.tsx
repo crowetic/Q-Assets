@@ -240,14 +240,24 @@ const AssetExplorer = () => {
                         }}
                       >
                         <Box>
-                          <Typography variant="subtitle2" color="text.secondary" component="span">
+                          <Typography
+                            variant="subtitle2"
+                            fontWeight="700"
+                            color="text.secondary"
+                            component="span"
+                          >
                             Asset ID:{' '}
                           </Typography>
                           <Typography component="span">{asset.assetId}</Typography>
                         </Box>
 
                         <Box>
-                          <Typography variant="subtitle2" color="text.secondary" component="span">
+                          <Typography
+                            variant="subtitle2"
+                            fontWeight={'600'}
+                            color="text.secondary"
+                            component="span"
+                          >
                             Total Supply:{' '}
                           </Typography>
                           <Typography component="span">
@@ -256,7 +266,12 @@ const AssetExplorer = () => {
                         </Box>
 
                         <Box>
-                          <Typography variant="subtitle2" color="text.secondary" component="span">
+                          <Typography
+                            variant="subtitle2"
+                            color="text.secondary"
+                            fontWeight={600}
+                            component="span"
+                          >
                             Circulating:{' '}
                           </Typography>
                           <Typography component="span">
@@ -270,10 +285,16 @@ const AssetExplorer = () => {
                               variant="subtitle1"
                               color="secondary.light"
                               component="span"
+                              fontWeight={700}
+                              bgcolor={'background.paper'}
                             >
                               You Hold:{' '}
                             </Typography>
-                            <Typography component="span" color="primary.light">
+                            <Typography
+                              component="span"
+                              color="primary.light"
+                              bgcolor={'background.paper'}
+                            >
                               {balance}
                             </Typography>
                           </Box>
@@ -281,7 +302,12 @@ const AssetExplorer = () => {
                       </Box>
 
                       {isOwned && (
-                        <Typography variant="body2" fontStyle="italic" color="limegreen">
+                        <Typography
+                          variant="h5"
+                          color="success.light"
+                          fontWeight={800}
+                          bgcolor={'background.paper'}
+                        >
                           ASSET ISSUER
                         </Typography>
                       )}

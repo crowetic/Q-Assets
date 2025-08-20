@@ -101,7 +101,9 @@ export default function TransactionsPanel({
                       title={tx.type}
                     >
                       {isOut ? 'Sent' : 'Received'} {assetName}{' '}
-                      <Chip size="small" label={tx.type} sx={{ ml: 0.5 }} />
+                      <Box component="span" sx={{ ml: 0.5, display: 'inline-flex' }}>
+                        <Chip size="small" label={tx.type} />
+                      </Box>
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
                       {isOut ? 'To' : 'From'}{' '}

@@ -3,8 +3,8 @@ import Button from '@mui/material/Button';
 
 const SuccessButton = styled(Button)(({ theme }) => ({
   borderRadius: '0.1rem',
-  color: theme.palette.success.contrastText,
-  borderColor: theme.palette.success.contrastText,
+  color: theme.palette.success.main,
+  borderColor: theme.palette.success.main,
   borderWidth: 2,
   borderStyle: 'solid',
   textTransform: 'none',
@@ -13,8 +13,9 @@ const SuccessButton = styled(Button)(({ theme }) => ({
   py: 1,
   transition: 'all .2s ease',
   '&:hover': {
-    borderColor: theme.palette.success.main,
+    borderColor: theme.palette.success.light,
     backgroundColor: theme.palette.success.dark,
+    color: theme.palette.success.light,
   },
   '&:active': {
     transform: 'translateY(1px)',

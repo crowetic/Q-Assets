@@ -1,8 +1,8 @@
-// src/utils/wikiAccess.ts
 import pLimit from 'p-limit';
 import { WIKI_GROUP_ID, WIKI_IDENTIFIER_PREFIX, WIKI_SECTIONS } from '../constants/wiki';
 import { getPrimaryAccountName } from '../utils/qortalApi';
-import { uint8ArrayToBase64, utf8ToBase64 } from './data';
+import { base64ToObject, base64ToUtf8, uint8ArrayToBase64, utf8ToBase64 } from './data';
+import { objectToBase64 } from 'qapp-core';
 
 // -------------------------------------------------------------
 // Types
@@ -45,20 +45,6 @@ async function fetchMembersPage(opts: { onlyAdmins: boolean; offset: number; lim
   if (!res.ok) throw new Error(`Group members fetch failed: ${res.status} ${res.statusText}`);
   return (await res.json()) as GroupMemberRow[];
 }
-
-// async function fetchAllRows(onlyAdmins: boolean): Promise<GroupMemberRow[]> {
-//   const out: GroupMemberRow[] = [];
-//   const size = 200;
-//   let offset = 0;
-//   for (;;) {
-//     const page = await fetchMembersPage({ onlyAdmins, offset, limit: size });
-//     if (!page?.length) break;
-//     out.push(...page);
-//     if (page.length < size) break;
-//     offset += page.length;
-//   }
-//   return out;
-// }
 
 type GroupMembersResponse =
   | { memberCount?: number; adminCount?: number; members?: GroupMemberRow[] }
@@ -140,15 +126,15 @@ export async function listManagementGroupMembers(): Promise<Member[]> {
     const { memberAddrs, adminAddrs } = await getGroupAddressSets();
     const addrs = Array.from(memberAddrs);
     const limit = pLimit(8);
-    console.log('memberAddresses',memberAddrs)
-    console.log('adminAddresses', adminAddrs)
+    // console.log('memberAddresses',memberAddrs)
+    // console.log('adminAddresses', adminAddrs)
     const nameRecs = await Promise.all(
       addrs.map((addr) =>
         limit(async () => {
           try {
             const nm = await getPrimaryAccountName(addr);
             if (!nm) return null;
-            console.log('namefromListManagementGroupMembers',nm)
+            // console.log('namefromListManagementGroupMembers',nm)
             return { name: nm, isAdmin: adminAddrs.has(normAddr(addr)) } as Member;
           } catch {
             return null;
@@ -201,9 +187,9 @@ export async function isUserInManagementGroup(opts: { address?: string | null; n
 // -------------------------------------------------------------
 // QDN helpers / IO
 // -------------------------------------------------------------
-type QdnFetchResult = { data64: string; name: string; created?: number; updated?: number };
 
-async function fetchQdnDocument(name: string, identifier: string): Promise<QdnFetchResult | null> {
+
+async function fetchQdnDocument(name: string, identifier: string): Promise<string | null> {
   try {
     const res = await qortalRequest({
       action: 'FETCH_QDN_RESOURCE',
@@ -212,7 +198,23 @@ async function fetchQdnDocument(name: string, identifier: string): Promise<QdnFe
       identifier,
       encoding: 'base64',
     } as any);
-    return res as QdnFetchResult;
+    const final = base64ToUtf8(res)
+    return final;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchDocHtml(name: string, identifier: string): Promise<string | null> {
+  try {
+    const b64 = await qortalRequest({
+      action: 'FETCH_QDN_RESOURCE',
+      service: 'DOCUMENT',
+      name,
+      identifier,
+      encoding: 'base64',
+    });
+    return base64ToUtf8(String(b64 || ''));
   } catch {
     return null;
   }
@@ -248,32 +250,81 @@ export async function publishWikiSection(
 // -------------------------------------------------------------
 // Sections: load winner (admin > member) for each section id
 // -------------------------------------------------------------
+type Candidate = {
+  name: string;                       // publisher name
+  role: 'admin' | 'member';
+  ts: number;
+};
+const limit = pLimit(6);
+
 export async function loadSectionFromGroup(sectionId: string) {
-  const members = await listManagementGroupMembers(); // need names for QDN pulls
-  if (!members.length) return null;
+  const members = await listManagementGroupMembers(); // must include: {name, isAdmin}
+  if (!members?.length) return null;
 
   const identifier = `${WIKI_IDENTIFIER_PREFIX}${sectionId}`;
-  const limit = pLimit(6);
 
-  const attempts = await Promise.all(
-    members.map((m) =>
+  // 1) discover who has this section via SEARCH (metadata only)
+  const searchResults = await Promise.all(
+    members.map(m =>
       limit(async () => {
-        const doc = await fetchQdnDocument(m.name, identifier);
-        if (!doc?.data64) return null;
-        const ts = Number(doc.updated ?? doc.created ?? 0) || Date.now();
-        const html = atob(doc.data64);
-        return { html, ts, name: m.name, role: m.isAdmin ? 'admin' : 'member' } as const;
+        try {
+          const res = await qortalRequest({
+            action: 'SEARCH_QDN_RESOURCES',
+            service: 'DOCUMENT',
+            name: m.name,
+            identifier, 
+          });
+
+          // Some nodes return an array; some a single result. Normalize to array.
+          const rows = Array.isArray(res) ? res : (res ? [res] : []);
+          if (!rows.length) return null;
+
+          // Pick newest hit for this user
+          const best = rows
+            .filter((r: any) => (r.identifier) === (identifier))
+            .sort((a: any, b: any) =>
+              (Number(b.updated ?? b.created ?? 0) || 0) -
+              (Number(a.updated ?? a.created ?? 0) || 0)
+            )[0];
+
+          if (!best) return null;
+
+          return {
+            name: m.name,
+            role: m.isAdmin ? 'admin' as const : 'member' as const,
+            ts: Number(best.updated ?? best.created ?? 0) || 0,
+          } as Candidate;
+        } catch {
+          return null;
+        }
       })
     )
   );
 
-  const valid = attempts.filter(Boolean) as Array<{ html: string; ts: number; name: string; role: 'admin' | 'member' }>;
-  if (!valid.length) return null;
+  const candidates = (searchResults.filter(Boolean) as Candidate[]);
+  if (!candidates.length) return null;
 
-  const admin = valid.filter((v) => v.role === 'admin').sort((a, b) => b.ts - a.ts)[0];
-  const member = valid.filter((v) => v.role === 'member').sort((a, b) => b.ts - a.ts)[0];
-  const pick = admin ?? member;
-  return { html: pick.html, publisher: pick.name, publisherRole: pick.role, ts: pick.ts };
+  // 2) choose newest admin; else newest member
+  const newestAdmin = candidates
+    .filter(c => c.role === 'admin')
+    .sort((a, b) => b.ts - a.ts)[0];
+  const newestMember = candidates
+    .filter(c => c.role === 'member')
+    .sort((a, b) => b.ts - a.ts)[0];
+
+  const pick = newestAdmin ?? newestMember;
+  if (!pick) return null;
+
+  // 3) fetch the actual document content from the chosen publisher
+  const html = await fetchDocHtml(pick.name, identifier);
+  if (!html) return null;
+
+  return {
+    html,
+    publisher: pick.name,
+    publisherRole: pick.role,
+    ts: pick.ts,
+  };
 }
 
 // Accepts optional meta so both call sites work:
@@ -301,43 +352,113 @@ export async function loadAllWikiSections(
   );
 }
 
+
+
+async function fetchQdnBase64(name: string, identifier: string): Promise<string | null> {
+  try {
+    // Ask QDN to return *base64* directly
+    const data64 = await qortalRequest({
+      action: 'FETCH_QDN_RESOURCE',
+      service: 'DOCUMENT',
+      name,
+      identifier,
+      encoding: 'base64',
+      rebuild: false,
+    });
+    return typeof data64 === 'string' && data64 ? data64 : null;
+  } catch {
+    return null;
+  }
+}
+
+type Role = 'admin' | 'member';
+
 // -------------------------------------------------------------
 // MENU (TOC) — admin > member priority
 // -------------------------------------------------------------
 const WIKI_MENU_IDENTIFIER = `${WIKI_IDENTIFIER_PREFIX}__menu`;
 
-export async function loadWikiMenu(): Promise<{ items: WikiMenuItem[]; publisher?: string; role?: 'admin' | 'member'; ts?: number } | null> {
+export async function loadWikiMenu(): Promise<{
+  items: WikiMenuItem[];
+  publisher?: string;
+  role?: Role;
+  ts?: number;
+} | null> {
   const members = await listManagementGroupMembers();
-  if (!members.length) return null;
+  if (!members?.length) return null;
 
-  const limit = pLimit(6);
-  const attempts = await Promise.all(
-    members.map(async (m) => {
-      const doc = await fetchQdnDocument(m.name, WIKI_MENU_IDENTIFIER);
-      if (!doc?.data64) return null;
-      try {
-        const json = atob(doc.data64);
-        const parsed = JSON.parse(json) as { items: WikiMenuItem[] };
-        const ts = Number(doc.updated ?? doc.created ?? 0) || Date.now();
-        return { items: parsed.items || [], publisher: m.name, role: m.isAdmin ? 'admin' : 'member', ts };
-      } catch {
-        return null;
-      }
-    })
+  // 1) Discover who has the menu + their latest ts (newest admin wins)
+  const discoveries = await Promise.all(
+    members.map(m =>
+      limit(async () => {
+        try {
+          const res = await qortalRequest({
+            action: 'SEARCH_QDN_RESOURCES',
+            service: 'DOCUMENT',
+            name: m.name,
+            identifier: WIKI_MENU_IDENTIFIER,
+          });
+
+          const rows = Array.isArray(res) ? res : (res ? [res] : []);
+          if (!rows.length) return null;
+
+          const best = rows
+            .filter((r: any) => (r.identifier) === (WIKI_MENU_IDENTIFIER))
+            .sort(
+              (a: any, b: any) =>
+                (Number(b.updated ?? b.created ?? 0) || 0) -
+                (Number(a.updated ?? a.created ?? 0) || 0)
+            )[0];
+
+          if (!best) return null;
+
+          return {
+            name: m.name as string,
+            role: (m.isAdmin ? 'admin' : 'member') as Role,
+            ts: Number(best.updated ?? best.created ?? 0) || 0,
+          };
+        } catch {
+          return null;
+        }
+      })
+    )
   );
 
-  const valid = attempts.filter(Boolean) as Array<{ items: WikiMenuItem[]; publisher: string; role: 'admin' | 'member'; ts: number }>;
-  if (!valid.length) return null;
+  const candidates = (discoveries.filter(Boolean) as Array<{ name: string; role: Role; ts: number }>);
+  if (!candidates.length) return null;
 
-  const admin = valid.filter((v) => v.role === 'admin').sort((a, b) => b.ts - a.ts)[0];
-  const member = valid.filter((v) => v.role === 'member').sort((a, b) => b.ts - a.ts)[0];
-  return admin ?? member ?? null;
+  const newestAdmin = candidates.filter(c => c.role === 'admin').sort((a, b) => b.ts - a.ts)[0];
+  const newestMember = candidates.filter(c => c.role === 'member').sort((a, b) => b.ts - a.ts)[0];
+  const pick = newestAdmin ?? newestMember;
+  if (!pick) return null;
+
+  // 2) Fetch chosen publisher’s doc (base64), decode → JSON ARRAY of WikiMenuItem
+  const data64 = await fetchQdnBase64(pick.name, WIKI_MENU_IDENTIFIER);
+  if (!data64) return null;
+
+  let itemsRaw: unknown;
+  try {
+    itemsRaw = await base64ToObject(data64);
+  } catch {
+    return null;
+  }
+
+  if (!Array.isArray(itemsRaw)) return null;
+
+  // 3) Normalize and validate items
+  const items: WikiMenuItem[] = (itemsRaw as any[]).map((it) => ({
+    id: (it?.id),
+    title: String(it?.title ?? '').trim(),
+    tags: Array.isArray(it?.tags) ? it.tags.map((t: any) => String(t).trim()).filter(Boolean) : [],
+  })).filter(it => it.id && it.title);
+
+  return { items, publisher: pick.name, role: pick.role, ts: pick.ts };
 }
 
 export async function saveWikiMenu(items: WikiMenuItem[], publisherName: string) {
   const ok = await isNameInManagementGroup(publisherName);
   if (!ok) throw new Error('You are not a member of Q-Assets-Management; cannot publish menu.');
-  const payload = btoa(JSON.stringify({ items }));
+  const payload = await objectToBase64(items);
   await qortalRequest({
     action: 'PUBLISH_QDN_RESOURCE',
     name: publisherName,

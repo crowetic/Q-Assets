@@ -47,6 +47,8 @@ import EditToggleButton from '../components/buttons/EditToggleButton';
 import { Edit } from '@mui/icons-material';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Q_ASSET_VERSION } from '../constants/qdnConstants';
+import { prepareHtmlForPublish } from '../utils/publicationPublisher';
+import PublishedHtmlRenderer from '../components/PublishedHtmlRenderer';
 
 // ---- Hard-coded defaults remain source of truth when no remote exists ----
 type InfoSection = {
@@ -209,8 +211,8 @@ const makeDefaultSections = (theme: Theme): InfoSection[] => [
     body: (
       <>
         <Typography>
-          Orders are assembled server-side but always signed client-side via{' '}
-          <code>qortalRequest</code>. Publications are signed and stored on QDN distributedly.
+          Q-Assets are on-chain assets. They are treated exactly the same as QORT by the Qortal
+          Core. <code>qortalRequest</code>. Publications are signed and stored on QDN distributedly.
         </Typography>
       </>
     ),
@@ -258,43 +260,35 @@ const makeDefaultSections = (theme: Theme): InfoSection[] => [
   },
 ];
 
+const normId = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
+
+type RemoteRow = { html: string; publisher?: string; role?: 'admin' | 'member'; ts?: number };
+
 export default function Information() {
   const theme = useTheme();
   const { name: userName, address: userAddress } = useAuth();
-  const [isMember, setIsMember] = useState(false);
-  const [role, setRole] = useState<'admin' | 'editor' | null>(null);
-
   const { hash } = useLocation();
   const navigate = useNavigate();
 
-  // Build defaults from theme
-  const DEFAULT_SECTIONS = useMemo(() => makeDefaultSections(theme), [theme]);
+  const asMeta = (arr: { id: string; title?: string; tags?: string[] }[]) =>
+    arr
+      .map((m) => ({ id: normId(m.id), title: m.title || '', tags: m.tags || [] }))
+      .filter((m) => m.id);
 
-  // Menu (TOC) state — seed from defaults once available
-  const [menu, setMenu] = useState<WikiMenuItem[]>([]);
-  useEffect(() => {
-    if (menu.length === 0 && DEFAULT_SECTIONS.length > 0) {
-      setMenu(DEFAULT_SECTIONS.map(({ id, title, tags }) => ({ id, title, tags })));
-    }
-  }, [DEFAULT_SECTIONS, menu.length]);
+  /* ---------- Defaults (normalized IDs for consistent lookups) ---------- */
+  const DEFAULT_SECTIONS = useMemo(
+    () => makeDefaultSections(theme).map((s) => ({ ...s, id: normId(s.id) })),
+    [theme]
+  );
+  const DEFAULT_BY_ID = useMemo(
+    () => Object.fromEntries(DEFAULT_SECTIONS.map((s) => [s.id, s])),
+    [DEFAULT_SECTIONS]
+  );
 
-  // Remote overrides (per section)
-  const [remote, setRemote] = useState<
-    Record<string, { html: string; publisher?: string; role?: 'admin' | 'member'; ts?: number }>
-  >({});
+  /* ------------------------------ Membership ----------------------------- */
+  const [role, setRole] = useState<'admin' | 'editor' | null>(null);
+  const [isMember, setIsMember] = useState(false);
 
-  // Search
-  const [q, setQ] = useState('');
-  const qnorm = q.trim().toLowerCase();
-
-  // Editor state
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [htmlDraft, setHtmlDraft] = useState<string>('');
-
-  // Menu editor dialog
-  const [openMenuDlg, setOpenMenuDlg] = useState(false);
-
-  // load membership
   useEffect(() => {
     let cancel = false;
     (async () => {
@@ -303,9 +297,7 @@ export default function Information() {
           isAddressAdminInManagementGroup(userAddress),
           isUserInManagementGroup({ address: userAddress, name: userName }),
         ]);
-        if (!userAddress && !userName) useAuth();
         if (cancel) return;
-
         if (admin) {
           setRole('admin');
           setIsMember(true);
@@ -328,33 +320,28 @@ export default function Information() {
     };
   }, [userAddress, userName]);
 
-  // Load sections + menu (independent from membership)
+  /* --------------------------- Menu & Remote Rows ------------------------ */
+  const [menu, setMenu] = useState<WikiMenuItem[]>([]);
+  const [remote, setRemote] = useState<Record<string, RemoteRow>>({});
+
+  // seed menu with defaults first (so page renders instantly)
+  useEffect(() => {
+    if (menu.length === 0 && DEFAULT_SECTIONS.length) {
+      setMenu(DEFAULT_SECTIONS.map(({ id, title, tags }) => ({ id, title, tags })));
+    }
+  }, [DEFAULT_SECTIONS, menu.length]);
+
+  // fetch remote sections + (optional) remote menu
   useEffect(() => {
     let cancel = false;
     (async () => {
       try {
-        const rows = await loadAllWikiSections();
-        if (!cancel) {
-          const map: Record<
-            string,
-            { html: string; publisher?: string; role?: 'admin' | 'member'; ts?: number }
-          > = {};
-          for (const r of rows) {
-            if (r.id && r.html) {
-              map[r.id] = {
-                html: r.html,
-                publisher: r.publisher,
-                role: r.publisherRole,
-                ts: r.timestamp,
-              };
-            }
-          }
-          setRemote(map);
+        const rmenu = await loadWikiMenu();
+        if (!cancel && rmenu?.items?.length) {
+          setMenu(rmenu.items.map((m) => ({ ...m, id: normId(m.id) })));
         }
-        const remoteMenu = await loadWikiMenu();
-        if (!cancel && remoteMenu?.items?.length) setMenu(remoteMenu.items);
       } catch (e) {
-        console.error('Info load error:', e);
+        console.error('Info load menu error:', e);
       }
     })();
     return () => {
@@ -362,68 +349,110 @@ export default function Information() {
     };
   }, []);
 
-  // map defaults by id for quick lookup
-  const DEFAULT_BY_ID = useMemo(
-    () => Object.fromEntries(DEFAULT_SECTIONS.map((s) => [s.id, s])),
-    [DEFAULT_SECTIONS]
-  );
+  // Load sections for whatever list we currently have
+  useEffect(() => {
+    let cancel = false;
+
+    (async () => {
+      try {
+        // If we already have a menu from QDN, use it; otherwise fall back to defaults
+        const meta = asMeta(menu.length ? menu : DEFAULT_SECTIONS);
+
+        const rows = await loadAllWikiSections(meta);
+        if (cancel) return;
+
+        const folded: Record<string, RemoteRow> = {};
+        for (const r of rows || []) {
+          const id = normId((r as any).id);
+          const html = (r as any).html ?? (r as any).content ?? '';
+          if (!id || !html) continue;
+          const ts = Number((r as any).timestamp) || 0;
+          const prev = folded[id];
+          if (!prev || ts > (prev.ts || 0)) {
+            folded[id] = {
+              html,
+              publisher: (r as any).publisher,
+              role: (r as any).publisherRole,
+              ts,
+            };
+          }
+        }
+        setRemote(folded);
+      } catch (e) {
+        console.error('Info load sections error:', e);
+      }
+    })();
+
+    return () => {
+      cancel = true;
+    };
+  }, [menu, DEFAULT_SECTIONS]);
+
+  /* ----------------------------- Search / TOC ---------------------------- */
+  const [q, setQ] = useState('');
+  const qnorm = q.trim().toLowerCase();
+
+  const filteredMenu = useMemo(() => {
+    if (!qnorm) return menu;
+    return menu.filter((m) => {
+      const d = DEFAULT_BY_ID[normId(m.id)];
+      const defaultText = d ? String((d.body as any)?.props?.children ?? '').toLowerCase() : '';
+      const overrideHtml = remote[normId(m.id)]?.html?.toLowerCase() ?? '';
+      return (
+        (m.title || '').toLowerCase().includes(qnorm) ||
+        (m.tags || []).some((t) => t.toLowerCase().includes(qnorm)) ||
+        defaultText.includes(qnorm) ||
+        overrideHtml.includes(qnorm)
+      );
+    });
+  }, [menu, qnorm, remote, DEFAULT_BY_ID]);
+
+  const goto = (id: string) => navigate(`#${normId(id)}`, { replace: false });
+
+  /* ------------------------- Current section resolve --------------------- */
+  const currentId = useMemo(() => {
+    const hid = normId((hash || '').replace(/^#/, ''));
+    if (hid && menu.some((m) => normId(m.id) === hid)) return hid;
+    return normId(menu[0]?.id) || DEFAULT_SECTIONS[0]?.id || 'about';
+  }, [hash, menu, DEFAULT_SECTIONS]);
+
+  const currentMenuItem = menu.find((m) => normId(m.id) === currentId);
+  const nid = normId(currentMenuItem?.id);
+  const currentOverride = nid ? remote[nid] : undefined;
+  const currentDefault = nid ? DEFAULT_BY_ID[nid] : undefined;
+
+  /* ------------------------------ Editor state --------------------------- */
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [htmlDraft, setHtmlDraft] = useState<string>('');
+
+  const startEdit = (id: string) => {
+    const n = normId(id);
+    setEditingId(n);
+    setHtmlDraft(
+      remote[n]?.html ?? (currentDefault ? renderToStaticMarkup(currentDefault.body) : '')
+    );
+  };
 
   useEffect(() => {
     if (!editingId) return;
     let html = remote[editingId]?.html ?? '';
     if (!html) {
       const def = DEFAULT_BY_ID[editingId];
-      if (def) {
-        // render the JSX body to a static HTML string
-        html = renderToStaticMarkup(def.body);
-      }
+      if (def) html = renderToStaticMarkup(def.body);
     }
     setHtmlDraft(html);
   }, [editingId, remote, DEFAULT_BY_ID]);
 
-  // current section id: from hash or first menu item
-  const currentId = useMemo(() => {
-    const id = (hash || '').replace(/^#/, '');
-    if (id && menu.some((m) => m.id === id)) return id;
-    return menu[0]?.id || DEFAULT_SECTIONS[0]?.id || 'about';
-  }, [hash, menu, DEFAULT_SECTIONS]);
-
-  // filtered TOC items for search
-  const filteredMenu = useMemo(() => {
-    if (!qnorm) return menu;
-    return menu.filter((m) => {
-      const d = DEFAULT_BY_ID[m.id];
-      const localText = d ? String((d.body as any)?.props?.children ?? '').toLowerCase() : '';
-      const remoteHtml = remote[m.id]?.html?.toLowerCase() ?? '';
-      return (
-        m.title.toLowerCase().includes(qnorm) ||
-        (m.tags || []).some((t) => t.toLowerCase().includes(qnorm)) ||
-        localText.includes(qnorm) ||
-        remoteHtml.includes(qnorm)
-      );
-    });
-  }, [menu, qnorm, remote, DEFAULT_BY_ID]);
-
-  // navigation helper
-  const goto = (id: string) => navigate(`#${id}`, { replace: false });
-
-  // open editor
-  const startEdit = (id: string) => {
-    setEditingId(id);
-    setHtmlDraft(remote[id]?.html ?? '');
-  };
-
-  // save editor
   const saveEdit = async () => {
     if (!editingId || !userName) return;
     try {
-      await publishWikiSection(editingId, htmlDraft, userName, userAddress);
-      console.log('userName', userName);
+      const prepared = prepareHtmlForPublish(htmlDraft, theme);
+      await publishWikiSection(editingId, prepared, userName, userAddress);
       setRemote((m) => ({
         ...m,
         [editingId]: {
           ...(m[editingId] || {}),
-          html: htmlDraft,
+          html: prepared,
           publisher: userName,
           ts: Date.now(),
         },
@@ -436,7 +465,9 @@ export default function Information() {
     }
   };
 
-  // menu editing helpers
+  /* ---------------------------- Menu editing UI -------------------------- */
+  const [openMenuDlg, setOpenMenuDlg] = useState(false);
+
   const moveItem = (idx: number, dir: -1 | 1) =>
     setMenu((list) => {
       const a = [...list];
@@ -445,12 +476,14 @@ export default function Information() {
       [a[idx], a[j]] = [a[j], a[idx]];
       return a;
     });
+
   const removeItem = (idx: number) => setMenu((list) => list.filter((_, i) => i !== idx));
   const addItem = () => setMenu((list) => [...list, { id: '', title: '', tags: [] }]);
+
   const saveMenu = async () => {
     if (!userName) return;
     const cleaned = menu
-      .map((m) => ({ ...m, id: m.id.trim(), title: m.title.trim() }))
+      .map((m) => ({ ...m, id: normId(m.id), title: (m.title || '').trim() }))
       .filter((m) => m.id && m.title);
     try {
       await saveWikiMenu(cleaned, userName);
@@ -461,10 +494,7 @@ export default function Information() {
     }
   };
 
-  // grab current section’s display data
-  const currentMenuItem = menu.find((m) => m.id === currentId);
-  const currentOverride = currentMenuItem ? remote[currentMenuItem.id] : undefined;
-  const currentDefault = currentMenuItem ? DEFAULT_BY_ID[currentMenuItem.id] : undefined;
+  /* -------------------------------- Render -------------------------------- */
 
   return (
     <Box sx={{ p: { xs: 2, md: 3 }, display: 'grid', gap: 2 }}>
@@ -529,7 +559,7 @@ export default function Information() {
             {filteredMenu.map((m) => (
               <ListItemButton
                 key={m.id || Math.random()}
-                selected={m.id === currentId}
+                selected={normId(m.id) === currentId}
                 onClick={() => m.id && goto(m.id)}
                 sx={{ borderRadius: 1, mb: 0.25 }}
               >
@@ -542,7 +572,7 @@ export default function Information() {
           </List>
         </Paper>
 
-        {/* Content: ONLY the current section */}
+        {/* Content */}
         <Box sx={{ display: 'grid', gap: 2 }}>
           {currentMenuItem ? (
             <Paper id={currentMenuItem.id} sx={{ p: 2, scrollMarginTop: 24 }}>
@@ -561,14 +591,9 @@ export default function Information() {
               <Divider sx={{ my: 1.25 }} />
 
               {currentOverride?.html ? (
-                <Box
-                  sx={{ '& h1,h2,h3,h4,h5,h6': { mt: 2 }, '& p': { mt: 1.5 } }}
-                  dangerouslySetInnerHTML={{ __html: currentOverride.html }}
-                />
+                <PublishedHtmlRenderer html={currentOverride.html} />
               ) : currentDefault ? (
-                <Box sx={{ display: 'grid', gap: 1 }}>
-                  {currentDefault.body /* ✅ render element directly */}
-                </Box>
+                <Box sx={{ display: 'grid', gap: 1 }}>{currentDefault.body}</Box>
               ) : (
                 <Typography variant="body2" color="text.secondary">
                   No content yet. (Define locally or publish via QDN.)
@@ -602,7 +627,7 @@ export default function Information() {
         </Box>
       </Box>
 
-      {/* Section Editor Dialog */}
+      {/* Section Editor */}
       <Dialog open={Boolean(editingId)} onClose={() => setEditingId(null)} fullWidth maxWidth="md">
         <DialogTitle>Edit Section</DialogTitle>
         <DialogContent dividers>

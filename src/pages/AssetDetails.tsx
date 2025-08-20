@@ -29,7 +29,7 @@ import AddIcon from '@mui/icons-material/Add';
 import { useParams } from 'react-router-dom';
 import { fetchAssetAvatar } from '../utils/fetchAssetAvatar';
 import { fetchAssetPublication } from '../utils/fetchAssetPublication';
-import { useAuth } from 'qapp-core';
+import { Spacer, useAuth } from 'qapp-core';
 import { getPrimaryAccountName } from '../utils/qortalApi';
 import { getAssetIdentifiers } from '../constants/qdnConstants';
 import { fileToBase64 } from '../utils/data';
@@ -47,6 +47,7 @@ import {
   ensureAssetMini,
   readAssetsIndexSync,
 } from '../bootstrap/assetsBootstrap';
+import { prepareHtmlForPublish } from '../utils/publicationPublisher';
 
 type Enriched = {
   assetId: number;
@@ -89,6 +90,12 @@ export default function AssetDetail() {
     assetPub?.customFields
       ? Object.entries(assetPub.customFields).map(([key, value]) => ({ key, value }))
       : []
+  );
+  // near other dialog state
+  const [openDivDlg, setOpenDivDlg] = useState(false);
+  const [divEnabled, setDivEnabled] = useState<boolean>(assetPub?.dividends ?? false);
+  const [divPeriod, setDivPeriod] = useState<'1W' | '2W' | '1M' | '3M' | '6M' | '1Y'>(
+    assetPub?.dividendPeriod ?? '1M'
   );
 
   const isIssuer = asset && userAddress && asset.owner === userAddress;
@@ -215,6 +222,8 @@ export default function AssetDetail() {
         ? Object.entries(assetPub.customFields).map(([key, value]) => ({ key, value }))
         : []
     );
+    setDivEnabled(Boolean(assetPub?.dividends));
+    setDivPeriod((assetPub?.dividendPeriod as any) ?? '1M');
   }, [assetPub]);
 
   if (!asset) return <Typography>Loading asset...</Typography>;
@@ -250,10 +259,16 @@ export default function AssetDetail() {
             mb: 4,
             justifyContent: 'center',
             textAlign: 'center',
-            maxWidth: '30%',
+            maxWidth: '100%',
+            minWidth: '33.3%',
           }}
         >
-          {avatar && <Avatar src={avatar} sx={{ width: '10rem', height: '10rem' }} />}
+          {avatar && (
+            <Avatar
+              src={avatar}
+              sx={{ minWidth: '10rem', minHeight: '10rem', maxWidth: '20rem', maxHeight: '20rem' }}
+            />
+          )}
           <Box>
             <Typography variant="h4">{asset.name}</Typography>
             <Typography variant="subtitle1">
@@ -261,6 +276,22 @@ export default function AssetDetail() {
             </Typography>
             <Box mt={1}>
               <Chip label={`Asset ID: ${asset.assetId}`} />
+              <Spacer />
+              <Chip
+                label={`Dividends: ${assetPub?.dividends ? 'Yes' : 'No'}`}
+                color={assetPub?.dividends ? 'success' : 'default'}
+                variant={assetPub?.dividends ? 'filled' : 'outlined'}
+              />
+              {assetPub?.dividends && assetPub?.dividendPeriod && (
+                <Chip label={`Period: ${assetPub.dividendPeriod}`} color="secondary" />
+              )}
+              {canPublish ? (
+                <Box sx={{ mt: 1 }}>
+                  <InfoOutlineButton onClick={() => setOpenDivDlg(true)}>
+                    Edit Dividends
+                  </InfoOutlineButton>
+                </Box>
+              ) : null}
               <Typography>
                 Divisible:{' '}
                 <span style={{ color: theme.palette.secondary.light }}>
@@ -281,7 +312,10 @@ export default function AssetDetail() {
       {/* Grid Info */}
       <Grid container spacing={1} sx={{ display: 'flex', flexDirection: 'row' }}>
         {/* Supply */}
-        <Grid size={{ sm: 4, md: 4, lg: 4 }} minHeight={{ sm: '10rem', md: '10rem', lg: '10rem' }}>
+        <Grid
+          size={{ xs: 12, sm: 12, md: 12, lg: 6 }}
+          minHeight={{ sm: '10rem', md: '10rem', lg: '10rem' }}
+        >
           <Typography variant="h4" textAlign="center">
             Supply
           </Typography>
@@ -290,9 +324,11 @@ export default function AssetDetail() {
               display: 'flex',
               flexDirection: 'column',
               alignContent: 'center',
+              alignItems: 'center',
               justifyContent: 'space-evenly',
               width: '100%',
               minHeight: '7rem',
+              height: '50%',
             }}
           >
             <CardContent sx={{}}>
@@ -314,7 +350,10 @@ export default function AssetDetail() {
         </Grid>
 
         {/* Issuer */}
-        <Grid size={{ sm: 4, md: 4, lg: 4 }} sx={{ display: 'flex', flexDirection: 'column' }}>
+        <Grid
+          size={{ xs: 12, sm: 12, md: 12, lg: 6 }}
+          minHeight={{ sm: '10rem', md: '10rem', lg: '10rem' }}
+        >
           <Typography variant="h4" textAlign="center">
             Issuer
           </Typography>
@@ -323,9 +362,11 @@ export default function AssetDetail() {
               display: 'flex',
               flexDirection: 'column',
               alignContent: 'center',
+              alignItems: 'center',
               justifyContent: 'space-evenly',
               width: '100%',
               minHeight: '7rem',
+              height: '50%',
             }}
           >
             <CardContent sx={{}}>
@@ -339,39 +380,26 @@ export default function AssetDetail() {
               </Typography>
             </CardContent>
           </Card>
-          {canPublish ? (
-            <Box
-              sx={{
-                mt: 'auto',
-                p: 1,
-                display: 'flex',
-                alignContent: 'center',
-                justifyContent: 'space-evenly',
-              }}
-            >
-              <InfoOutlineButton onClick={() => setOpenNewsDlg(true)}>
-                Add/Edit News
-              </InfoOutlineButton>
-              <InfoOutlineButton onClick={() => setOpenExFieldDlg(true)}>
-                Add/Edit Custom Fields
-              </InfoOutlineButton>
-            </Box>
-          ) : null}
         </Grid>
 
         {/* Primary Asset Group */}
-        <Grid size={{ sm: 4, md: 4, lg: 4 }} sx={{ display: 'flex', flexDirection: 'column' }}>
+        <Grid
+          size={{ xs: 12, sm: 12, md: 12, lg: 12 }}
+          minHeight={{ sm: '10rem', md: '10rem', lg: '10rem' }}
+        >
           <Typography variant="h4" textAlign="center">
-            Primary Asset Group
+            Asset Groups
           </Typography>
           <Card
             sx={{
               display: 'flex',
               flexDirection: 'column',
               alignContent: 'center',
+              alignItems: 'center',
               justifyContent: 'space-evenly',
               width: '100%',
               minHeight: '7rem',
+              height: '50%',
             }}
           >
             <CardContent sx={{}}>
@@ -389,34 +417,170 @@ export default function AssetDetail() {
                       {assetPub.primaryGroup.id}
                     </span>
                   </Typography>
+                  {canPublish ? (
+                    <Box
+                      sx={{
+                        mt: 'auto',
+                        p: 1,
+                        display: 'flex',
+                        alignContent: 'center',
+                        justifyContent: 'space-evenly',
+                      }}
+                    >
+                      <InfoOutlineButton onClick={() => setOpenPrimaryDlg(true)}>
+                        Add/Edit Primary Group
+                      </InfoOutlineButton>
+                    </Box>
+                  ) : null}
                 </>
               ) : (
                 <Typography color="text.secondary">No group data</Typography>
               )}
             </CardContent>
           </Card>
-          {canPublish ? (
-            // <>
-            <Box
-              sx={{
-                mt: 'auto',
-                p: 1,
-                display: 'flex',
-                alignContent: 'center',
-                justifyContent: 'space-evenly',
-              }}
-            >
-              <InfoOutlineButton onClick={() => setOpenPrimaryDlg(true)}>
-                Add/Edit Primary Group
-              </InfoOutlineButton>
-              <InfoOutlineButton onClick={() => setOpenExtraDlg(true)}>
-                Add/Edit Extra Groups
-              </InfoOutlineButton>
+          {(assetPub?.extraGroups?.length ?? 0) > 0 ? (
+            <Box>
+              <Typography variant="h4" textAlign="center">
+                Other Groups
+              </Typography>
+              <Card sx={{ mt: 1 }}>
+                <CardContent>
+                  <Stack spacing={1}>
+                    {assetPub!.extraGroups!.map((g, i) => (
+                      <>
+                        <Typography>
+                          Name:{' '}
+                          <span style={{ color: theme.palette.primary.contrastText }}>
+                            {g.name}
+                          </span>
+                        </Typography>
+                        <Typography>
+                          GroupID:{' '}
+                          <span style={{ color: theme.palette.secondary.light }}>{g.id}</span>
+                        </Typography>
+                      </>
+                    ))}
+                  </Stack>
+                </CardContent>
+                {canPublish ? (
+                  <Box sx={{ p: 1, display: 'flex', justifyContent: 'center' }}>
+                    <InfoOutlineButton onClick={() => setOpenExtraDlg(true)}>
+                      Add/Edit Extra Groups
+                    </InfoOutlineButton>
+                  </Box>
+                ) : null}
+              </Card>
             </Box>
-          ) : // </>
-          null}
+          ) : (
+            canPublish && (
+              <Box>
+                {/* If no extra groups, hide the empty card but still allow issuer to add */}
+                <Card
+                  sx={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignContent: 'center',
+                    alignItems: 'center',
+                    justifyContent: 'space-evenly',
+                    width: '100%',
+                  }}
+                >
+                  <CardContent>
+                    <Typography color="text.secondary">No extra groups yet.</Typography>
+                  </CardContent>
+                  <Box sx={{ p: 1, display: 'flex', justifyContent: 'center' }}>
+                    <InfoOutlineButton onClick={() => setOpenExtraDlg(true)}>
+                      Add Extra Groups
+                    </InfoOutlineButton>
+                  </Box>
+                </Card>
+              </Box>
+            )
+          )}
         </Grid>
       </Grid>
+      <Box mt={1}>
+        <Box display="flex" alignItems="center" justifyContent="center" mb={1} mt={4}>
+          <Typography variant="h4" textAlign="center">
+            News
+          </Typography>
+        </Box>
+        <Card
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignContent: 'center',
+            alignItems: 'center',
+            justifyContent: 'space-evenly',
+          }}
+        >
+          <CardContent sx={{}}>
+            {!assetPub?.news?.length ? (
+              <Typography color="text.secondary" textAlign="center">
+                {' '}
+                No Published News
+              </Typography>
+            ) : (
+              <Stack spacing={1}>
+                {assetPub.news
+                  .slice()
+                  .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+                  .reverse()
+                  .map((n, i) => (
+                    <Box
+                      key={i}
+                      sx={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 1 }}
+                    >
+                      <Typography variant="body2" color="text.secondary">
+                        {new Date(n.date).toLocaleDateString()}
+                      </Typography>
+                      <Typography variant="body1">{n.title}</Typography>
+                      {n.postId ? (
+                        <Link
+                          href={`/APP/Q-Blog/${n.postId}`} //TODO - Add modal with viewer similar to what was done on Q-Mintership. ALSO - ADD NEWS PUBLISHING SO THAT RELIANCE UPON Q-BLOG LINKS ISN'T NECESSARY.
+                          target=""
+                          rel="noopener"
+                        >
+                          Open
+                        </Link>
+                      ) : null}
+                    </Box>
+                  ))}
+              </Stack>
+            )}
+            {canPublish ? (
+              <Box
+                sx={{
+                  mt: 'auto',
+                  p: 1,
+                  display: 'flex',
+                  alignContent: 'center',
+                  justifyContent: 'space-evenly',
+                }}
+              >
+                <InfoOutlineButton onClick={() => setOpenNewsDlg(true)}>
+                  Add/Edit News
+                </InfoOutlineButton>
+              </Box>
+            ) : null}
+          </CardContent>
+        </Card>
+        {canPublish ? (
+          <Box
+            sx={{
+              mt: 'auto',
+              p: 1,
+              display: 'flex',
+              alignContent: 'center',
+              justifyContent: 'space-evenly',
+            }}
+          >
+            <InfoOutlineButton onClick={() => setOpenExFieldDlg(true)}>
+              Add/Edit Custom Fields
+            </InfoOutlineButton>
+          </Box>
+        ) : null}
+      </Box>
 
       {/* Genesis Publication */}
       <Box mt={4}>
@@ -427,7 +591,7 @@ export default function AssetDetail() {
         </Box>
 
         {assetPub?.html ? (
-          <Paper elevation={2} sx={{ p: 3, backgroundColor: theme.palette.primary.dark }}>
+          <Paper elevation={2} sx={{ p: 3, backgroundColor: theme.palette.primary.light }}>
             <Box
               sx={{
                 typography: 'body1',
@@ -754,6 +918,54 @@ export default function AssetDetail() {
           </Button>
         </DialogActions>
       </Dialog>
+      <Dialog open={openDivDlg} onClose={() => setOpenDivDlg(false)} fullWidth maxWidth="xs">
+        <DialogTitle>Dividends</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <FormControlLabel
+              control={
+                <Switch checked={divEnabled} onChange={(e) => setDivEnabled(e.target.checked)} />
+              }
+              label="This asset pays dividends"
+            />
+            <TextField
+              select
+              label="Dividend Period"
+              value={divPeriod}
+              onChange={(e) => setDivPeriod(e.target.value as any)}
+              size="small"
+              disabled={!divEnabled}
+              SelectProps={{ native: true }}
+            >
+              {['1W', '2W', '1M', '3M', '6M', '1Y'].map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </TextField>
+            <Typography variant="caption" color="text.secondary">
+              Period is declarative metadata; payouts are enforced by your asset’s logic/process.
+            </Typography>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenDivDlg(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              setAssetPub((prev) => ({
+                ...(prev ?? {}),
+                dividends: divEnabled,
+                dividendPeriod: divEnabled ? divPeriod : undefined,
+              }));
+              setOpenDivDlg(false);
+            }}
+          >
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {/* End of Dialogs ------------------------------------------------------------------------------------------------- */}
 
       {/* Editor for Issuer */}
@@ -804,13 +1016,19 @@ export default function AssetDetail() {
               onClick={async () => {
                 const pub: AssetPublication = {
                   description: asset.description,
-                  html,
+                  html: prepareHtmlForPublish(html, theme),
                   primaryGroup: assetPub?.primaryGroup ?? undefined,
                   extraGroups: assetPub?.extraGroups ?? [],
                   news: assetPub?.news ?? [],
+                  dividends: assetPub?.dividends ?? divEnabled,
+                  dividendPeriod:
+                    (assetPub?.dividends ?? divEnabled)
+                      ? (assetPub?.dividendPeriod ?? divPeriod)
+                      : undefined,
                   customFields: assetPub?.customFields ?? {},
                 };
                 await publishAssetPublication(userName as string, asset.name, pub);
+
                 alert('Publication updated!');
                 setAssetPub(pub);
                 setEditing(false); // close after save, because we’re merciful

@@ -16,6 +16,8 @@ export interface AssetGroupMetadata {
   tertiaryGroupIsPrivate?: boolean;
 }
 
+export type DividendPeriod = '1W' | '2W' | '1M' | '3M' | '6M' | '1Y';
+
 export interface AssetPublication {
   description?: string;
   html?: string; // rendered in a rich display section
@@ -32,6 +34,8 @@ export interface AssetPublication {
     joinLink: string;
     isPrivate?: boolean;
   }[];
+  dividends?: boolean;                 // dividend-paying asset?
+  dividendPeriod?: DividendPeriod;     // frequency, if dividends==true
   news?: {
     title: string;
     date: string; // ISO format
@@ -39,6 +43,20 @@ export interface AssetPublication {
   }[];
   customFields?: Record<string, string>; // arbitrary key/val metadata
 }
+
+
+
+export function normalizePublication(pub?: AssetPublication): AssetPublication {
+  const p: AssetPublication = { ...(pub ?? {}) };
+  if (p.dividends == null) p.dividends = false;
+  if (p.dividends && !isValidDividendPeriod(p.dividendPeriod)) p.dividendPeriod = '1M';
+  return p;
+}
+export function isValidDividendPeriod(x: any): x is DividendPeriod {
+  return ['1W','2W','1M','3M','6M','1Y'].includes(x);
+}
+
+
 
 export function convertGroupMetaToPublication(meta: AssetGroupMetadata): Pick<AssetPublication, 'primaryGroup' | 'extraGroups'> {
   const {

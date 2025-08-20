@@ -189,7 +189,7 @@ export default function IssueAsset() {
     <Box
       sx={{
         width: '100%',
-        maxWidth: 'calc(90vw - 10rem)',
+        maxWidth: 'calc(95vw - 10rem)',
         minHeight: '75vh',
         display: 'flex',
         flexDirection: 'column',
@@ -204,12 +204,13 @@ export default function IssueAsset() {
           color="primary.contrastText"
           textAlign="center"
           padding="0.2rem"
+          fontWeight={700}
         >
           Issue New Asset
         </Typography>
 
         {/* Asset Info */}
-        <Typography variant="h5" color="primary.contrastText">
+        <Typography variant="h5" fontWeight={600} color="primary.contrastText">
           Asset Information
         </Typography>
         <TextField
@@ -244,7 +245,7 @@ export default function IssueAsset() {
         {/* Avatar */}
         {!avatarBase64 && (
           <>
-            <Typography variant="h5" color="primary.contrastText">
+            <Typography variant="h5" fontWeight={550} color="primary.contrastText">
               Include Asset Avatar?
             </Typography>
             <InfoOutlineButton size="small" variant="outlined" sx={{ mb: 2 }}>
@@ -306,7 +307,7 @@ export default function IssueAsset() {
         <Divider sx={{ my: 3 }} />
 
         {/* Group Info */}
-        <Typography variant="h5" color="primary.contrastText">
+        <Typography variant="h5" fontWeight={600} color="primary.contrastText">
           Asset-Related Group Data
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -339,15 +340,16 @@ export default function IssueAsset() {
             <Checkbox
               checked={false} // set to groupIsPrivate later
               onChange={(e) => setGroupIsPrivate(e.target.checked)}
+              disabled={true}
             />
           }
-          label="Make Private? (not active yet...)"
+          label="Make Private? (Private Asset Issuance Feature Coming Soon)"
         />
 
         <Divider sx={{ my: 3 }} />
 
         {/* Genesis Publication */}
-        <Typography variant="h5" color="primary.contrastText" gutterBottom>
+        <Typography variant="h5" fontWeight={700} color="primary.contrastText" gutterBottom>
           Genesis Publication
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>

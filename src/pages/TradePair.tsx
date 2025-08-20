@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import {
   Box,
   Paper,
@@ -24,21 +24,26 @@ import {
   fetchBids,
   createOrderAndBroadcast,
   cancelOrderAndBroadcast,
-  getRecentTrades,
   getAddressOrdersByPair,
+  fetchQortToAssetTrades,
   type BookOrder,
   NormalizedOrder,
 } from '../utils/markets';
-import { PriceSparkline, VolumeBars, DepthChart } from '../components/PairCharts';
-import { buildOhlc, toCloseLine, buildDepth } from '../utils/chartTransforms';
+import { VolumeBars, DepthChart } from '../components/trade/PairCharts';
+import { buildOhlc, buildDepth, buildOhlcStrict } from '../utils/chartTransforms';
 // import SuccessButton from '../components/buttons/SuccessButton'; // +++
 import SellButton from '../components/buttons/SellButton';
 import BuyButton from '../components/buttons/BuyButton';
 import { getAssetBalances } from '../utils/qortalAssetRequests';
+import PairMyFills from '../components/trade/PairMyFills';
+import { getTrades, envelopesToFills } from '../utils/markets';
+import type { FillEvent } from '../utils/markets';
+import CandleChart from '../components/trade/CandleCharts';
 
 // ---- Types for adapter data (adjust when wiring real endpoints)
 // type Order = { price: number; quantity: number }; // in human QORT/asset units
 type Trade = { price: number; quantity: number; side: 'buy' | 'sell'; ts: number };
+// type SparkPoint = { x: number; y: number };
 
 export default function TradePair() {
   const { assetId } = useParams<{ assetId: string }>();
@@ -47,21 +52,49 @@ export default function TradePair() {
   const [divisible, setDivisible] = useState(true);
   const [loading, setLoading] = useState(true);
   const [myOrders, setMyOrders] = useState<NormalizedOrder[]>([]);
+  const [myFills, setMyFills] = useState<FillEvent[]>([]);
 
   // Order book + trades
   const [bids, setBids] = useState<BookOrder[]>([]);
   const [asks, setAsks] = useState<BookOrder[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
-  const { address: authAddress, publicKey: authPublicKey } = useAuth() as any;
-  const c = colorFromAssetId(id);
-  const ohlc = useMemo(() => buildOhlc(trades, { intervalMs: 5 * 60 * 1000 }), [trades]);
-  const priceLine = useMemo(() => toCloseLine(ohlc), [ohlc]);
-  const depth = useMemo(() => buildDepth(bids, asks, { maxLevels: 60 }), [bids, asks]);
+  const [chartTrades, setChartTrades] = useState<Trade[]>([]);
   const [sweptTotalQort, setSweptTotalQort] = useState<number | null>(null);
   const [sweptAvgPrice, setSweptAvgPrice] = useState<number | null>(null);
   const [issuerAddr, setIssuerAddr] = useState<string | null>(null);
   const [balAsset, setBalAsset] = useState<number | null>(null);
   const [balQort, setBalQort] = useState<number | null>(null);
+  // ---- controls for chart window & bucket
+  const [rangeHours, setRangeHours] = useState<number>(24); // 1h, 24h, 7d etc.
+  const [bucketMinutes, setBucketMinutes] = useState<number>(5); // 1, 5, 15, 60 etc.
+  const [allTrades, setAllTrades] = useState<Trade[]>([]);
+  const [tradesPage, setTradesPage] = useState(0);
+  const TRADES_PAGE_SIZE = 50;
+
+  const { address: authAddress, publicKey: authPublicKey } = useAuth() as any;
+  const c = colorFromAssetId(id);
+  const ohlc = useMemo(
+    () =>
+      buildOhlc(chartTrades, {
+        intervalMs: bucketMinutes * 60 * 1000,
+        lookbackMs: rangeHours * 60 * 60 * 1000,
+        // optional: anchor “now” to the last trade so empty future buckets don’t dominate
+        now: chartTrades.length ? chartTrades[chartTrades.length - 1].ts : Date.now(),
+      }),
+    [chartTrades, bucketMinutes, rangeHours]
+  );
+
+  const depth = useMemo(() => buildDepth(bids, asks, { maxLevels: 60 }), [bids, asks]);
+
+  const pagedTrades = useMemo(() => {
+    const start = tradesPage * TRADES_PAGE_SIZE;
+    const end = start + TRADES_PAGE_SIZE;
+    return allTrades.slice(start, end);
+  }, [allTrades, tradesPage]);
+
+  useEffect(() => {
+    setTrades(pagedTrades);
+  }, [pagedTrades]);
 
   function fmt(n: number | null | undefined, dp = 8) {
     if (n == null || !Number.isFinite(n)) return '—';
@@ -170,41 +203,18 @@ export default function TradePair() {
     return { qty, proceeds };
   }
 
-  // Round qty according to divisibility (no half-units if not divisible)
-  function clampQtyToDivisibility(qtyAsset: number) {
-    return divisible ? Number(qtyAsset.toFixed(8)) : Math.floor(qtyAsset);
-  }
-
-  function mapRecent(recent: unknown, realBids: BookOrder[], realAsks: BookOrder[]): Trade[] {
-    const arr = Array.isArray(recent) ? recent : [];
-    const bestBid = realBids[0]?.priceQortPerAsset ?? 0;
-    const bestAsk = realAsks[0]?.priceQortPerAsset ?? 0;
-
-    return arr
-      .map((r: any) => {
-        const amt = Number(r?.amount) || 0; // ASSET units
-        const otherAmt = Number(r?.otherAmount) || 0; // QORT units
-        const price = amt > 0 ? otherAmt / amt : 0; // QORT / ASSET
-        const side =
-          bestAsk && Math.abs(price - bestAsk) < Math.abs(price - bestBid) ? 'sell' : 'buy';
-        return { price, quantity: amt, side, ts: Number(r?.timestamp) || 0 } as Trade;
-      })
-      .sort((a, b) => b.ts - a.ts)
-      .slice(0, 30);
-  }
-
   function orderAssetQty(o: NormalizedOrder): number {
-    const have = Number(o.haveAmount) || 0;
+    const haveAmnt = Number(o.haveAmount) || 0;
     const price = Number(o.price) || 0;
     // In this screen, pair is ASSET/QORT; so:
     // - SELL = haveAssetId === id  -> qtyAsset = haveAmount
     // - BUY  = haveAssetId === 0   -> qtyAsset = haveAmount / price
-    if (o.haveAssetId === id) return have;
-    if (o.haveAssetId === 0) return price > 0 ? have / price : 0;
+    if (o.haveAssetId === id) return haveAmnt / price;
+    else return haveAmnt;
     // Fallback (weird edge): try wantAmount if want is the asset
-    const want = Number(o.wantAmount) || 0;
-    if (o.wantAssetId === id) return want;
-    return 0;
+    // const want = Number(o.wantAmount) || 0;
+    // if (o.wantAssetId === id) return want;
+    // return 0;
   }
 
   function orderSideLabel(o: NormalizedOrder): 'buy' | 'sell' {
@@ -239,7 +249,6 @@ export default function TradePair() {
       try {
         setLoading(true);
 
-        // --- meta (unchanged)
         let mini = readAssetsIndexSync()?.[id] ?? null;
         if (!mini) {
           const idx = await ensureAssetsIndexLoaded();
@@ -259,51 +268,183 @@ export default function TradePair() {
           }
         }
 
-        // --- book + recent
-        const [realBids, realAsks, recent] = await Promise.all([
-          fetchBids(id, { limit: 50, reverse: true }),
-          fetchAsks(id, { limit: 50 }),
-          getRecentTrades([id], [0], { limit: 30 }),
+        const now = Date.now();
+        const windowStart = now - rangeHours * 60 * 60 * 1000;
+
+        const [realBidsRaw, realAsksRaw] = await Promise.all([
+          fetchBids(id, { limit: 50 /*, reverse: true*/ }),
+          fetchAsks(id, { limit: 50 }), // expected cheapest-first
         ]);
+
+        // Ensure correct sort locally (defensive)
+        const realBids = [...realBidsRaw].sort((a, b) => b.priceQortPerAsset - a.priceQortPerAsset); // high->low
+        const realAsks = [...realAsksRaw].sort((a, b) => a.priceQortPerAsset - b.priceQortPerAsset); // low->high
+
+        const bestBid = realBids[0]?.priceQortPerAsset ?? 0;
+        const bestAsk = realAsks[0]?.priceQortPerAsset ?? 0;
+
+        const envAll = await fetchQortToAssetTrades(id, windowStart, 500, 20000);
+
+        type Side = 'buy' | 'sell';
+        const decideSide = (price: number): Side => {
+          if (bestBid === 0 && bestAsk === 0) return 'buy';
+          if (bestBid === 0) return 'sell';
+          if (bestAsk === 0) return 'buy';
+          return Math.abs(price - bestAsk) < Math.abs(price - bestBid) ? 'sell' : 'buy';
+        };
+
+        function classifySideFromEnvelope(env: any, pairAssetId: number): 'buy' | 'sell' {
+          const io = env?.initiatingOrder;
+          if (io && typeof io.haveAssetId === 'number') {
+            return io.haveAssetId === 0 ? 'buy' : 'sell';
+          }
+
+          // Fallbacks for older/partial nodes (best-effort):
+          // - If env has "haveAssetId"/"wantAssetId" at top level
+          if (typeof env?.haveAssetId === 'number') {
+            return env.haveAssetId === 0 ? 'buy' : 'sell';
+          }
+
+          // - Last-resort heuristic (kept just in case), but you can delete if you prefer to show 'unknown'
+          return 'buy';
+        }
+
+        const rows: Trade[] = (envAll ?? [])
+          .map((env: any) => {
+            const io = env.initiatingOrder;
+            const t = env.trade;
+
+            const qtyAsset = Number(t?.targetAmount ?? io?.amount ?? 0); // asset-side fills
+            const price =
+              io?.price != null
+                ? Number(io.price)
+                : Number(t?.initiatorAmount ?? 0) / Math.max(1e-12, qtyAsset);
+            const ts = Number(t?.timestamp ?? io?.timestamp ?? 0); // ms in your sample
+            const side = classifySideFromEnvelope(env, id); // <-- authoritative
+
+            return Number.isFinite(price) && qtyAsset > 0 && ts > 0
+              ? ({ price, quantity: qtyAsset, side, ts } as Trade)
+              : null;
+          })
+          .filter(Boolean) as Trade[];
+
+        // sort newest-first for the list
+        const fullNewestFirst = rows.sort((a, b) => b.ts - a.ts);
+
+        const MIN_POINTS_SHOW_ALL = 200;
+        const chartSource =
+          fullNewestFirst.length <= MIN_POINTS_SHOW_ALL
+            ? [...fullNewestFirst]
+            : fullNewestFirst.filter((t) => t.ts >= windowStart);
+
+        const chartPts: Trade[] = [...chartSource].sort((a, b) => a.ts - b.ts);
+        const newest = fullNewestFirst[0];
+        const oldest = fullNewestFirst.length
+          ? fullNewestFirst[fullNewestFirst.length - 1]
+          : undefined;
 
         if (!cancelled) {
           setBids(realBids);
           setAsks(realAsks);
-          setTrades(mapRecent(recent, realBids, realAsks));
+          setAllTrades(fullNewestFirst);
+          setTradesPage(0);
+          setTrades(fullNewestFirst.slice(0, TRADES_PAGE_SIZE));
+          setChartTrades(chartPts);
         }
 
-        // --- my orders for this pair (only if signed in)
-        if (authAddress) {
-          try {
-            const mine = await getAddressOrdersByPair(authAddress, id, 0, {
-              isClosed: false,
-              isFulfilled: false,
-              limit: 200,
-            });
-            if (!cancelled) setMyOrders(mine.filter((o) => o.status === 'OPEN'));
-          } catch (e) {
-            if (!cancelled) setMyOrders([]);
+        console.log(
+          '[fetched]',
+          envAll.length,
+          'range:',
+          oldest ? new Date(oldest.ts).toISOString() : 'n/a',
+          '→',
+          newest ? new Date(newest.ts).toISOString() : 'n/a',
+          'windowStart:',
+          new Date(windowStart).toISOString()
+        );
+        console.log('[chart points]', chartSource.length);
+
+        // ---- my orders
+        const isOpenOrder = (o: any) => {
+          const openByFlags = !(o?.isClosed || o?.isFulfilled);
+          const okStatus = o?.status ? String(o.status).toUpperCase() !== 'CANCELLED' : true;
+          return openByFlags && okStatus;
+        };
+
+        if (!cancelled) {
+          if (authAddress) {
+            try {
+              // NOTE: pair is always (0, id) for this endpoint
+              const mine = await getAddressOrdersByPair(authAddress, 0, id, {
+                isClosed: false,
+                isFulfilled: false,
+                limit: 200,
+              });
+              setMyOrders((mine ?? []).filter(isOpenOrder));
+            } catch {
+              setMyOrders([]);
+            }
+          } else {
+            setMyOrders([]);
           }
-        } else if (!cancelled) {
-          setMyOrders([]);
         }
       } finally {
         if (!cancelled) setLoading(false);
       }
     };
 
-    // initial
+    // initial run
     void refresh();
 
-    // optional polling every 15s (pause if not signed in? your call)
-    timer = window.setInterval(() => void refresh(), 15000);
+    // timer (if you still want it)
+    timer = window.setInterval(() => {
+      void refresh();
+    }, 120000);
 
+    // cleanup lives in the effect, not inside refresh()
     return () => {
       cancelled = true;
       if (timer) window.clearInterval(timer);
     };
-    // include authAddress so we start/stop loading my orders on sign in/out
-  }, [id, authAddress]);
+  }, [id, authAddress, rangeHours]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | null = null;
+
+    async function refreshFills() {
+      if (!authAddress) {
+        setMyFills([]);
+        return;
+      }
+      try {
+        // Pull both directions; some nodes only return one orientation
+        const [envA, envB] = await Promise.all([
+          getTrades(0, id, { limit: 80, reverse: true }),
+          getTrades(id, 0, { limit: 80, reverse: true }),
+        ]);
+
+        const fills = envelopesToFills(
+          ([] as any[]).concat(Array.isArray(envA) ? envA : [], Array.isArray(envB) ? envB : []),
+          authAddress,
+          authPublicKey,
+          id
+        );
+
+        if (!cancelled) setMyFills(fills);
+      } catch (e) {
+        console.debug('[fills] error', e);
+        if (!cancelled) setMyFills([]);
+      }
+    }
+
+    void refreshFills();
+    timer = window.setInterval(() => void refreshFills(), 20000);
+    return () => {
+      cancelled = true;
+      if (timer) window.clearInterval(timer);
+    };
+  }, [authAddress, authPublicKey, id]);
 
   // ----- Place order state
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
@@ -460,8 +601,31 @@ export default function TradePair() {
           Mid: {formatPrice(mid)} QORT
         </Typography>
       </Box>
-
       {/* Chart stub */}
+      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+        <ToggleButtonGroup
+          size="small"
+          value={rangeHours}
+          exclusive
+          onChange={(_, v) => v && setRangeHours(v)}
+        >
+          <ToggleButton value={1}>1h</ToggleButton>
+          <ToggleButton value={24}>24h</ToggleButton>
+          <ToggleButton value={24 * 7}>7d</ToggleButton>
+          <ToggleButton value={24 * 30}>30d</ToggleButton>
+        </ToggleButtonGroup>
+        <ToggleButtonGroup
+          size="small"
+          value={bucketMinutes}
+          exclusive
+          onChange={(_, v) => v && setBucketMinutes(v)}
+        >
+          <ToggleButton value={1}>1m</ToggleButton>
+          <ToggleButton value={5}>5m</ToggleButton>
+          <ToggleButton value={15}>15m</ToggleButton>
+          <ToggleButton value={60}>1h</ToggleButton>
+        </ToggleButtonGroup>
+      </Box>
       <Paper sx={{ p: 2, display: 'grid', gap: 2 }}>
         {loading ? (
           <Box display="flex" justifyContent="center" py={6}>
@@ -470,9 +634,15 @@ export default function TradePair() {
         ) : (
           <>
             <Typography variant="subtitle2" color="text.secondary">
-              Price (24h)
+              Price (candles)
             </Typography>
-            <PriceSparkline data={priceLine} />
+            {ohlc.length === 0 ? (
+              <Typography variant="caption" color="text.secondary">
+                No price data
+              </Typography>
+            ) : (
+              <CandleChart data={ohlc} height={300} />
+            )}
             <Typography variant="subtitle2" color="text.secondary">
               Volume
             </Typography>
@@ -487,7 +657,6 @@ export default function TradePair() {
       <Typography variant="caption" color="text.secondary">
         Tip: Click a price to auto-fill. Hold Ctrl/⌘ to set price only.
       </Typography>
-
       {/* Book + Trade + Place order */}
       <Box
         sx={{
@@ -625,35 +794,103 @@ export default function TradePair() {
           </Paper>
 
           <Paper sx={{ p: 2 }}>
-            <Typography variant="subtitle1" sx={{ mb: 1 }}>
-              Recent Trades
-            </Typography>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'baseline',
+                justifyContent: 'space-between',
+                mb: 1,
+              }}
+            >
+              <Typography variant="subtitle1">Recent Trades</Typography>
+              <Typography variant="caption" color="text.secondary">
+                {allTrades.length.toLocaleString()} total
+              </Typography>
+            </Box>
+
             <Box sx={{ display: 'grid', gap: 0.25 }}>
-              {trades.map((t, i) => (
+              {pagedTrades.map((t, i) => (
                 <Box
-                  key={i}
+                  key={`${t.ts}-${t.price}-${t.quantity}-${i}`}
                   sx={{
                     display: 'grid',
-                    gridTemplateColumns: 'auto 1fr auto',
+                    gridTemplateColumns: 'auto 1fr auto auto',
                     gap: 1,
                     fontSize: 14,
+                    alignItems: 'center',
                   }}
                 >
-                  <Box sx={{ color: t.side === 'buy' ? 'success.main' : 'error.main' }}>
+                  <Box
+                    sx={{
+                      color: t.side === 'buy' ? 'success.main' : 'error.main',
+                      fontWeight: 700,
+                    }}
+                  >
                     {t.side.toUpperCase()}
                   </Box>
                   <Box>
                     {formatQty(t.quantity, divisible)} {name}
                   </Box>
                   <Box sx={{ textAlign: 'right' }}>{formatPrice(t.price)} QORT</Box>
+                  <Box sx={{ textAlign: 'right', color: 'text.secondary' }}>
+                    {new Date(t.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </Box>
                 </Box>
               ))}
-              {trades.length === 0 && (
+
+              {allTrades.length === 0 && (
                 <Typography variant="caption" color="text.secondary">
                   No trades
                 </Typography>
               )}
             </Box>
+
+            {/* Pager */}
+            {allTrades.length > TRADES_PAGE_SIZE && (
+              <Box
+                sx={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  mt: 1,
+                }}
+              >
+                <Typography variant="caption" color="text.secondary">
+                  Page {tradesPage + 1} of {Math.ceil(allTrades.length / TRADES_PAGE_SIZE)}
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={tradesPage === 0}
+                    onClick={() => setTradesPage((p) => Math.max(0, p - 1))}
+                  >
+                    Prev
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={(tradesPage + 1) * TRADES_PAGE_SIZE >= allTrades.length}
+                    onClick={() => setTradesPage((p) => p + 1)}
+                  >
+                    Next
+                  </Button>
+                </Box>
+              </Box>
+            )}
+          </Paper>
+
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="subtitle1" sx={{ mb: 1 }}>
+              My Fills (This Pair)
+            </Typography>
+            {!authAddress ? (
+              <Typography variant="caption" color="text.secondary">
+                Sign in to view fills.
+              </Typography>
+            ) : (
+              <PairMyFills fills={myFills} assetName={name} divisible={divisible} />
+            )}
           </Paper>
         </Box>
 
