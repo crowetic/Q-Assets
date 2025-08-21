@@ -364,7 +364,8 @@ export async function createOrderAndBroadcast(params: {
   const wantAssetId = side === 'sell' ? 0 : assetId;
 
   // amount is in units of wantAssetId
-  const amount = side === 'buy' ? qAsset(qty) : q8(price * qty);
+  // const amount = side === 'sell' ? qAsset(qty) : q8(price * qty);
+  const amount = qAsset(qty)
   if (!(amount > 0)) throw new Error('Invalid amount (rounded to zero)');
 
   const body = {
