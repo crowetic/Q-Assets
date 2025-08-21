@@ -1,4 +1,3 @@
-// src/pages/Information.tsx
 import { JSX, useEffect, useMemo, useState } from 'react';
 import {
   Box,
@@ -496,13 +495,21 @@ export default function Information() {
   /* -------------------------------- Render -------------------------------- */
 
   return (
-    <Box sx={{ p: { xs: 2, md: 3 }, display: 'grid', gap: 2 }}>
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '1rem',
+        p: { xs: '1rem', md: '1.5rem' },
+      }}
+    >
       {/* Top Bar */}
-      <Paper sx={{ p: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-          <Typography variant="h5" sx={{ flex: 1, minWidth: 160 }}>
+      <Paper sx={{ p: '1rem' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+          <Typography variant="h5" sx={{ flex: 1, minWidth: '12rem' }}>
             Information
           </Typography>
+
           <TextField
             size="small"
             placeholder="Search the wiki…"
@@ -517,8 +524,9 @@ export default function Information() {
                 ),
               },
             }}
-            sx={{ minWidth: 240 }}
+            sx={{ minWidth: '15rem', flex: '0 1 22rem' }}
           />
+
           {role && (
             <Chip
               label={role === 'admin' ? 'Role: Admin' : 'Role: Editor'}
@@ -527,6 +535,7 @@ export default function Information() {
               sx={{ fontWeight: 600 }}
             />
           )}
+
           {isMember && (
             <EditToggleButton variant="outlined" onClick={() => setOpenMenuDlg(true)}>
               Manage Sections
@@ -535,23 +544,29 @@ export default function Information() {
         </Box>
       </Paper>
 
+      {/* Main area: sidebar + content */}
       <Box
         sx={{
-          display: 'grid',
-          gridTemplateColumns: { xs: '1fr', md: '260px 1fr' },
-          gap: 2,
-          alignItems: 'start',
+          display: 'flex',
+          flexDirection: { xs: 'column', md: 'row' },
+          alignItems: 'stretch',
+          gap: '1rem',
         }}
       >
         {/* Sidebar / TOC */}
         <Paper
           sx={{
-            p: 1,
-            position: 'sticky',
-            top: 16,
-            display: { xs: 'none', md: 'block' },
-            maxHeight: 'calc(100vh - 32px)',
-            overflow: 'auto',
+            p: '0.75rem',
+            // column on xs, fixed-ish sidebar on md+
+            flex: { xs: '0 0 auto', md: '0 0 16rem' },
+            width: { xs: '100%', md: '16rem' },
+            // sticky only on md+
+            position: { xs: 'static', md: 'sticky' },
+            top: { md: '1rem' },
+            // scrolling only on md+
+            maxHeight: { xs: 'none', md: 'calc(100dvh - 2rem)' },
+            overflow: { xs: 'visible', md: 'auto' },
+            display: 'block',
           }}
         >
           <List dense disablePadding>
@@ -560,7 +575,7 @@ export default function Information() {
                 key={m.id || Math.random()}
                 selected={normId(m.id) === currentId}
                 onClick={() => m.id && goto(m.id)}
-                sx={{ borderRadius: 1, mb: 0.25 }}
+                sx={{ borderRadius: '0.5rem', mb: '0.25rem' }}
               >
                 <ListItemText
                   primary={m.title || '(untitled)'}
@@ -572,10 +587,20 @@ export default function Information() {
         </Paper>
 
         {/* Content */}
-        <Box sx={{ display: 'grid', gap: 2 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '1rem',
+            flex: '1 1 auto',
+            minWidth: 0,
+          }}
+        >
           {currentMenuItem ? (
-            <Paper id={currentMenuItem.id} sx={{ p: 2, scrollMarginTop: 24 }}>
-              <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, flexWrap: 'wrap' }}>
+            <Paper id={currentMenuItem.id} sx={{ p: '1rem', scrollMarginTop: '1.5rem' }}>
+              <Box
+                sx={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap' }}
+              >
                 <Typography variant="h6">{currentMenuItem.title}</Typography>
                 {(currentMenuItem.tags || []).map((t) => (
                   <Chip key={t} size="small" label={t} sx={{ opacity: 0.7 }} />
@@ -587,12 +612,15 @@ export default function Information() {
                   </Typography>
                 )}
               </Box>
-              <Divider sx={{ my: 1.25 }} />
+
+              <Divider sx={{ my: '0.75rem' }} />
 
               {currentOverride?.html ? (
                 <PublishedHtmlRenderer html={currentOverride.html} />
               ) : currentDefault ? (
-                <Box sx={{ display: 'grid', gap: 1 }}>{currentDefault.body}</Box>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {currentDefault.body}
+                </Box>
               ) : (
                 <Typography variant="body2" color="text.secondary">
                   No content yet. (Define locally or publish via QDN.)
@@ -600,7 +628,7 @@ export default function Information() {
               )}
 
               {userName && currentMenuItem.id && (
-                <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
+                <Box sx={{ mt: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
                   <Tooltip
                     title={isMember ? '' : 'Requires membership in Q-Assets-Management to publish'}
                   >
@@ -619,7 +647,7 @@ export default function Information() {
               )}
             </Paper>
           ) : (
-            <Paper sx={{ p: 3 }}>
+            <Paper sx={{ p: '1.25rem' }}>
               <Typography>Select a section from the left.</Typography>
             </Paper>
           )}
@@ -649,10 +677,10 @@ export default function Information() {
               <Box
                 key={i}
                 sx={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 1fr 1fr auto',
-                  gap: 1,
+                  display: 'flex',
+                  gap: '1rem',
                   alignItems: 'center',
+                  flexWrap: 'wrap',
                 }}
               >
                 <TextField
@@ -664,6 +692,7 @@ export default function Information() {
                     )
                   }
                   size="small"
+                  sx={{ flex: '1 1 12rem' }}
                 />
                 <TextField
                   label="Title"
@@ -674,6 +703,7 @@ export default function Information() {
                     )
                   }
                   size="small"
+                  sx={{ flex: '1 1 12rem' }}
                 />
                 <TextField
                   label="Tags (comma sep)"
@@ -694,8 +724,9 @@ export default function Information() {
                     )
                   }
                   size="small"
+                  sx={{ flex: '2 1 16rem' }}
                 />
-                <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end' }}>
+                <Box sx={{ display: 'flex', gap: '0.5rem', marginLeft: 'auto' }}>
                   <IconButton size="small" onClick={() => moveItem(i, -1)}>
                     <ArrowUpwardIcon fontSize="small" />
                   </IconButton>
