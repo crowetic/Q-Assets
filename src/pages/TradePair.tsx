@@ -24,10 +24,10 @@ import {
   fetchBids,
   createOrderAndBroadcast,
   cancelOrderAndBroadcast,
-  getAddressOrdersByPair,
   fetchQortToAssetTrades,
   type BookOrder,
-  NormalizedOrder,
+  type UiMyOrder,
+  getMyOrdersForAssetUi,
 } from '../utils/markets';
 import { VolumeBars, DepthChart } from '../components/trade/PairCharts';
 import { buildOhlc, buildDepth } from '../utils/chartTransforms';
@@ -51,7 +51,7 @@ export default function TradePair() {
   const [name, setName] = useState<string>('');
   const [divisible, setDivisible] = useState(true);
   const [loading, setLoading] = useState(true);
-  const [myOrders, setMyOrders] = useState<NormalizedOrder[]>([]);
+  const [myOrders, setMyOrders] = useState<UiMyOrder[]>([]);
   const [myFills, setMyFills] = useState<FillEvent[]>([]);
 
   // Order book + trades
@@ -170,7 +170,7 @@ export default function TradePair() {
     </Box>
   );
 
-  const getOrderCreator = (o: BookOrder | NormalizedOrder) =>
+  const getOrderCreator = (o: any) =>
     (o as any).creatorAddress ?? (o as any).creator ?? (o as any).address ?? null;
 
   // Sum cheapest asks up to <= target price (for BUY), returning {qty, cost}
@@ -201,24 +201,6 @@ export default function TradePair() {
       }
     }
     return { qty, proceeds };
-  }
-
-  function orderAssetQty(o: NormalizedOrder): number {
-    const haveAmnt = Number(o.haveAmount) || 0;
-    const price = Number(o.price) || 0;
-    // In this screen, pair is ASSET/QORT; so:
-    // - SELL = haveAssetId === id  -> qtyAsset = haveAmount
-    // - BUY  = haveAssetId === 0   -> qtyAsset = haveAmount / price
-    if (o.haveAssetId === id) return haveAmnt / price;
-    else return haveAmnt;
-    // Fallback (weird edge): try wantAmount if want is the asset
-    // const want = Number(o.wantAmount) || 0;
-    // if (o.wantAssetId === id) return want;
-    // return 0;
-  }
-
-  function orderSideLabel(o: NormalizedOrder): 'buy' | 'sell' {
-    return o.haveAssetId === 0 ? 'buy' : 'sell';
   }
 
   useEffect(() => {
@@ -364,23 +346,17 @@ export default function TradePair() {
         );
         console.log('[chart points]', chartSource.length);
 
-        // ---- my orders
-        const isOpenOrder = (o: any) => {
-          const openByFlags = !(o?.isClosed || o?.isFulfilled);
-          const okStatus = o?.status ? String(o.status).toUpperCase() !== 'CANCELLED' : true;
-          return openByFlags && okStatus;
-        };
-
         if (!cancelled) {
           if (authAddress) {
             try {
-              // NOTE: pair is always (0, id) for this endpoint
-              const mine = await getAddressOrdersByPair(authAddress, 0, id, {
-                isClosed: false,
-                isFulfilled: false,
-                limit: 200,
+              const mine = await getMyOrdersForAssetUi(authAddress, id, {
+                divisible,
+                includeClosed: false,
+                includeFulfilled: false,
+                limit: 1000,
+                reverse: true,
               });
-              setMyOrders((mine ?? []).filter(isOpenOrder));
+              setMyOrders(mine ?? []);
             } catch {
               setMyOrders([]);
             }
@@ -1010,13 +986,16 @@ export default function TradePair() {
         ) : (
           <Box sx={{ display: 'grid', gap: 0.5 }}>
             {myOrders.map((o) => {
-              const side = orderSideLabel(o);
-              const qtyA = orderAssetQty(o);
-              const price = Number(o.price) || 0;
-              const creator = getOrderCreator(o) ?? authAddress;
+              const side = o.side;
+              const price = o.priceQortPerAsset;
+              const qtyAssetOpen = o.qtyAssetOpen;
+              const creator = authAddress; // it's your order
               const byIssuer = isIssuerAddress(creator);
               const ts =
-                Number(o.timestamp) < 2e10 ? Number(o.timestamp) * 1000 : Number(o.timestamp);
+                o.ts ??
+                (Number(o.raw?.timestamp) < 2e10
+                  ? Number(o.raw?.timestamp) * 1000
+                  : Number(o.raw?.timestamp));
               const when = new Date(ts).toLocaleString();
 
               return (
@@ -1040,7 +1019,7 @@ export default function TradePair() {
                     {byIssuer && <IssuerTag />}
                   </Box>
                   <Box title={when}>
-                    {formatQty(qtyA, divisible)} {name}
+                    {formatQty(qtyAssetOpen, divisible)} {name}
                   </Box>
                   <Box>{formatPrice(price)} QORT</Box>
                   <Tooltip title="Cancel order">
