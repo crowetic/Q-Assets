@@ -5,7 +5,7 @@ export const Q_ASSET_APP_PUBLISHER: string = 'Q-Assets'
 export const Q_ASSET_APP_VERSION: number = 0.12
 export const isBeta: boolean = true
 
-export const Q_ASSET_VERSION: string = isBeta ? Q_ASSET_APP_VERSION + "b" : Q_ASSET_APP_VERSION.toString() 
+export const Q_ASSETS_VERSION: string = isBeta ? Q_ASSET_APP_VERSION + "b" : Q_ASSET_APP_VERSION.toString() 
 export const ASSETS_KEY = "qa_assets_index" + Q_ASSET_APP_VERSION
 
 

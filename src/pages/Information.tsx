@@ -44,7 +44,7 @@ import { Theme } from '@mui/material';
 import EditToggleButton from '../components/buttons/EditToggleButton';
 // import { Edit } from '@mui/icons-material';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { Q_ASSET_VERSION } from '../constants/qdnConstants';
+import { Q_ASSETS_VERSION } from '../constants/qdnConstants';
 import { prepareHtmlForPublish } from '../utils/publicationPublisher';
 import PublishedHtmlRenderer from '../components/PublishedHtmlRenderer';
 
@@ -244,10 +244,10 @@ const makeDefaultSections = (theme: Theme): InfoSection[] => [
           the application publisher, and will be updated as the versions of the app are updated.
         </Typography>
         <Typography variant="h3" sx={{ color: theme.palette.secondary.light }}>
-          Version {Q_ASSET_VERSION}
+          Version {Q_ASSETS_VERSION}
         </Typography>
         <Typography variant="body1">
-          Version {Q_ASSET_VERSION} is the initial release of Q-Assets. - Asset Explorer. - Asset
+          Version {Q_ASSETS_VERSION} is the initial release of Q-Assets. - Asset Explorer. - Asset
           Issuance with default asset Genesis publications. - Asset Details with display of the
           default information published in the Asset Details Object. - Asset Trading with many
           features, leveraging the built-in API-based Asset/QORT trade options of Qortal. - Fully

@@ -325,14 +325,14 @@ export async function loadSectionFromGroup(sectionId: string) {
   // you said this now returns [{ name, role }]
   const names = await listManagementGroupNames();
   if (!names.length) return null;
-  console.log('allNames',names)
+  // console.log('allNames',names)
 
   const identifier = `${WIKI_IDENTIFIER_PREFIX}${sectionId}`;
 
   // 1) build a strictly valid, ordered candidate list
   const ordered = await discoverCandidatesStrict(identifier, names);
   if (!ordered.length) return null;
-  console.log('orderedCandidatesStrict',ordered)
+  // console.log('orderedCandidatesStrict',ordered)
 
   // 2) try candidates in order; fall back if a fetch 404s/returns empty
   for (const cand of ordered) {

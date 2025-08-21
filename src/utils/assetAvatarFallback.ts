@@ -1,4 +1,3 @@
-// src/utils/assetAvatarFallback.ts
 // Deterministic SVG data-URL avatar based on assetId + name
 export function makeAssetFallbackAvatar(assetId: number, name: string, size = 80): string {
   // hash -> hue

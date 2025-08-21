@@ -2,8 +2,7 @@ import { getAssetIdentifiers } from '../constants/qdnConstants';
 
 // Optional: configure the QDN name that owns override avatars for core assets
 const APP_OWNER_NAME =
-  // (import.meta as any)?.env?.VITE_QASSETS_OWNER_NAME ||
-  // (window as any)?._qassetsOwnerName ||
+  "Q-Assets"
   undefined;
 
 // ---------------- Core-asset helpers ----------------
@@ -40,33 +39,72 @@ function coreOverrideIdentifier(key: CoreKey) {
   // e.g. publish IMAGE with identifier: "coreAvatar_qort" under APP_OWNER_NAME
   return `coreAvatar_${key}`;
 }
+const DEFAULT_AVATAR_IDENTIFIERS = [
+  'assetAvatar_default',        // preferred
+  'coreAvatar_default',         // legacy alias
+  'qassets_default_avatar',     // legacy alias
+];
 
 // ---------------- MIME sniffing ----------------
 
 function guessImageMimeFromBase64(base64: string): string {
-  const binary = atob(base64.slice(0, 50));
-  const b = Array.from(binary).map(ch => ch.charCodeAt(0));
-  if (b[0] === 0x89 && b[1] === 0x50) return 'image/png';
+  if (!base64) return 'application/octet-stream';
+  // read a small slice
+  const sample = atob(base64.slice(0, 64));
+  const b = Array.from(sample).map(ch => ch.charCodeAt(0));
+
+  // PNG
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) return 'image/png';
+  // JPEG
   if (b[0] === 0xFF && b[1] === 0xD8) return 'image/jpeg';
-  if (b[0] === 0x47 && b[1] === 0x49) return 'image/gif';
+  // GIF
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return 'image/gif';
+  // BMP
   if (b[0] === 0x42 && b[1] === 0x4D) return 'image/bmp';
+  // WEBP ("RIFF....WEBP")
   if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46) return 'image/webp';
+  // SVG (text: "<svg")
+  if (b[0] === 0x3C && b[1] === 0x73 && b[2] === 0x76 && b[3] === 0x67) return 'image/svg+xml';
+
   return 'application/octet-stream';
 }
 
 // simple in-memory cache to avoid repeated fetches
 const avatarMemo = new Map<string, string | null>();
+const memoOk = (k: string) => avatarMemo.has(k) ? avatarMemo.get(k)! : null;
+const memoSet = (k: string, v: string | null) => { avatarMemo.set(k, v); return v; };
+
+async function fetchOwnerImageByIdentifiers(ids: string[]): Promise<string | null> {
+  if (!APP_OWNER_NAME) return null;
+  for (const identifier of ids) {
+    try {
+      const base64 = await qortalRequest({
+        action: 'FETCH_QDN_RESOURCE',
+        name: APP_OWNER_NAME,
+        service: 'IMAGE',
+        identifier,
+        encoding: 'base64',
+      });
+      if (base64 && typeof base64 === 'string') {
+        const mime = guessImageMimeFromBase64(base64);
+        return `data:${mime};base64,${base64}`;
+      }
+    } catch {/* try next id */}
+  }
+  return null;
+}
 
 export const fetchAssetAvatar = async (
   issuerName: string,
   assetName: string
 ): Promise<string | null> => {
   const memoKey = `${issuerName}::${assetName}`;
-  if (avatarMemo.has(memoKey)) return avatarMemo.get(memoKey)!;
+  const hit = memoOk(memoKey);
+  if (hit !== null) return hit;
 
   const coreKey = canonicalCoreKey(assetName);
 
-  // 1) normal: issuer publish, correct ID-based identifier
+  // 1) Issuer’s canonical publish (ID-based identifier)
   try {
     const publishInfo = await getAssetIdentifiers(assetName);
     try {
@@ -78,14 +116,12 @@ export const fetchAssetAvatar = async (
         encoding: 'base64',
       });
       const mime = guessImageMimeFromBase64(base64);
-      const url = `data:${mime};base64,${base64}`;
-      avatarMemo.set(memoKey, url);
-      return url;
+      return memoSet(memoKey, `data:${mime};base64,${base64}`);
     } catch {
-      // fall through to issuer fallback search
+      // fall through
     }
 
-    // 1b) issuer fallback search for wrong-ID publishes
+    // 1b) Issuer fallback: fuzzy search (wrong-ID publishes)
     try {
       const results = await qortalRequest({
         action: 'SEARCH_QDN_RESOURCES',
@@ -106,8 +142,8 @@ export const fetchAssetAvatar = async (
         prefix: true,
       });
 
-      const match = results.find(
-        (r: any) => typeof r.identifier === 'string' && r.identifier.includes(`_${assetName}_`)
+      const match = (Array.isArray(results) ? results : [results]).find(
+        (r: any) => typeof r?.identifier === 'string' && r.identifier.includes(`_${assetName}_`)
       );
 
       if (match) {
@@ -119,18 +155,22 @@ export const fetchAssetAvatar = async (
           encoding: 'base64',
         });
         const mime = guessImageMimeFromBase64(base64);
-        const url = `data:${mime};base64,${base64}`;
-        avatarMemo.set(memoKey, url);
-        return url;
+        return memoSet(memoKey, `data:${mime};base64,${base64}`);
       }
     } catch {
-      // ignore, move to core overrides
+      // ignore, move on
     }
   } catch (e) {
     console.warn('[fetchAssetAvatar] identifier resolution failed:', e);
   }
 
-  // 2) core-asset owner override (QDN), if applicable
+  // 2) App owner: DEFAULT avatar on QDN (for any asset lacking a custom image)
+  try {
+    const ownerDefault = await fetchOwnerImageByIdentifiers(DEFAULT_AVATAR_IDENTIFIERS);
+    if (ownerDefault) return memoSet(memoKey, ownerDefault);
+  } catch {/* continue */}
+
+  // 3) App owner: core-asset override (QDN) if applicable
   if (coreKey && APP_OWNER_NAME) {
     try {
       const overrideId = coreOverrideIdentifier(coreKey);
@@ -142,22 +182,13 @@ export const fetchAssetAvatar = async (
         encoding: 'base64',
       });
       const mime = guessImageMimeFromBase64(base64);
-      const url = `data:${mime};base64,${base64}`;
-      avatarMemo.set(memoKey, url);
-      return url;
-    } catch {
-      // no override present—fall through to static
-    }
+      return memoSet(memoKey, `data:${mime};base64,${base64}`);
+    } catch {/* fall through */}
   }
 
-  // 3) static fail-safe from app bundle
-  if (coreKey) {
-    const staticUrl = staticCoreAssetPath(coreKey);
-    avatarMemo.set(memoKey, staticUrl);
-    return staticUrl; // not base64; fine for <img src=...>
-  }
+  // 4) Static bundle (last resort)
+  if (coreKey) return memoSet(memoKey, staticCoreAssetPath(coreKey));
 
-  // out of options
-  avatarMemo.set(memoKey, null);
-  return null;
+  // Out of options
+  return memoSet(memoKey, null);
 };

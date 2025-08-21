@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Box,
   Paper,
@@ -30,7 +30,7 @@ import {
   getMyOrdersForAssetUi,
 } from '../utils/markets';
 import { VolumeBars, DepthChart } from '../components/trade/PairCharts';
-import { buildOhlc, buildDepth } from '../utils/chartTransforms';
+import { buildDepth } from '../utils/chartTransforms';
 // import SuccessButton from '../components/buttons/SuccessButton'; // +++
 import SellButton from '../components/buttons/SellButton';
 import BuyButton from '../components/buttons/BuyButton';
@@ -38,12 +38,16 @@ import { getAssetBalances } from '../utils/qortalAssetRequests';
 import PairMyFills from '../components/trade/PairMyFills';
 import { getTrades, envelopesToFills } from '../utils/markets';
 import type { FillEvent } from '../utils/markets';
-import CandleChart from '../components/trade/CandleCharts';
-
-// ---- Types for adapter data (adjust when wiring real endpoints)
-// type Order = { price: number; quantity: number }; // in human QORT/asset units
-type Trade = { price: number; quantity: number; side: 'buy' | 'sell'; ts: number };
-// type SparkPoint = { x: number; y: number };
+// import CandleChart from '../components/trade/CandleChart';
+import { useMarketConfirmRefresh } from '../trade/useMarketConfirmRefresh';
+import {
+  tradesAsCandlesPerTrade,
+  pickBucketMs,
+  computeCandlesCompact,
+  toMs,
+  type Trade,
+} from '../utils/chartData';
+import SmartPriceChart from '../components/trade/SmartPriceChart';
 
 export default function TradePair() {
   const { assetId } = useParams<{ assetId: string }>();
@@ -65,24 +69,50 @@ export default function TradePair() {
   const [balAsset, setBalAsset] = useState<number | null>(null);
   const [balQort, setBalQort] = useState<number | null>(null);
   // ---- controls for chart window & bucket
-  const [rangeHours, setRangeHours] = useState<number>(24); // 1h, 24h, 7d etc.
-  const [bucketMinutes, setBucketMinutes] = useState<number>(5); // 1, 5, 15, 60 etc.
+  const [rangeHours, setRangeHours] = useState<number>(720); // set default range hours
+  const [bucketMinutes, setBucketMinutes] = useState<number>(60); // 1, 5, 15, 60 etc.
   const [allTrades, setAllTrades] = useState<Trade[]>([]);
   const [tradesPage, setTradesPage] = useState(0);
   const TRADES_PAGE_SIZE = 50;
 
   const { address: authAddress, publicKey: authPublicKey } = useAuth() as any;
   const c = colorFromAssetId(id);
-  const ohlc = useMemo(
+
+  const candles = useMemo(() => {
+    const lookbackMs = rangeHours * 60 * 60 * 1000;
+    const bucketMs = pickBucketMs(lookbackMs);
+    const now = chartTrades.length ? toMs(chartTrades[chartTrades.length - 1].ts) : Date.now();
+    let bars = computeCandlesCompact(chartTrades, { bucketMs, lookbackMs, now });
+    // Fallbacks for sparse/flat markets
+    if (bars.length < 10) {
+      // 1) go to per-trade bars within window (gives you “dots” at each trade)
+      bars = tradesAsCandlesPerTrade(chartTrades, lookbackMs, now);
+    }
+    if (bars.length < 10) {
+      const extended = computeCandlesCompact(chartTrades, {
+        bucketMs,
+        lookbackMs: lookbackMs * 4,
+        now,
+      });
+      if (extended.length > bars.length) bars = extended;
+    }
+
+    return bars;
+  }, [chartTrades, rangeHours]);
+
+  const candleDataTOHLCV = useMemo(
     () =>
-      buildOhlc(chartTrades, {
-        intervalMs: bucketMinutes * 60 * 1000,
-        lookbackMs: rangeHours * 60 * 60 * 1000,
-        // optional: anchor “now” to the last trade so empty future buckets don’t dominate
-        now: chartTrades.length ? chartTrades[chartTrades.length - 1].ts : Date.now(),
-      }),
-    [chartTrades, bucketMinutes, rangeHours]
+      candles.map((c) => ({ t: c.time, o: c.open, h: c.high, l: c.low, c: c.close, v: c.volume })),
+    [candles]
   );
+
+  useEffect(() => {
+    const lows = candles.map((c) => c.low);
+    const highs = candles.map((c) => c.high);
+    const min = Math.min(...lows);
+    const max = Math.max(...highs);
+    console.log('[candles]', { count: candles.length, min, max, same: min === max });
+  }, [candles]);
 
   const depth = useMemo(() => buildDepth(bids, asks, { maxLevels: 60 }), [bids, asks]);
 
@@ -203,224 +233,151 @@ export default function TradePair() {
     return { qty, proceeds };
   }
 
-  useEffect(() => {
-    let cancel = false;
-    let timer: number | null = null;
+  const refreshMarket = useCallback(async () => {
+    try {
+      setLoading(true);
 
+      let mini = readAssetsIndexSync()?.[id] ?? null;
+      if (!mini) {
+        const idx = await ensureAssetsIndexLoaded();
+        mini = idx[id] ?? null;
+      }
+      if (!mini) mini = await ensureAssetMini(id);
+
+      if (mini) {
+        setName(mini.name);
+        setDivisible(mini.isDivisible);
+        setIssuerAddr(mini.owner || null);
+      } else {
+        setName(`Asset #${id}`);
+        setDivisible(true);
+        setIssuerAddr(null);
+      }
+
+      const [realBidsRaw, realAsksRaw] = await Promise.all([
+        fetchBids(id, { limit: 50 }),
+        fetchAsks(id, { limit: 50 }),
+      ]);
+
+      const realBids = [...realBidsRaw].sort((a, b) => b.priceQortPerAsset - a.priceQortPerAsset);
+      const realAsks = [...realAsksRaw].sort((a, b) => a.priceQortPerAsset - b.priceQortPerAsset);
+
+      const now = Date.now();
+      // const windowStart = now - rangeHours * 60 * 60 * 1000;
+
+      const oneYearMs = 365 * 24 * 60 * 60 * 1000;
+      const fromWide = now - oneYearMs; // tune this
+      const envAll = await fetchQortToAssetTrades(id, fromWide, 5000, 20000);
+
+      const rows = (envAll ?? [])
+        .map((env: any) => {
+          const io = env.initiatingOrder;
+          const t = env.trade;
+          const qtyAsset = Number(t?.targetAmount ?? io?.amount ?? 0);
+          const price =
+            io?.price != null
+              ? Number(io.price)
+              : Number(t?.initiatorAmount ?? 0) / Math.max(1e-12, qtyAsset);
+          const ts = Number(t?.timestamp ?? io?.timestamp ?? 0);
+          const side =
+            io && typeof io.haveAssetId === 'number'
+              ? io.haveAssetId === 0
+                ? 'buy'
+                : 'sell'
+              : 'buy';
+          return Number.isFinite(price) && qtyAsset > 0 && ts > 0
+            ? ({ price, quantity: qtyAsset, side, ts } as Trade)
+            : null;
+        })
+        .filter(Boolean) as Trade[];
+
+      const fullNewestFirst = rows.sort((a, b) => b.ts - a.ts);
+      const asc = [...fullNewestFirst].sort((a, b) => toMs(a.ts) - toMs(b.ts));
+      setChartTrades(asc);
+
+      setBids(realBids);
+      setAsks(realAsks);
+      setAllTrades(fullNewestFirst);
+      setTradesPage(0);
+      // setChartTrades(fullNewestFirst);
+
+      if (authAddress) {
+        try {
+          const mine = await getMyOrdersForAssetUi(authAddress, id, {
+            divisible,
+            includeClosed: false,
+            includeFulfilled: false,
+            limit: 1000,
+            reverse: true,
+          });
+          setMyOrders(mine ?? []);
+        } catch {
+          setMyOrders([]);
+        }
+      } else {
+        setMyOrders([]);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [id, authAddress, divisible]);
+
+  const refreshMyFills = useCallback(async () => {
+    if (!authAddress) {
+      setMyFills([]);
+      return;
+    }
+    try {
+      // Pull both directions; some nodes only return one orientation
+      const [envA, envB] = await Promise.all([
+        getTrades(0, id, { limit: 80, reverse: true }),
+        getTrades(id, 0, { limit: 80, reverse: true }),
+      ]);
+
+      const fills = envelopesToFills(
+        ([] as any[]).concat(Array.isArray(envA) ? envA : [], Array.isArray(envB) ? envB : []),
+        authAddress,
+        authPublicKey,
+        id
+      );
+
+      setMyFills(fills);
+    } catch (e) {
+      console.debug('[fills] error', e);
+      setMyFills([]);
+    }
+  }, [authAddress, authPublicKey, id]);
+
+  useMarketConfirmRefresh({
+    assetId: id,
+    onConfirm: () => {
+      // re-fetch only when a market tx confirms
+      void refreshMarket();
+      void refreshMyFills();
+      void refreshBalances();
+    },
+    intervalMs: 3000,
+    hiddenMs: 12000,
+    jitterMs: 1000,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
     (async () => {
-      await refreshBalances();
-      if (!cancel) {
-        timer = window.setInterval(() => {
-          void refreshBalances();
-        }, 15000);
+      try {
+        if (!cancelled) {
+          await refreshMarket();
+          await refreshBalances();
+          await refreshMyFills();
+        }
+      } catch (e) {
+        console.debug('[init] error', e);
       }
     })();
-
-    return () => {
-      cancel = true;
-      if (timer) window.clearInterval(timer);
-    };
-  }, [authAddress, id]);
-
-  // ---- Load pair meta and initial book/trades
-  useEffect(() => {
-    let cancelled = false;
-    let timer: number | null = null;
-
-    const refresh = async () => {
-      try {
-        setLoading(true);
-
-        let mini = readAssetsIndexSync()?.[id] ?? null;
-        if (!mini) {
-          const idx = await ensureAssetsIndexLoaded();
-          mini = idx[id] ?? null;
-        }
-        if (!mini) mini = await ensureAssetMini(id);
-
-        if (!cancelled) {
-          if (mini) {
-            setName(mini.name);
-            setDivisible(mini.isDivisible);
-            setIssuerAddr(mini.owner || null);
-          } else {
-            setName(`Asset #${id}`);
-            setDivisible(true);
-            setIssuerAddr(null);
-          }
-        }
-
-        const now = Date.now();
-        const windowStart = now - rangeHours * 60 * 60 * 1000;
-
-        const [realBidsRaw, realAsksRaw] = await Promise.all([
-          fetchBids(id, { limit: 50 /*, reverse: true*/ }),
-          fetchAsks(id, { limit: 50 }), // expected cheapest-first
-        ]);
-
-        // Ensure correct sort locally (defensive)
-        const realBids = [...realBidsRaw].sort((a, b) => b.priceQortPerAsset - a.priceQortPerAsset); // high->low
-        const realAsks = [...realAsksRaw].sort((a, b) => a.priceQortPerAsset - b.priceQortPerAsset); // low->high
-
-        // const bestBid = realBids[0]?.priceQortPerAsset ?? 0;
-        // const bestAsk = realAsks[0]?.priceQortPerAsset ?? 0;
-
-        const envAll = await fetchQortToAssetTrades(id, windowStart, 500, 20000);
-
-        // type Side = 'buy' | 'sell';
-        // const decideSide = (price: number): Side => {
-        //   if (bestBid === 0 && bestAsk === 0) return 'buy';
-        //   if (bestBid === 0) return 'sell';
-        //   if (bestAsk === 0) return 'buy';
-        //   return Math.abs(price - bestAsk) < Math.abs(price - bestBid) ? 'sell' : 'buy';
-        // };
-
-        function classifySideFromEnvelope(env: any): 'buy' | 'sell' {
-          const io = env?.initiatingOrder;
-          if (io && typeof io.haveAssetId === 'number') {
-            return io.haveAssetId === 0 ? 'buy' : 'sell';
-          }
-
-          // Fallbacks for older/partial nodes (best-effort):
-          // - If env has "haveAssetId"/"wantAssetId" at top level
-          if (typeof env?.haveAssetId === 'number') {
-            return env.haveAssetId === 0 ? 'buy' : 'sell';
-          }
-
-          // - Last-resort heuristic (kept just in case), but you can delete if you prefer to show 'unknown'
-          return 'buy';
-        }
-
-        const rows: Trade[] = (envAll ?? [])
-          .map((env: any) => {
-            const io = env.initiatingOrder;
-            const t = env.trade;
-
-            const qtyAsset = Number(t?.targetAmount ?? io?.amount ?? 0); // asset-side fills
-            const price =
-              io?.price != null
-                ? Number(io.price)
-                : Number(t?.initiatorAmount ?? 0) / Math.max(1e-12, qtyAsset);
-            const ts = Number(t?.timestamp ?? io?.timestamp ?? 0); // ms in your sample
-            const side = classifySideFromEnvelope(env); // <-- authoritative
-
-            return Number.isFinite(price) && qtyAsset > 0 && ts > 0
-              ? ({ price, quantity: qtyAsset, side, ts } as Trade)
-              : null;
-          })
-          .filter(Boolean) as Trade[];
-
-        // sort newest-first for the list
-        const fullNewestFirst = rows.sort((a, b) => b.ts - a.ts);
-
-        const MIN_POINTS_SHOW_ALL = 200;
-        const chartSource =
-          fullNewestFirst.length <= MIN_POINTS_SHOW_ALL
-            ? [...fullNewestFirst]
-            : fullNewestFirst.filter((t) => t.ts >= windowStart);
-
-        const chartPts: Trade[] = [...chartSource].sort((a, b) => a.ts - b.ts);
-        const newest = fullNewestFirst[0];
-        const oldest = fullNewestFirst.length
-          ? fullNewestFirst[fullNewestFirst.length - 1]
-          : undefined;
-
-        if (!cancelled) {
-          setBids(realBids);
-          setAsks(realAsks);
-          setAllTrades(fullNewestFirst);
-          setTradesPage(0);
-          // setTrades(fullNewestFirst.slice(0, TRADES_PAGE_SIZE));
-          setChartTrades(chartPts);
-        }
-
-        console.log(
-          '[fetched]',
-          envAll.length,
-          'range:',
-          oldest ? new Date(oldest.ts).toISOString() : 'n/a',
-          '→',
-          newest ? new Date(newest.ts).toISOString() : 'n/a',
-          'windowStart:',
-          new Date(windowStart).toISOString()
-        );
-        console.log('[chart points]', chartSource.length);
-
-        if (!cancelled) {
-          if (authAddress) {
-            try {
-              const mine = await getMyOrdersForAssetUi(authAddress, id, {
-                divisible,
-                includeClosed: false,
-                includeFulfilled: false,
-                limit: 1000,
-                reverse: true,
-              });
-              setMyOrders(mine ?? []);
-            } catch {
-              setMyOrders([]);
-            }
-          } else {
-            setMyOrders([]);
-          }
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    // initial run
-    void refresh();
-
-    // timer (if you still want it)
-    timer = window.setInterval(() => {
-      void refresh();
-    }, 120000);
-
-    // cleanup lives in the effect, not inside refresh()
     return () => {
       cancelled = true;
-      if (timer) window.clearInterval(timer);
     };
-  }, [id, authAddress, rangeHours]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer: number | null = null;
-
-    async function refreshFills() {
-      if (!authAddress) {
-        setMyFills([]);
-        return;
-      }
-      try {
-        // Pull both directions; some nodes only return one orientation
-        const [envA, envB] = await Promise.all([
-          getTrades(0, id, { limit: 80, reverse: true }),
-          getTrades(id, 0, { limit: 80, reverse: true }),
-        ]);
-
-        const fills = envelopesToFills(
-          ([] as any[]).concat(Array.isArray(envA) ? envA : [], Array.isArray(envB) ? envB : []),
-          authAddress,
-          authPublicKey,
-          id
-        );
-
-        if (!cancelled) setMyFills(fills);
-      } catch (e) {
-        console.debug('[fills] error', e);
-        if (!cancelled) setMyFills([]);
-      }
-    }
-
-    void refreshFills();
-    timer = window.setInterval(() => void refreshFills(), 20000);
-    return () => {
-      cancelled = true;
-      if (timer) window.clearInterval(timer);
-    };
-  }, [authAddress, authPublicKey, id]);
+  }, []);
 
   // ----- Place order state
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
@@ -610,19 +567,17 @@ export default function TradePair() {
         ) : (
           <>
             <Typography variant="subtitle2" color="text.secondary">
-              Price (candles)
+              Price Chart
             </Typography>
-            {ohlc.length === 0 ? (
-              <Typography variant="caption" color="text.secondary">
-                No price data
-              </Typography>
+            {candleDataTOHLCV.length === 0 ? (
+              <SmartPriceChart data={[]} height={300} />
             ) : (
-              <CandleChart data={ohlc} height={300} />
+              <SmartPriceChart data={candleDataTOHLCV} height={300} />
             )}
             <Typography variant="subtitle2" color="text.secondary">
               Volume
             </Typography>
-            <VolumeBars data={ohlc} />
+            <VolumeBars data={candleDataTOHLCV} />
             <Typography variant="subtitle2" color="text.secondary">
               Depth
             </Typography>
@@ -809,7 +764,14 @@ export default function TradePair() {
                   </Box>
                   <Box sx={{ textAlign: 'right' }}>{formatPrice(t.price)} QORT</Box>
                   <Box sx={{ textAlign: 'right', color: 'text.secondary' }}>
-                    {new Date(t.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {new Date(t.ts < 1e11 ? t.ts * 1000 : t.ts).toLocaleString([], {
+                      year: 'numeric',
+                      month: 'short', // or '2-digit'
+                      day: '2-digit',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: undefined, // set to '2-digit' if you want seconds
+                    })}
                   </Box>
                 </Box>
               ))}

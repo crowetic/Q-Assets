@@ -11,7 +11,8 @@ import {
   YAxis,
   Brush,
 } from 'recharts';
-import type { OhlcPoint, DepthPoint } from '../../utils/chartTransforms';
+import type { OhlcPoint } from './CandleChart';
+import type { DepthPoint } from '../../utils/chartTransforms';
 
 function tsFormatter(ts: number) {
   const d = new Date(ts);

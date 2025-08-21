@@ -1,14 +1,15 @@
 // src/components/Header.tsx
 import { Link, useLocation } from 'react-router-dom';
-import { Box, Button, useTheme, useMediaQuery } from '@mui/material';
+import { Box, Button, useTheme, useMediaQuery, Typography } from '@mui/material';
 import logoUrl from '../assets/Q-Assets-Logo.png';
+import { Q_ASSETS_VERSION } from '../constants/qdnConstants';
 
 const Header = () => {
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-  const { pathname, hash } = useLocation(); // <-- grab hash too
+  const isMdDown = useMediaQuery(theme.breakpoints.down('md'));
+  const { pathname, hash } = useLocation();
 
-  const compact = pathname.startsWith('/trade'); // compact mode
+  const compact = pathname.startsWith('/trade'); // compact mode on trade routes
 
   const navLinks = [
     { label: 'Home', to: '/' },
@@ -23,66 +24,78 @@ const Header = () => {
     { label: 'Release Notes', to: '/info#release-notes' },
   ];
 
-  // 🔑 Centralized active matcher
+  // Active matcher
   const isActiveLink = (to: string) => {
     switch (to) {
       case '/':
         return pathname === '/';
-
-      // Assets: any asset list/details/editor routes you have
       case '/assets':
-        return (
-          pathname.startsWith('/assets') || // e.g. /assets, /assets/123
-          pathname.startsWith('/asset') // e.g. /asset/:id, /asset/details/:id
-        );
-
+        return pathname.startsWith('/assets') || pathname.startsWith('/asset');
       case '/issue':
         return pathname.startsWith('/issue');
-
       case '/portfolio':
         return pathname.startsWith('/portfolio');
-
-      // Trade: any trade page (same logic you used for compact)
       case '/trade':
-        return (
-          pathname.startsWith('/trade') || // e.g. /trade, /trade/6
-          pathname.startsWith('/pair') // if you use /pair/:assetId
-        );
-
-      // Utilities (hash-aware)
+        return pathname.startsWith('/trade') || pathname.startsWith('/pair');
       case '/info':
-        // active for the generic Information button when you're on /info but NOT the release notes anchor
         return pathname === '/info' && (!hash || hash === '' || hash === '#top');
-
       case '/info#release-notes':
         return pathname === '/info' && hash === '#release-notes';
-
       default:
         return pathname === to;
     }
   };
 
-  const bigSize = isMobile ? 150 : 200;
-  const smallSize = isMobile ? 40 : 56;
+  const Logo = ({ mode }: { mode: 'compact' | 'normal' }) => (
+    <Link to="/" style={{ display: 'inline-flex' }}>
+      <img
+        src={logoUrl}
+        alt="Q-Assets Logo"
+        style={{
+          height:
+            mode === 'compact'
+              ? 'clamp(2.25rem, 6vw, 3.5rem)' // compact stays modest
+              : 'clamp(6rem, 15vw, 10rem)', // normal mode gets much larger
+          width: 'auto',
+          objectFit: 'contain',
+        }}
+      />
+    </Link>
+  );
 
   const Nav = (
-    <Box sx={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: 2 }}>
+    <Box
+      sx={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '0.75rem',
+        justifyContent: { xs: 'center', md: 'center' },
+        alignItems: 'center',
+        minWidth: 0,
+      }}
+    >
       {navLinks.map(({ label, to }) => {
-        const isActive = isActiveLink(to);
+        const active = isActiveLink(to);
         return (
           <Button
             key={to}
             component={Link}
             to={to}
-            variant={isActive ? 'contained' : 'outlined'}
+            variant={active ? 'contained' : 'outlined'}
+            size={isMdDown ? 'small' : 'medium'}
             sx={{
-              color: isActive ? theme.palette.primary.contrastText : theme.palette.text.primary,
-              borderColor: theme.palette.text.secondary,
-              fontSize: '1.1rem',
-              fontWeight: 'bold',
+              flex: '0 1 auto',
+              whiteSpace: 'nowrap',
+              lineHeight: 1.2,
+              px: '0.9em',
+              py: '0.55em',
+              fontSize: { xs: '0.95rem', md: '1.05rem' },
+              fontWeight: 700,
               textTransform: 'none',
-              backgroundColor: isActive ? theme.palette.primary.main : 'transparent',
-              '&:hover': { backgroundColor: theme.palette.secondary.main },
+              color: active ? theme.palette.primary.contrastText : theme.palette.text.primary,
+              borderColor: theme.palette.text.secondary,
+              backgroundColor: active ? theme.palette.primary.main : 'transparent',
+              '&:hover': { backgroundColor: theme.palette.action.hover },
             }}
           >
             {label}
@@ -93,40 +106,55 @@ const Header = () => {
   );
 
   const Utilities = (
-    <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
+    <Box
+      sx={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '0.5rem',
+        alignItems: 'center',
+        justifyContent: { xs: 'flex-end', md: 'flex-end' },
+        minWidth: 0,
+      }}
+    >
       {utilityButtons.map(({ label, to }) => {
-        const isActive = isActiveLink(to);
+        const active = isActiveLink(to);
         return (
           <Button
             key={to}
             component={Link}
-            size="small"
             to={to}
-            variant={isActive ? 'contained' : 'outlined'}
+            variant={active ? 'contained' : 'outlined'}
+            size="small"
             sx={{
-              color: isActive ? theme.palette.primary.contrastText : theme.palette.text.primary,
-              borderColor: theme.palette.text.secondary,
-              fontSize: '1.1rem',
+              flex: '0 1 auto',
+              whiteSpace: 'nowrap',
+              lineHeight: 1.2,
+              px: '0.85em',
+              py: '0.45em',
+              fontSize: { xs: '0.9rem', md: '0.95rem' },
               textTransform: 'none',
-              backgroundColor: isActive ? theme.palette.primary.main : 'transparent',
-              '&:hover': { backgroundColor: theme.palette.secondary.main },
+              color: active ? theme.palette.primary.contrastText : theme.palette.text.primary,
+              borderColor: theme.palette.text.secondary,
+              backgroundColor: active ? theme.palette.primary.main : 'transparent',
+              '&:hover': { backgroundColor: theme.palette.action.hover },
             }}
           >
             {label}
           </Button>
         );
       })}
+      <Typography
+        variant="caption"
+        sx={{
+          ml: 1,
+          fontWeight: 600,
+          color: theme.palette.text.secondary,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        v{Q_ASSETS_VERSION}
+      </Typography>
     </Box>
-  );
-
-  const Logo = ({ size }: { size: number }) => (
-    <Link to="/" style={{ display: 'inline-flex' }}>
-      <img
-        src={logoUrl}
-        alt="Q-Assets Logo"
-        style={{ height: size, width: size, objectFit: 'contain' }}
-      />
-    </Link>
   );
 
   return (
@@ -134,30 +162,64 @@ const Header = () => {
       component="header"
       sx={{
         backgroundColor: theme.palette.background.default,
-        px: { xs: 2, md: 4 },
-        py: compact ? 1.25 : 3,
         borderBottom: `1px solid ${theme.palette.divider}`,
         display: 'flex',
         flexDirection: 'column',
-        gap: compact ? 0 : 2,
+        gap: compact ? 0 : '1rem',
+        px: { xs: '1rem', md: '2rem' },
+        py: compact ? '0.75rem' : '1.5rem',
+        minWidth: 0,
       }}
     >
+      {/** COMPACT MODE (trade pages) */}
       {compact ? (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <Logo size={smallSize} />
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.75rem',
+            minWidth: 0,
+          }}
+        >
+          {/* Row 1: Logo + Utilities (wrap-able) */}
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.75rem',
+              minWidth: 0,
+            }}
+          >
+            <Box sx={{ flex: '0 0 auto' }}>
+              <Logo mode="compact" />
+            </Box>
+            <Box sx={{ ml: 'auto' }}>{Utilities}</Box>
           </Box>
-          <Box sx={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'center' }}>{Nav}</Box>
-          {Utilities}
+
+          {/* Row 2: Nav (centered, wraps) */}
+          <Box sx={{ display: 'flex', justifyContent: 'center', minWidth: 0 }}>{Nav}</Box>
         </Box>
       ) : (
-        <>
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>{Utilities}</Box>
-          <Box sx={{ display: 'flex', justifyContent: 'center' }}>
-            <Logo size={bigSize} />
+        /** NORMAL MODE */
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '1rem',
+            minWidth: 0,
+          }}
+        >
+          {/* Utilities top-right (wrap-able) */}
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', minWidth: 0 }}>{Utilities}</Box>
+
+          {/* Centered logo */}
+          <Box sx={{ display: 'flex', justifyContent: 'center', minWidth: 0 }}>
+            <Logo mode="normal" />
           </Box>
-          {Nav}
-        </>
+
+          {/* Centered nav */}
+          <Box sx={{ display: 'flex', justifyContent: 'center', minWidth: 0 }}>{Nav}</Box>
+        </Box>
       )}
     </Box>
   );
