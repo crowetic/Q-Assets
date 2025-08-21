@@ -127,6 +127,34 @@ export async function getAccount(address: string): Promise<any> {
   return await qortalRequest({ action: 'GET_ACCOUNT_DATA', address });
 }
 
+export async function getAllAccountNames(address: string): Promise<string[]> {
+  const addr = (address || '').trim();
+  if (!addr) return [];
+  try {
+    const rows = await qortalRequest({ action: 'GET_ACCOUNT_NAMES', address: addr } as any);
+    if (Array.isArray(rows)) {
+      return rows
+        .map((r: any) => (typeof r === 'string' ? r : r?.name))
+        .filter((s: any) => typeof s === 'string' && s.trim().length > 0)
+        .map((s: string) => s.trim());
+    }
+  } catch {}
+  // HTTP fallback some nodes provide
+  try {
+    const res = await fetch(`/names/address/${addr}`, { headers: { accept: 'application/json' } });
+    if (res.ok) {
+      const rows = await res.json();
+      if (Array.isArray(rows)) {
+        return rows
+          .map((r: any) => (typeof r === 'string' ? r : r?.name))
+          .filter((s: any) => typeof s === 'string' && s.trim().length > 0)
+          .map((s: string) => s.trim());
+      }
+    }
+  } catch {}
+  return [];
+}
+
 
 
 async function isValidQortalTx(base58Tx: string, txType: string): Promise<boolean> {

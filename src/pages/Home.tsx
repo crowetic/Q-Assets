@@ -21,8 +21,7 @@ const Home = () => {
       sx={{
         display: 'flex',
         flexDirection: 'column',
-        minHeight: '100vh',
-
+        minHeight: '100%',
         alignItems: 'center',
         padding: '2rem',
         gap: '2rem',
@@ -42,7 +41,7 @@ const Home = () => {
           flexWrap: 'wrap',
           justifyContent: 'center',
           gap: '2rem',
-          width: '100vw',
+          width: '100%',
           marginTop: '2rem',
         }}
       >

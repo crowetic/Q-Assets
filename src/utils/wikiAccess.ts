@@ -1,12 +1,10 @@
 import pLimit from 'p-limit';
 import { WIKI_GROUP_ID, WIKI_IDENTIFIER_PREFIX, WIKI_SECTIONS } from '../constants/wiki';
-import { getPrimaryAccountName } from '../utils/qortalApi';
+import { getPrimaryAccountName, getAllAccountNames } from '../utils/qortalApi';
 import { base64ToObject, base64ToUtf8, utf8ToBase64 } from './data';
 import { objectToBase64 } from 'qapp-core';
 
-// -------------------------------------------------------------
-// Types
-// -------------------------------------------------------------
+/* -------------------------------- Types -------------------------------- */
 export type LoadedSection = {
   id: string;
   title: string;
@@ -18,47 +16,30 @@ export type LoadedSection = {
 };
 
 type GroupMemberRow = { address?: string; member?: string; isAdmin?: boolean };
-type Member = { name: string; isAdmin: boolean };
-
+type Role = 'admin' | 'member';
 export type WikiMenuItem = { id: string; title: string; tags?: string[] };
 
-// -------------------------------------------------------------
-// Small cache so we don’t refetch group lists every render/poll
-// -------------------------------------------------------------
+/* --------------------------- Small address cache ------------------------ */
 const CACHE_TTL_MS = 60_000;
 let _addrCache:
   | { memberAddrs: Set<string>; adminAddrs: Set<string>; at: number }
   | null = null;
 
 const normAddr = (s?: string) => (s || '').trim();
+// const normId = (s?: string | null) => (s ?? '').trim().toLowerCase();
 
-// -------------------------------------------------------------
-// Group fetchers (paged)
-// -------------------------------------------------------------
-// async function fetchMembersPage(opts: { onlyAdmins: boolean; offset: number; limit: number }) {
-//   const { onlyAdmins, offset, limit } = opts;
-//   const url =
-//     `/groups/members/${WIKI_GROUP_ID}` +
-//     `?onlyAdmins=${onlyAdmins ? 'true' : 'false'}` +
-//     `&limit=${limit}&offset=${offset}&reverse=true`;
-//   const res = await fetch(url, { headers: { accept: 'application/json' } });
-//   if (!res.ok) throw new Error(`Group members fetch failed: ${res.status} ${res.statusText}`);
-//   return (await res.json()) as GroupMemberRow[];
-// }
-
+/* ------------------------- Group fetchers (paged) ----------------------- */
 type GroupMembersResponse =
   | { memberCount?: number; adminCount?: number; members?: GroupMemberRow[] }
   | GroupMemberRow[];
 
-// Parse both new ({members:[...]}) and old ([...]) shapes defensively
 function parseMembersPayload(json: GroupMembersResponse): GroupMemberRow[] {
-  if (Array.isArray(json)) return json as GroupMemberRow[];
-  if (json && Array.isArray((json as any).members)) return (json as any).members as GroupMemberRow[];
+  if (Array.isArray(json)) return json;
+  if (json && Array.isArray((json as any).members)) return (json as any).members;
   return [];
 }
 
 async function fetchGroupMembersRaw(): Promise<GroupMemberRow[]> {
-  // If your node supports unlimited with limit=0, keep it. Otherwise bump higher than your group size.
   const url = `/groups/members/${WIKI_GROUP_ID}?limit=0&reverse=true`;
   const res = await fetch(url, { headers: { accept: 'application/json' } });
   if (!res.ok) throw new Error(`Group members fetch failed: ${res.status} ${res.statusText}`);
@@ -66,20 +47,12 @@ async function fetchGroupMembersRaw(): Promise<GroupMemberRow[]> {
   return parseMembersPayload(json);
 }
 
-// Backward-compatible “filtered” fetchers so the rest of the module is unchanged
 async function fetchAllRows(onlyAdmins: boolean): Promise<GroupMemberRow[]> {
   const rows = await fetchGroupMembersRaw();
-  return onlyAdmins ? rows.filter(r => r.isAdmin === true) : rows;
+  return onlyAdmins ? rows.filter((r) => r.isAdmin === true) : rows;
 }
 
-// // (Kept for compatibility with your existing call sites; delegates to fetchAllRows)
-// async function fetchAll(onlyAdmins: boolean): Promise<GroupMemberRow[]> {
-//   return fetchAllRows(onlyAdmins);
-// }
-
-// -------------------------------------------------------------
-// Address sets (fast membership checks) with cache
-// -------------------------------------------------------------
+/* ------------------- Address membership (with cache) -------------------- */
 export async function getGroupAddressSets(): Promise<{
   memberAddrs: Set<string>;
   adminAddrs: Set<string>;
@@ -93,12 +66,8 @@ export async function getGroupAddressSets(): Promise<{
     const [adminsRaw, membersRaw] = await Promise.all([fetchAllRows(true), fetchAllRows(false)]);
     const memberAddrs = new Set(membersRaw.map((r) => normAddr(r.member || r.address)));
     const adminAddrs = new Set(adminsRaw.map((r) => normAddr(r.member || r.address)));
-
-    // admins are members too
-    for (const a of adminAddrs) memberAddrs.add(a);
-
+    for (const a of adminAddrs) memberAddrs.add(a); // admins are members too
     _addrCache = { memberAddrs, adminAddrs, at: now };
-    // console.debug('[wikiAccess] members', memberAddrs.size, 'admins', adminAddrs.size);
     return { memberAddrs, adminAddrs };
   } catch (e) {
     console.error('getGroupAddressSets error:', e);
@@ -106,105 +75,123 @@ export async function getGroupAddressSets(): Promise<{
   }
 }
 
-export async function isAddressInManagementGroup(address?: string | null): Promise<boolean> {
+export async function isAddressInManagementGroup(address?: string | null) {
   if (!address) return false;
   const { memberAddrs } = await getGroupAddressSets();
   return memberAddrs.has(normAddr(address));
 }
 
-export async function isAddressAdminInManagementGroup(address?: string | null): Promise<boolean> {
+export async function isAddressAdminInManagementGroup(address?: string | null) {
   if (!address) return false;
   const { adminAddrs } = await getGroupAddressSets();
   return adminAddrs.has(normAddr(address));
 }
 
-// -------------------------------------------------------------
-// Name-mapped list (for QDN IO). We still need names to read/publish.
-// -------------------------------------------------------------
-export async function listManagementGroupMembers(): Promise<Member[]> {
+/* ----------------------- Names per address (robust) --------------------- */
+/** Try to fetch *all* names for an address. Hyphens preserved. */
+async function getAllNamesForAddress(address: string): Promise<string[]> {
   try {
-    const { memberAddrs, adminAddrs } = await getGroupAddressSets();
-    const addrs = Array.from(memberAddrs);
-    const limit = pLimit(8);
-    // console.log('memberAddresses',memberAddrs)
-    // console.log('adminAddresses', adminAddrs)
-    const nameRecs = await Promise.all(
-      addrs.map((addr) =>
-        limit(async () => {
-          try {
-            const nm = await getPrimaryAccountName(addr);
-            if (!nm) return null;
-            // console.log('namefromListManagementGroupMembers',nm)
-            return { name: nm, isAdmin: adminAddrs.has(normAddr(addr)) } as Member;
-          } catch {
-            return null;
-          }
-        })
-      )
-    );
+    // Prefer your util if it returns multiple names
+    const names = await getAllAccountNames(address).catch(() => null);
 
-    // de-dupe names (case-insensitive), keep admin=true if any duplicate was admin
-    const map = new Map<string, Member>();
-    for (const rec of nameRecs) {
-      if (!rec) continue;
-      const k = rec.name.toLowerCase();
-      const prev = map.get(k);
-      if (!prev || (rec.isAdmin && !prev.isAdmin)) map.set(k, rec);
+    const normalizeList = (arr: any): string[] =>
+      (Array.isArray(arr) ? arr : [])
+        .map((s) => String(s ?? '').trim())
+        .filter(Boolean);
+
+    let out = normalizeList(names);
+
+    // Fallback: try GET_ACCOUNT_NAMES via qortalRequest
+    if (!out.length) {
+      const res = await qortalRequest({ action: 'GET_ACCOUNT_NAMES', address } as any).catch(
+        () => null
+      );
+      if (Array.isArray(res)) out = normalizeList(res);
+      else if (Array.isArray((res as any)?.names)) out = normalizeList((res as any).names);
+      else if (typeof (res as any)?.name === 'string') out = normalizeList([(res as any).name]);
     }
-    return Array.from(map.values());
-  } catch (e) {
-    console.error('listManagementGroupMembers error:', e);
+
+    // Final fallback: primary name only
+    if (!out.length) {
+      const primary = await getPrimaryAccountName(address).catch(() => null);
+      if (primary) out = [String(primary).trim()];
+    }
+
+    // De-dupe case-insensitively, but keep original spelling/hyphens
+    const seen = new Set<string>();
+    return out.filter((n) => {
+      const k = n.toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  } catch {
     return [];
   }
 }
 
-// Legacy name checks (OK to keep for parity; prefer address checks in UI)
-export async function isNameInManagementGroup(name?: string|null ): Promise<boolean> {
+/* ----------------- Flattened list of publisher NAMES -------------------- */
+/** Returns the full set of publisher names (flattened) with role, hyphen-safe. */
+export async function listManagementGroupNames(): Promise<Array<{ name: string; role: Role }>> {
+  try {
+    const { memberAddrs, adminAddrs } = await getGroupAddressSets();
+    const addrs = Array.from(memberAddrs);
+    const limit = pLimit(8);
+
+    const perAddr = await Promise.all(
+      addrs.map((addr) =>
+        limit(async () => {
+          const names = await getAllNamesForAddress(addr);
+          const role: Role = adminAddrs.has(addr) ? 'admin' : 'member';
+          return names.map((name) => ({ name, role }));
+        })
+      )
+    );
+
+    // Flatten + de-dupe by lowercased name; if any duplicate has admin role, keep admin
+    const map = new Map<string, { name: string; role: Role }>();
+    for (const arr of perAddr) {
+      for (const rec of arr) {
+        const key = rec.name.toLowerCase();
+        const prev = map.get(key);
+        if (!prev || (rec.role === 'admin' && prev.role !== 'admin')) {
+          map.set(key, rec);
+        }
+      }
+    }
+    return Array.from(map.values());
+  } catch (e) {
+    console.error('listManagementGroupNames error:', e);
+    return [];
+  }
+}
+
+/* ---------------- Legacy “isName…” helpers, now hyphen-safe ------------- */
+export async function isNameInManagementGroup(name?: string | null): Promise<boolean> {
   if (!name) return false;
-  const members = await listManagementGroupMembers();
-  return members.some((m) => m.name.toLowerCase() === name.toLowerCase());
+  const names = await listManagementGroupNames();
+  return names.some((m) => m.name.toLowerCase() === name.toLowerCase());
 }
 
 export async function isNameAdminInManagementGroup(name?: string | null): Promise<boolean> {
   if (!name) return false;
-  const members = await listManagementGroupMembers();
-  return members.some((m) => m.name.toLowerCase() === name.toLowerCase() && m.isAdmin);
+  const names = await listManagementGroupNames();
+  return names.some((m) => m.name.toLowerCase() === name.toLowerCase() && m.role === 'admin');
 }
 
-// Convenience for UI: explain *why* publish is disabled
+/* --------------------------- Publish eligibility ------------------------ */
 export async function checkPublishEligibility(address?: string | null, name?: string | null) {
   const inGroup = await isAddressInManagementGroup(address);
   if (!inGroup) return { canPublish: false, reason: 'Requires membership in Q-Assets-Management.' };
   if (!name) return { canPublish: false, reason: 'Your account needs a registered Qortal name to publish.' };
   return { canPublish: true as const, reason: '' };
 }
-
-export async function isUserInManagementGroup(opts: { address?: string | null; name?: string | null }): Promise<boolean> {
+export async function isUserInManagementGroup(opts: { address?: string | null; name?: string | null }) {
   if (await isAddressInManagementGroup(opts.address)) return true;
   return isNameInManagementGroup(opts.name);
 }
 
-// -------------------------------------------------------------
-// QDN helpers / IO
-// -------------------------------------------------------------
-
-
-// async function fetchQdnDocument(name: string, identifier: string): Promise<string | null> {
-//   try {
-//     const res = await qortalRequest({
-//       action: 'FETCH_QDN_RESOURCE',
-//       name,
-//       service: 'DOCUMENT',
-//       identifier,
-//       encoding: 'base64',
-//     } as any);
-//     const final = base64ToUtf8(res)
-//     return final;
-//   } catch {
-//     return null;
-//   }
-// }
-
+/* ---------------------------- QDN fetch helpers ------------------------- */
 async function fetchDocHtml(name: string, identifier: string): Promise<string | null> {
   try {
     const b64 = await qortalRequest({
@@ -220,78 +207,100 @@ async function fetchDocHtml(name: string, identifier: string): Promise<string | 
   }
 }
 
+async function fetchQdnBase64(name: string, identifier: string): Promise<string | null> {
+  try {
+    const data64 = await qortalRequest({
+      action: 'FETCH_QDN_RESOURCE',
+      service: 'DOCUMENT',
+      name,
+      identifier,
+      encoding: 'base64',
+      rebuild: false,
+    });
+    return typeof data64 === 'string' && data64 ? data64 : null;
+  } catch {
+    return null;
+  }
+}
+
+async function tryFetchHtml(name: string, identifier: string): Promise<string | null> {
+  try {
+    const b64 = await qortalRequest({
+      action: 'FETCH_QDN_RESOURCE',
+      service: 'DOCUMENT',
+      name,          // EXACT, hyphenated OK
+      identifier,
+      encoding: 'base64',
+    });
+    const html = base64ToUtf8(String(b64 ?? ''));
+    return html && html.trim() ? html : null;
+  } catch {
+    return null;
+  }
+}
+
+/* ------------------------------- Publish -------------------------------- */
 export async function publishWikiSection(
   sectionId: string,
   html: string,
-  publisherName?: string | undefined,
+  publisherName?: string,
   publisherAddress?: string | null
 ) {
-  // Use the same membership logic as the UI (address OR name)
   const ok = await isUserInManagementGroup({
     address: publisherAddress ?? undefined,
     name: publisherName ?? undefined,
   });
-  const data64 = utf8ToBase64(html)
-
-  if (!ok) {
-    throw new Error('You are not a member of Q-Assets-Management; cannot publish.');
-  }
+  if (!ok) throw new Error('You are not a member of Q-Assets-Management; cannot publish.');
 
   const identifier = `${WIKI_IDENTIFIER_PREFIX}${sectionId}`;
+  const data64 = utf8ToBase64(html);
   await qortalRequest({
     action: 'PUBLISH_QDN_RESOURCE',
-    name: publisherName, // QDN still needs the NAME to publish under; ensure you pass it
+    name: publisherName, // QDN requires NAME
     service: 'DOCUMENT',
     identifier,
     data64,
   });
 }
 
-// -------------------------------------------------------------
-// Sections: load winner (admin > member) for each section id
-// -------------------------------------------------------------
-type Candidate = {
-  name: string;                       // publisher name
-  role: 'admin' | 'member';
-  ts: number;
-};
-const limit = pLimit(6);
+const discoverLimit = pLimit(6);
 
-export async function loadSectionFromGroup(sectionId: string) {
-  const members = await listManagementGroupMembers(); // must include: {name, isAdmin}
-  if (!members?.length) return null;
-
-  const identifier = `${WIKI_IDENTIFIER_PREFIX}${sectionId}`;
-
-  // 1) discover who has this section via SEARCH (metadata only)
-  const searchResults = await Promise.all(
-    members.map(m =>
-      limit(async () => {
+/** Given an identifier and a list of publishers {name, role},
+ * return ONLY those names that actually have hits for that identifier,
+ * sorted: admins newest→oldest, then members newest→oldest.
+ */
+async function discoverCandidatesStrict(
+  identifier: string,
+  publishers: Array<{ name: string; role: Role }>
+): Promise<Candidate[]> {
+  const results = await Promise.all(
+    publishers.map((p) =>
+      discoverLimit(async () => {
         try {
           const res = await qortalRequest({
             action: 'SEARCH_QDN_RESOURCES',
             service: 'DOCUMENT',
-            name: m.name,
-            identifier, 
+            name: p.name,           // EXACT name; hyphens preserved
+            identifier,             // EXACT identifier
           });
 
-          // Some nodes return an array; some a single result. Normalize to array.
           const rows = Array.isArray(res) ? res : (res ? [res] : []);
           if (!rows.length) return null;
 
-          // Pick newest hit for this user
+          // Pick newest row for THIS name + identifier only
           const best = rows
-            .filter((r: any) => (r.identifier) === (identifier))
-            .sort((a: any, b: any) =>
-              (Number(b.updated ?? b.created ?? 0) || 0) -
-              (Number(a.updated ?? a.created ?? 0) || 0)
+            .filter((r: any) => r?.identifier === identifier && r?.name === p.name)
+            .sort(
+              (a: any, b: any) =>
+                (Number(b.updated ?? b.created ?? 0) || 0) -
+                (Number(a.updated ?? a.created ?? 0) || 0)
             )[0];
 
           if (!best) return null;
 
           return {
-            name: m.name,
-            role: m.isAdmin ? 'admin' as const : 'member' as const,
+            name: p.name,
+            role: p.role,
             ts: Number(best.updated ?? best.created ?? 0) || 0,
           } as Candidate;
         } catch {
@@ -301,42 +310,54 @@ export async function loadSectionFromGroup(sectionId: string) {
     )
   );
 
-  const candidates = (searchResults.filter(Boolean) as Candidate[]);
-  if (!candidates.length) return null;
-
-  // 2) choose newest admin; else newest member
-  const newestAdmin = candidates
-    .filter(c => c.role === 'admin')
-    .sort((a, b) => b.ts - a.ts)[0];
-  const newestMember = candidates
-    .filter(c => c.role === 'member')
-    .sort((a, b) => b.ts - a.ts)[0];
-
-  const pick = newestAdmin ?? newestMember;
-  if (!pick) return null;
-
-  // 3) fetch the actual document content from the chosen publisher
-  const html = await fetchDocHtml(pick.name, identifier);
-  if (!html) return null;
-
-  return {
-    html,
-    publisher: pick.name,
-    publisherRole: pick.role,
-    ts: pick.ts,
-  };
+  const hits = (results.filter(Boolean) as Candidate[]);
+  const admins  = hits.filter(h => h.role === 'admin').sort((a,b) => b.ts - a.ts);
+  const members = hits.filter(h => h.role === 'member').sort((a,b) => b.ts - a.ts);
+  return admins.concat(members);
 }
 
-// Accepts optional meta so both call sites work:
-//   loadAllWikiSections()                      -> uses WIKI_SECTIONS
-//   loadAllWikiSections(customMetaArray)       -> uses your array
+
+/* ---------------------- Sections (admin > member) ----------------------- */
+type Candidate = { name: string; role: Role; ts: number };
+const parallel = pLimit(6);
+
+export async function loadSectionFromGroup(sectionId: string) {
+  // you said this now returns [{ name, role }]
+  const names = await listManagementGroupNames();
+  if (!names.length) return null;
+  console.log('allNames',names)
+
+  const identifier = `${WIKI_IDENTIFIER_PREFIX}${sectionId}`;
+
+  // 1) build a strictly valid, ordered candidate list
+  const ordered = await discoverCandidatesStrict(identifier, names);
+  if (!ordered.length) return null;
+  console.log('orderedCandidatesStrict',ordered)
+
+  // 2) try candidates in order; fall back if a fetch 404s/returns empty
+  for (const cand of ordered) {
+    const html = await fetchDocHtml(cand.name, identifier);
+    if (html && html.trim()) {
+      return {
+        html,
+        publisher: cand.name,
+        publisherRole: cand.role,
+        ts: cand.ts,
+      };
+    }
+  }
+
+  // nothing we could fetch successfully
+  return null;
+}
+
 export async function loadAllWikiSections(
   meta: { id: string; title: string; tags?: string[] }[] = WIKI_SECTIONS
 ): Promise<LoadedSection[]> {
-  const limit = pLimit(3);
+  const lim = pLimit(3);
   return Promise.all(
     meta.map((m) =>
-      limit(async () => {
+      lim(async () => {
         const remote = await loadSectionFromGroup(m.id).catch(() => null);
         return {
           id: m.id,
@@ -352,30 +373,7 @@ export async function loadAllWikiSections(
   );
 }
 
-
-
-async function fetchQdnBase64(name: string, identifier: string): Promise<string | null> {
-  try {
-    // Ask QDN to return *base64* directly
-    const data64 = await qortalRequest({
-      action: 'FETCH_QDN_RESOURCE',
-      service: 'DOCUMENT',
-      name,
-      identifier,
-      encoding: 'base64',
-      rebuild: false,
-    });
-    return typeof data64 === 'string' && data64 ? data64 : null;
-  } catch {
-    return null;
-  }
-}
-
-type Role = 'admin' | 'member';
-
-// -------------------------------------------------------------
-// MENU (TOC) — admin > member priority
-// -------------------------------------------------------------
+/* ----------------------------- Menu (TOC) ------------------------------- */
 const WIKI_MENU_IDENTIFIER = `${WIKI_IDENTIFIER_PREFIX}__menu`;
 
 export async function loadWikiMenu(): Promise<{
@@ -384,13 +382,12 @@ export async function loadWikiMenu(): Promise<{
   role?: Role;
   ts?: number;
 } | null> {
-  const members = await listManagementGroupMembers();
-  if (!members?.length) return null;
+  const names = await listManagementGroupNames(); // [{name, role}]
+  if (!names.length) return null;
 
-  // 1) Discover who has the menu + their latest ts (newest admin wins)
-  const discoveries = await Promise.all(
-    members.map(m =>
-      limit(async () => {
+  const findings = await Promise.all(
+    names.map((m) =>
+      parallel(async () => {
         try {
           const res = await qortalRequest({
             action: 'SEARCH_QDN_RESOURCES',
@@ -399,11 +396,11 @@ export async function loadWikiMenu(): Promise<{
             identifier: WIKI_MENU_IDENTIFIER,
           });
 
-          const rows = Array.isArray(res) ? res : (res ? [res] : []);
+          const rows = Array.isArray(res) ? res : res ? [res] : [];
           if (!rows.length) return null;
 
           const best = rows
-            .filter((r: any) => (r.identifier) === (WIKI_MENU_IDENTIFIER))
+            .filter((r: any) => r.identifier === WIKI_MENU_IDENTIFIER)
             .sort(
               (a: any, b: any) =>
                 (Number(b.updated ?? b.created ?? 0) || 0) -
@@ -411,12 +408,7 @@ export async function loadWikiMenu(): Promise<{
             )[0];
 
           if (!best) return null;
-
-          return {
-            name: m.name as string,
-            role: (m.isAdmin ? 'admin' : 'member') as Role,
-            ts: Number(best.updated ?? best.created ?? 0) || 0,
-          };
+          return { name: m.name, role: m.role, ts: Number(best.updated ?? best.created ?? 0) || 0 };
         } catch {
           return null;
         }
@@ -424,15 +416,14 @@ export async function loadWikiMenu(): Promise<{
     )
   );
 
-  const candidates = (discoveries.filter(Boolean) as Array<{ name: string; role: Role; ts: number }>);
+  const candidates = (findings.filter(Boolean) as Array<{ name: string; role: Role; ts: number }>);
   if (!candidates.length) return null;
 
-  const newestAdmin = candidates.filter(c => c.role === 'admin').sort((a, b) => b.ts - a.ts)[0];
-  const newestMember = candidates.filter(c => c.role === 'member').sort((a, b) => b.ts - a.ts)[0];
+  const newestAdmin = candidates.filter((c) => c.role === 'admin').sort((a, b) => b.ts - a.ts)[0];
+  const newestMember = candidates.filter((c) => c.role === 'member').sort((a, b) => b.ts - a.ts)[0];
   const pick = newestAdmin ?? newestMember;
   if (!pick) return null;
 
-  // 2) Fetch chosen publisher’s doc (base64), decode → JSON ARRAY of WikiMenuItem
   const data64 = await fetchQdnBase64(pick.name, WIKI_MENU_IDENTIFIER);
   if (!data64) return null;
 
@@ -442,15 +433,17 @@ export async function loadWikiMenu(): Promise<{
   } catch {
     return null;
   }
-
   if (!Array.isArray(itemsRaw)) return null;
 
-  // 3) Normalize and validate items
-  const items: WikiMenuItem[] = (itemsRaw as any[]).map((it) => ({
-    id: (it?.id),
-    title: String(it?.title ?? '').trim(),
-    tags: Array.isArray(it?.tags) ? it.tags.map((t: any) => String(t).trim()).filter(Boolean) : [],
-  })).filter(it => it.id && it.title);
+  const items: WikiMenuItem[] = (itemsRaw as any[])
+    .map((it) => ({
+      id: String(it?.id ?? '').trim(),
+      title: String(it?.title ?? '').trim(),
+      tags: Array.isArray(it?.tags)
+        ? it.tags.map((t: any) => String(t).trim()).filter(Boolean)
+        : [],
+    }))
+    .filter((it) => it.id && it.title);
 
   return { items, publisher: pick.name, role: pick.role, ts: pick.ts };
 }
