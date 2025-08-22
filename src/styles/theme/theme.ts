@@ -2,7 +2,7 @@ import { createTheme } from '@mui/material/styles';
 
 const commonThemeOptions = {
   typography: {
-    fontFamily: ['Inter'].join(','),
+    fontFamily: ['Orbitron'].join(','),
     h1: {
       fontSize: '2rem',
       fontWeight: 600,

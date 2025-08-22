@@ -24,6 +24,12 @@
   font-weight: 400;
 }
 
+@font-face {
+  font-family: 'Orbitron';
+  src: url('./styles/fonts/Orbitron-VariableFont_wght.ttf') format('truetype');
+  font-weight: 400;
+}
+
 :root {
   line-height: 1.2;
   padding: 0px;
