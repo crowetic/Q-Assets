@@ -21,6 +21,8 @@ import { transferAsset } from '../utils/qortalApi';
 import { resolveRecipientStrict } from '../utils/address';
 import SendAssetDialog from '../portfolio/SendAssetDialog';
 import TransactionsPanel from '../portfolio/TransactionsPanel';
+import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
 
 export default function PortfolioPage() {
   const {
@@ -52,6 +54,9 @@ export default function PortfolioPage() {
   const navigate = useNavigate();
 
   const { address: authAddress, publicKey: authPublicKey } = useAuth();
+
+  const theme = useTheme();
+  const isXs = useMediaQuery(theme.breakpoints.down('sm'));
 
   // const parseHumanAmount = (s: string): number | null => {
   //   // disallow exponentials/commas/spaces beyond trim
@@ -401,72 +406,161 @@ export default function PortfolioPage() {
                     {/* Actions */}
                     <Box
                       sx={{
+                        // span the full row on xs (belt & suspenders; matches the nth-of-type rule)
+                        gridColumn: { xs: '1 / -1', md: 'auto' },
                         display: 'grid',
-                        gridAutoFlow: { xs: 'row', sm: 'column' },
-                        gridAutoColumns: 'min-content',
-                        gap: { xs: 0.5, sm: 1 },
-                        justifyContent: { xs: 'stretch', sm: 'end' },
+                        gap: { xs: 0.75, sm: 1 },
+
+                        // Mobile: single column, full width; Desktop: inline icons
+                        gridTemplateColumns: { xs: '1fr', sm: 'repeat(4, min-content)' },
+                        alignItems: 'stretch',
+                        justifyItems: { xs: 'stretch', sm: 'end' },
                       }}
                     >
-                      <Tooltip title="Show transactions">
-                        <span>
-                          <IconButton
+                      {isXs ? (
+                        // ===== Mobile: full-width labeled buttons =====
+                        <>
+                          <Button
+                            fullWidth
                             size="small"
-                            color="inherit"
+                            variant="outlined"
+                            startIcon={<ReceiptLong fontSize="small" />}
                             onClick={() => toggleTx(row.assetId)}
                             disabled={!hasAuth}
+                            sx={{
+                              justifyContent: 'flex-start',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              minHeight: 36,
+                            }}
                           >
-                            <ReceiptLong fontSize="small" />
-                          </IconButton>
-                        </span>
-                      </Tooltip>
+                            Transactions
+                          </Button>
 
-                      <Tooltip title={`Send ${row.name}`}>
-                        <span>
-                          <IconButton
+                          <Button
+                            fullWidth
                             size="small"
-                            sx={{ color: c.accent }}
+                            variant="contained"
+                            startIcon={<SendIcon fontSize="small" />}
                             onClick={() => setSendDialog({ open: true, assetId: row.assetId })}
                             disabled={!hasAuth}
+                            sx={{
+                              justifyContent: 'flex-start',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              minHeight: 36,
+                              bgcolor: c.accent,
+                              '&:hover': { bgcolor: c.accentHover },
+                            }}
                           >
-                            <SendIcon fontSize="small" />
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                      <SendAssetDialog
-                        open={sendDialog.open}
-                        onClose={() => setSendDialog({ ...sendDialog, open: false })}
-                        assetId={sendDialog.assetId}
-                        assetName={assetsIndex[sendDialog.assetId]?.name || ''}
-                        isDivisible={assetsIndex[sendDialog.assetId]?.isDivisible ?? true}
-                        isUnspendable={assetsIndex[sendDialog.assetId]?.isUnspendable ?? false}
-                        balance={holdings[sendDialog.assetId]?.perWallet?.[authAddress] ?? 0}
-                        avatarUrl={avatarMap[sendDialog.assetId] ?? null}
-                        accent={
-                          sendDialog.assetId ? colorFromAssetId(sendDialog.assetId) : undefined
-                        }
-                        onConfirm={handleSendConfirm}
-                      />
-                      <Tooltip title={`Trade ${row.name}`}>
-                        <span>
-                          <IconButton
+                            {`Send ${row.name}`}
+                          </Button>
+
+                          <Button
+                            fullWidth
                             size="small"
-                            sx={{ color: c.accent }}
+                            variant="contained"
+                            startIcon={<SwapHoriz fontSize="small" />}
                             onClick={() => onTrade(row.assetId)}
                             disabled={!hasAuth}
+                            sx={{
+                              justifyContent: 'flex-start',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              minHeight: 36,
+                              bgcolor: c.accent,
+                              '&:hover': { bgcolor: c.accentHover },
+                            }}
                           >
-                            <SwapHoriz fontSize="small" />
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                      <Tooltip title="View details">
-                        <span>
-                          <IconButton size="small" onClick={() => onViewDetails(row.assetId)}>
-                            <Launch fontSize="small" />
-                          </IconButton>
-                        </span>
-                      </Tooltip>
+                            {`Trade ${row.name}`}
+                          </Button>
+
+                          <Button
+                            fullWidth
+                            size="small"
+                            variant="outlined"
+                            startIcon={<Launch fontSize="small" />}
+                            onClick={() => onViewDetails(row.assetId)}
+                            sx={{
+                              justifyContent: 'flex-start',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              minHeight: 36,
+                            }}
+                          >
+                            View details
+                          </Button>
+                        </>
+                      ) : (
+                        // ===== Desktop/Tablet: compact icon buttons inline =====
+                        <>
+                          <Tooltip title="Show transactions">
+                            <span>
+                              <IconButton
+                                size="small"
+                                color="inherit"
+                                onClick={() => toggleTx(row.assetId)}
+                                disabled={!hasAuth}
+                              >
+                                <ReceiptLong fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+
+                          <Tooltip title={`Send ${row.name}`}>
+                            <span>
+                              <IconButton
+                                size="small"
+                                sx={{ color: c.accent }}
+                                onClick={() => setSendDialog({ open: true, assetId: row.assetId })}
+                                disabled={!hasAuth}
+                              >
+                                <SendIcon fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+
+                          <Tooltip title={`Trade ${row.name}`}>
+                            <span>
+                              <IconButton
+                                size="small"
+                                sx={{ color: c.accent }}
+                                onClick={() => onTrade(row.assetId)}
+                                disabled={!hasAuth}
+                              >
+                                <SwapHoriz fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+
+                          <Tooltip title="View details">
+                            <span>
+                              <IconButton size="small" onClick={() => onViewDetails(row.assetId)}>
+                                <Launch fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                        </>
+                      )}
                     </Box>
+
+                    {/* Dialog (shared for both mobile & desktop branches) */}
+                    <SendAssetDialog
+                      open={sendDialog.open}
+                      onClose={() => setSendDialog({ ...sendDialog, open: false })}
+                      assetId={sendDialog.assetId}
+                      assetName={assetsIndex[sendDialog.assetId]?.name || ''}
+                      isDivisible={assetsIndex[sendDialog.assetId]?.isDivisible ?? true}
+                      isUnspendable={assetsIndex[sendDialog.assetId]?.isUnspendable ?? false}
+                      balance={holdings[sendDialog.assetId]?.perWallet?.[authAddress] ?? 0}
+                      avatarUrl={avatarMap[sendDialog.assetId] ?? null}
+                      accent={sendDialog.assetId ? colorFromAssetId(sendDialog.assetId) : undefined}
+                      onConfirm={handleSendConfirm}
+                    />
                   </Box>
                   {/* Inline transactions panel as its own grid item, full width */}
                   <Box
@@ -603,7 +697,7 @@ export default function PortfolioPage() {
             <Box
               display="grid"
               gridTemplateColumns={{
-                xs: 'auto 1fr',
+                xs: 'auto 1fr auto', // 👈 amount column exists on mobile too
                 sm: 'auto 1fr auto',
               }}
               rowGap={1}
@@ -612,6 +706,7 @@ export default function PortfolioPage() {
             >
               {rowsAll.map((row) => (
                 <React.Fragment key={row.assetId}>
+                  {/* Avatar */}
                   <Box
                     sx={{
                       width: { xs: 32, sm: 36 },
@@ -641,6 +736,7 @@ export default function PortfolioPage() {
                     )}
                   </Box>
 
+                  {/* Name */}
                   <Typography
                     variant="body1"
                     sx={{
@@ -654,9 +750,15 @@ export default function PortfolioPage() {
                     {row.name}
                   </Typography>
 
+                  {/* Amount — now visible on xs, right-aligned */}
                   <Typography
                     variant="body1"
-                    sx={{ fontFamily: 'monospace', display: { xs: 'none', sm: 'block' } }}
+                    sx={{
+                      fontFamily: 'monospace',
+                      textAlign: 'right',
+                      fontSize: { xs: '0.92rem', sm: '1rem' }, // optional; tighter on phones
+                    }}
+                    title="Total tracked balance"
                   >
                     {formatAssetAmount(row.total, row.isDivisible)}
                   </Typography>

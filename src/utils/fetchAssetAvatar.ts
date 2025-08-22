@@ -168,7 +168,9 @@ export const fetchAssetAvatar = async (
   try {
     const ownerDefault = await fetchOwnerImageByIdentifiers(DEFAULT_AVATAR_IDENTIFIERS);
     if (ownerDefault) return memoSet(memoKey, ownerDefault);
-  } catch {/* continue */}
+  } catch {/* continue */ }
+  
+  
 
   // 3) App owner: core-asset override (QDN) if applicable
   if (coreKey && APP_OWNER_NAME) {
