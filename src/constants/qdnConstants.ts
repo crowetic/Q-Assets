@@ -2,7 +2,7 @@ import { getAssetInfo } from "../utils/qortalAssetRequests";
 import type { Service } from "qapp-core"; // or your local types
 
 export const Q_ASSET_APP_PUBLISHER: string = 'Q-Assets'
-export const Q_ASSET_APP_VERSION: number = 0.12
+export const Q_ASSET_APP_VERSION: number = 0.13
 export const isBeta: boolean = true
 
 export const Q_ASSETS_VERSION: string = isBeta ? Q_ASSET_APP_VERSION + "b" : Q_ASSET_APP_VERSION.toString() 

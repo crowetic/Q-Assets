@@ -223,21 +223,21 @@ async function fetchQdnBase64(name: string, identifier: string): Promise<string 
   }
 }
 
-async function tryFetchHtml(name: string, identifier: string): Promise<string | null> {
-  try {
-    const b64 = await qortalRequest({
-      action: 'FETCH_QDN_RESOURCE',
-      service: 'DOCUMENT',
-      name,          // EXACT, hyphenated OK
-      identifier,
-      encoding: 'base64',
-    });
-    const html = base64ToUtf8(String(b64 ?? ''));
-    return html && html.trim() ? html : null;
-  } catch {
-    return null;
-  }
-}
+// async function tryFetchHtml(name: string, identifier: string): Promise<string | null> {
+//   try {
+//     const b64 = await qortalRequest({
+//       action: 'FETCH_QDN_RESOURCE',
+//       service: 'DOCUMENT',
+//       name,          // EXACT, hyphenated OK
+//       identifier,
+//       encoding: 'base64',
+//     });
+//     const html = base64ToUtf8(String(b64 ?? ''));
+//     return html && html.trim() ? html : null;
+//   } catch {
+//     return null;
+//   }
+// }
 
 /* ------------------------------- Publish -------------------------------- */
 export async function publishWikiSection(
