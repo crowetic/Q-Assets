@@ -86,15 +86,8 @@ export const UnconfirmedTxWidget: React.FC = () => {
             >
               {unconfirmed.map(({ tx }) => (
                 <Paper key={tx.signature} variant="outlined" sx={{ p: 1, borderRadius: 1.5 }}>
-                  <Typography
-                    variant="body2"
-                    fontWeight={700}
-                    noWrap
-                    title={tx.identifier || tx.signature}
-                  >
-                    {tx.type === 'ARBITRARY'
-                      ? `ARBITRARY${tx.identifier ? ` • ${tx.identifier}` : ''}`
-                      : tx.type}
+                  <Typography variant="body2" fontWeight={700} noWrap title={tx.signature}>
+                    {tx.type}
                   </Typography>
                   <Box mt={1}>
                     <LinearProgress />
@@ -105,15 +98,8 @@ export const UnconfirmedTxWidget: React.FC = () => {
               {confirmed.map(({ tx }) => (
                 <Paper key={tx.signature} variant="outlined" sx={{ p: 1, borderRadius: 1.5 }}>
                   <Box display="flex" alignItems="center" justifyContent="space-between" gap={1}>
-                    <Typography
-                      variant="body2"
-                      fontWeight={700}
-                      noWrap
-                      title={tx.identifier || tx.signature}
-                    >
-                      {tx.type === 'ARBITRARY'
-                        ? `ARBITRARY${tx.identifier ? ` • ${tx.identifier}` : ''}`
-                        : tx.type}
+                    <Typography variant="body2" fontWeight={700} noWrap title={tx.signature}>
+                      {tx.type}
                     </Typography>
                     <IconButton size="small" onClick={() => dismiss(tx.signature)}>
                       <CloseIcon fontSize="small" />
