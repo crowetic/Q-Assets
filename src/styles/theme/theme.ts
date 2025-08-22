@@ -2,36 +2,43 @@ import { createTheme } from '@mui/material/styles';
 
 const commonThemeOptions = {
   typography: {
-    fontFamily: ['Orbitron'].join(','),
+    FontFamily: ['Orbitron', 'Inter', 'NataSans', 'Exo2'].join(','),
     h1: {
-      fontSize: '2rem',
-      fontWeight: 600,
+      fontSize: '2.5rem',
+      fontWeight: 650,
+      fontFamily: 'Orbitron'
     },
     h2: {
-      fontSize: '1.75rem',
-      fontWeight: 500,
+      fontSize: '2.25rem',
+      fontWeight: 550,
+      fontFamily: 'Orbitron'
     },
     h3: {
-      fontSize: '1.5rem',
-      fontWeight: 500,
+      fontSize: '2.0rem',
+      fontWeight: 520,
+      fontFamily: 'Orbitron'
     },
     h4: {
-      fontSize: '1.25rem',
-      fontWeight: 500,
+      fontSize: '1.75rem',
+      fontWeight: 510,
+      fontFamily: 'Orbitron'
     },
     h5: {
-      fontSize: '1rem',
+      fontSize: '1.5rem',
       fontWeight: 500,
+      fontFamily: 'Orbitron'
     },
     h6: {
-      fontSize: '0.875rem',
-      fontWeight: 500,
+      fontSize: '1.25rem',
+      fontWeight: 475,
+      fontFamily: 'Orbitron'
     },
     body1: {
       fontSize: '1rem',
-      fontWeight: 400,
+      fontWeight: 425,
       lineHeight: 1.5,
       letterSpacing: '0.5px',
+      fontFamily: 'Exo2'
     },
 
     body2: {
@@ -39,7 +46,12 @@ const commonThemeOptions = {
       fontWeight: 400,
       lineHeight: 1.4,
       letterSpacing: '0.2px',
+      fontFamily: 'Inter'
     },
+    p: {
+      fontFamily: 'Exo2'
+    },
+
   },
   spacing: 8,
   shape: {
@@ -118,7 +130,7 @@ const lightTheme = createTheme({
       contrastText: 'rgb(211, 113, 113)'
     },
     action: {
-      hover: 'rgba(81, 132, 148, 0.79)' // your choice of light hover
+      hover: 'rgba(81, 132, 148, 0.72)' // your choice of light hover
     }
 
   },
@@ -173,10 +185,12 @@ const darkTheme = createTheme({
       contrastText: 'rgba(253, 45, 45, 0.75)',
     },
     action: {
-      hover: 'rgba(69, 79, 105, 0.77)', 
+      hover: 'rgba(69, 79, 105, 0.75)', 
       
     }
   },
+  
 });
+
 
 export { lightTheme, darkTheme };

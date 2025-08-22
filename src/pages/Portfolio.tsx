@@ -49,8 +49,6 @@ export default function PortfolioPage() {
   });
   const [openTxAssetId, setOpenTxAssetId] = useState<number | null>(null);
 
-  const toggleTx = (aid: number) => setOpenTxAssetId((cur) => (cur === aid ? null : aid));
-
   const navigate = useNavigate();
 
   const { address: authAddress, publicKey: authPublicKey } = useAuth();
@@ -154,6 +152,10 @@ export default function PortfolioPage() {
     });
   }, [holdings, assetsIndex, authAddress]);
 
+  const toggleTx = (aid: number) => {
+    setOpenTxAssetId((cur) => (cur === aid ? null : aid));
+  };
+
   // ===== All tracked (existing) rows =====
   const rowsAll = useMemo(() => {
     return Object.values(holdings)
@@ -236,12 +238,6 @@ export default function PortfolioPage() {
 
   // Actions (Wallet section)
   const hasAuth = !!authAddress;
-
-  // const onShowTx = (assetId: number) => {
-  //   if (!hasAuth) return;
-  //   // route or drawer — adjust to your app
-  //   navigate(`/assets/${assetId}?tab=tx&address=${authAddress}`);
-  // };
 
   const handleSendConfirm = async (recipient: string, amount: number) => {
     const meta = assetsIndex[sendDialog.assetId];

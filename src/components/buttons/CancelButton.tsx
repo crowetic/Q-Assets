@@ -8,6 +8,7 @@ const CancelButton = styled(Button)(({ theme }) => ({
   borderWidth: '0.2rem',
   borderStyle: 'solid',
   textTransform: 'none',
+  fontFamily: 'Orbitron',
   fontWeight: 600,
   px: 2.5,
   py: 1,

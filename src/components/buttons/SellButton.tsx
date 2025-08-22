@@ -9,6 +9,7 @@ const SellButton = styled(Button)(({ theme }) => ({
   borderWidth: 3,
   borderStyle: 'solid',
   textTransform: 'none',
+  fontFamily: 'Orbitron',
   fontWeight: 800,
   px: 2.5,
   py: 1,

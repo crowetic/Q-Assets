@@ -26,11 +26,11 @@ export interface FetchAssetTxResult {
 
 // ---------- helpers ----------
 
-const toNumberSafe = (v: any): number | null => {
-  if (typeof v === 'number' && Number.isFinite(v)) return v;
-  if (typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v))) return Number(v);
-  return null;
-};
+// const toNumberSafe = (v: any): number | null => {
+//   if (typeof v === 'number' && Number.isFinite(v)) return v;
+//   if (typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v))) return Number(v);
+//   return null;
+// };
 
 // heuristics: some nodes return atomic amounts; if you ever see integers with huge magnitudes for divisible assets,
 // convert by 1e8. We keep it conservative: only convert if it looks *definitely* atomic.
@@ -41,12 +41,12 @@ const normalizeHumanAmount = (n: number): number => {
 };
 
 // best-effort field extraction across possible node variants
-function pick<T = any>(obj: any, ...keys: string[]): T | undefined {
-  for (const k of keys) {
-    if (obj && Object.prototype.hasOwnProperty.call(obj, k)) return obj[k];
-  }
-  return undefined;
-}
+// function pick<T = any>(obj: any, ...keys: string[]): T | undefined {
+//   for (const k of keys) {
+//     if (obj && Object.prototype.hasOwnProperty.call(obj, k)) return obj[k];
+//   }
+//   return undefined;
+// }
 
 // ---------- main fetcher ----------
 
@@ -61,7 +61,7 @@ export async function fetchAssetTransactions(
   url.searchParams.set('limit', String(limit));
   url.searchParams.set('offset', String(offset));
   url.searchParams.set('reverse', 'true');
-  // NOTE: leaving txType unset so we get *all* types and can filter client-side by asset
+  // Leave txType unset → get everything; we’ll filter client-side.
 
   const res = await fetch(url.toString(), { headers: { accept: '*/*' } });
   if (!res.ok) {
@@ -69,35 +69,64 @@ export async function fetchAssetTransactions(
     throw new Error(`/transactions/search failed: ${res.status} ${res.statusText} ${text}`);
   }
 
-  const raw: any[] = await res.json(); // API returns an array
+  const raw: any[] = await res.json();
   const items: AssetTx[] = [];
 
+  const involvesMe = (tx: any) => {
+    const s = (tx.sender ?? tx.creator ?? tx.creatorAddress ?? '').toString();
+    const r =
+      (tx.recipient ?? tx.destination ?? tx.address ?? tx.receiver ?? '').toString();
+    return s === address || r === address;
+  };
+
+  const hasAssetMention = (tx: any, aid: number) => {
+    const ids = [
+      tx.assetId,
+      tx.haveAssetId,
+      tx.wantAssetId,
+      tx.amountAssetId,
+      tx.targetAssetId,
+      tx?.initiatingOrder?.haveAssetId,
+      tx?.initiatingOrder?.wantAssetId,
+    ]
+      .map((n) => (n == null ? undefined : Number(n)))
+      .filter((n) => Number.isFinite(n)) as number[];
+    return ids.includes(aid);
+  };
+
   for (const tx of raw) {
-    // Common fields
-    const type = (pick<string>(tx, 'type', 'txType') || '').toString();
-    const signature = pick<string>(tx, 'signature', 'txId', 'id') || '';
-    const ts = toNumberSafe(pick(tx, 'timestamp')) ?? Date.now();
-    const sender =
-      (pick<string>(tx, 'sender', 'creator', 'creatorAddress') || '').toString();
-    const recipient =
-      (pick<string>(tx, 'recipient', 'destination', 'address') || '').toString();
-    const confirmations = toNumberSafe(pick(tx, 'confirmations', 'height')) ?? undefined;
+    const type: string = (tx.type ?? tx.txType ?? '').toString();
+    const signature: string = (tx.signature ?? tx.txId ?? tx.id ?? '').toString();
+    if (!signature) continue;
 
-    // QORT (assetId 0): PAYMENT, MULTI_PAYMENT
+    const ts = Number(tx.timestamp) || Date.now();
+    const sender = (tx.sender ?? tx.creator ?? tx.creatorAddress ?? '').toString();
+    const recipient = (
+      tx.recipient ??
+      tx.destination ??
+      tx.address ??
+      tx.receiver ??
+      ''
+    ).toString();
+    const confirmations =
+      tx.confirmations != null
+        ? Number(tx.confirmations)
+        : tx.height != null
+        ? Number(tx.height)
+        : undefined;
+
+    // QORT view → show everything that involves this address
     if (assetId === 0) {
+      if (!involvesMe(tx)) continue;
+
       if (type === 'PAYMENT') {
-        const amtRaw = toNumberSafe(pick(tx, 'amount'));
-        if (amtRaw == null) continue;
-
-        const amt = normalizeHumanAmount(amtRaw);
-        // include only if our address is sender or recipient
-        if (sender !== address && recipient !== address) continue;
-
+        const amt = Number(tx.amount);
+        if (!Number.isFinite(amt)) continue;
         items.push({
           txId: signature,
           timestamp: ts,
           assetId: 0,
-          amount: amt,
+          amount: normalizeHumanAmount(amt),
           sender,
           recipient,
           type,
@@ -107,37 +136,37 @@ export async function fetchAssetTransactions(
       }
 
       if (type === 'MULTI_PAYMENT') {
-        // expect tx.payments?: Array<{recipient, amount}>
-        const payments = Array.isArray(tx.payments) ? tx.payments : [];
-        if (sender !== address && !payments.some((p: any) => p?.recipient === address)) {
-          // nothing relevant to this address
-          continue;
-        }
+        // Light, permissive typing for payments array
+        const payments: Array<{ recipient?: string; amount?: number | string }> =
+          Array.isArray(tx.payments) ? tx.payments : [];
 
-        // If we are the sender, show the *total* we sent; if we are recipient, show only what we received.
         if (sender === address) {
-          const totalOut = payments.reduce((sum: number, p: any) => {
-            const a = toNumberSafe(p?.amount);
-            return a == null ? sum : sum + normalizeHumanAmount(a);
+          // We are the sender => sum everything we sent
+          const totalOut = payments.reduce<number>((sum, p) => {
+            const aRaw = p?.amount;
+            const aNum = typeof aRaw === 'string' ? Number(aRaw) : aRaw;
+            return Number.isFinite(aNum as number) ? sum + normalizeHumanAmount(aNum as number) : sum;
           }, 0);
+
           items.push({
             txId: signature,
             timestamp: ts,
             assetId: 0,
             amount: totalOut,
             sender,
-            recipient: '(multiple)', // multi-output
+            recipient: '(multiple)',
             type,
             confirmations,
           });
         } else {
-          // we’re a recipient—sum only what we received
-          const totalIn = payments.reduce((sum: number, p: any) => {
+          // We're a recipient => sum only what we received
+          const totalIn = payments.reduce<number>((sum, p) => {
             if (p?.recipient !== address) return sum;
-            const a = toNumberSafe(p?.amount);
-            return a == null ? sum : sum + normalizeHumanAmount(a);
+            const aRaw = p?.amount;
+            const aNum = typeof aRaw === 'string' ? Number(aRaw) : aRaw;
+            return Number.isFinite(aNum as number) ? sum + normalizeHumanAmount(aNum as number) : sum;
           }, 0);
-          // sender might still be in `sender`; keep recipient as our address
+
           items.push({
             txId: signature,
             timestamp: ts,
@@ -149,31 +178,17 @@ export async function fetchAssetTransactions(
             confirmations,
           });
         }
+
         continue;
       }
 
-      // Other QORT-affecting types (fees etc.) can be added here if you want to show them as coin flows.
-      continue; // skip unrelated types for QORT view
-    }
 
-    // ASSET transfers: require TRANSFER_ASSET with the specific assetId
-    if (type === 'TRANSFER_ASSET') {
-      const txAssetId = toNumberSafe(pick(tx, 'assetId'));
-      if (txAssetId !== assetId) continue;
-
-      const amtRaw = toNumberSafe(pick(tx, 'amount'));
-      if (amtRaw == null) continue;
-
-      const amt = normalizeHumanAmount(amtRaw);
-
-      // include only if our address is sender or recipient
-      if (sender !== address && recipient !== address) continue;
-
+      // Generic catch-all entry for other QORT-using types (fees, messages, orders, etc.)
       items.push({
         txId: signature,
         timestamp: ts,
-        assetId,
-        amount: amt,
+        assetId: 0,
+        amount: 0, // unknown/NA for non-payment types
         sender,
         recipient,
         type,
@@ -182,8 +197,91 @@ export async function fetchAssetTransactions(
       continue;
     }
 
-    // You can extend here for orders, messages, etc., if you want them in the asset view
-    // e.g., UPDATE_ASSET for the same assetId, CREATE_ASSET_ORDER affecting this asset, etc.
+    // Asset view (assetId > 0) → include only tx referencing that asset
+    if (!hasAssetMention(tx, assetId)) continue;
+
+    if (type === 'TRANSFER_ASSET') {
+      const amt = Number(tx.amount);
+      if (!Number.isFinite(amt)) continue;
+      // include only if the address is directly involved
+      if (!involvesMe(tx)) continue;
+      items.push({
+        txId: signature,
+        timestamp: ts,
+        assetId,
+        amount: normalizeHumanAmount(amt),
+        sender,
+        recipient,
+        type,
+        confirmations,
+      });
+      continue;
+    }
+
+    if (type === 'ISSUE_ASSET' || type === 'UPDATE_ASSET') {
+      // Meta actions for this asset – show with amount 0
+      items.push({
+        txId: signature,
+        timestamp: ts,
+        assetId,
+        amount: 0,
+        sender,
+        recipient,
+        type,
+        confirmations,
+      });
+      continue;
+    }
+
+    if (type === 'CREATE_ASSET_ORDER') {
+      // Show the amount of THIS asset being offered (if any)
+      const haveAid =
+        Number(tx.haveAssetId ?? tx?.initiatingOrder?.haveAssetId ?? NaN) || NaN;
+      const wantAid =
+        Number(tx.wantAssetId ?? tx?.initiatingOrder?.wantAssetId ?? NaN) || NaN;
+      let amtForThisAsset = 0;
+      const amount = Number(tx.amount ?? tx?.initiatingOrder?.amount);
+      if (Number.isFinite(amount) && haveAid === assetId) {
+        amtForThisAsset = normalizeHumanAmount(amount);
+      }
+      items.push({
+        txId: signature,
+        timestamp: ts,
+        assetId,
+        amount: amtForThisAsset, // 0 if our asset is on the "want" side
+        sender,
+        recipient,
+        type,
+        confirmations,
+      });
+      continue;
+    }
+
+    if (type === 'CANCEL_ASSET_ORDER') {
+      items.push({
+        txId: signature,
+        timestamp: ts,
+        assetId,
+        amount: 0,
+        sender,
+        recipient,
+        type,
+        confirmations,
+      });
+      continue;
+    }
+
+    // Fallback for any other ASSET-* flavored tx that mentions our assetId
+    items.push({
+      txId: signature,
+      timestamp: ts,
+      assetId,
+      amount: 0,
+      sender,
+      recipient,
+      type,
+      confirmations,
+    });
   }
 
   return { items };

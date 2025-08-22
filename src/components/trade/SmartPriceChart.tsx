@@ -43,6 +43,40 @@ function computeStats(data: OhlcPoint[]) {
   return { count: data.length, min, max, uniqueCloses: closes.size, flatFrac };
 }
 
+function asLineUniqueSeconds(asc: OhlcPoint[]): LineData<UTCTimestamp>[] {
+  const bySec = new Map<number, LineData<UTCTimestamp>>();
+  for (const d of asc) {
+    if (!Number.isFinite(d.c)) continue;
+    const sec = toUtcSec(d.t) as number;
+    bySec.set(sec, { time: sec as UTCTimestamp, value: d.c! }); // last wins
+  }
+  return Array.from(bySec.values()).sort((a, b) => (a.time as number) - (b.time as number));
+}
+
+// For candles: build OHLC per second (last close wins)
+function asCandleUniqueSeconds(asc: OhlcPoint[]): CandlestickData<UTCTimestamp>[] {
+  const bySec = new Map<number, CandlestickData<UTCTimestamp>>();
+  for (const d of asc) {
+    if (![d.o, d.h, d.l, d.c].every(Number.isFinite)) continue;
+    const sec = toUtcSec(d.t) as number;
+    const ex = bySec.get(sec);
+    if (!ex) {
+      bySec.set(sec, {
+        time: sec as UTCTimestamp,
+        open: d.o!,
+        high: d.h!,
+        low: d.l!,
+        close: d.c!,
+      });
+    } else {
+      ex.high = Math.max(ex.high, d.h!);
+      ex.low = Math.min(ex.low, d.l!);
+      ex.close = d.c!; // last close in that second
+    }
+  }
+  return Array.from(bySec.values()).sort((a, b) => (a.time as number) - (b.time as number));
+}
+
 const SmartPriceChart: React.FC<Props> = ({
   data,
   height = 280,
@@ -151,35 +185,24 @@ const SmartPriceChart: React.FC<Props> = ({
     if (!series) return;
 
     if (!data || data.length === 0) {
-      // empty
-      // (Do nothing; container stays blank to show "no data" state from parent if desired)
       if (kind === 'line') (series as ISeriesApi<'Line'>).setData([]);
       else if (kind === 'candle') (series as ISeriesApi<'Candlestick'>).setData([]);
       return;
     }
 
+    // Always sort ASC by your native timestamp first
     const asc = [...data].sort((a, b) => a.t - b.t);
 
     if (kind === 'line') {
-      const line: LineData<UTCTimestamp>[] = asc
-        .filter((d) => Number.isFinite(d.c))
-        .map((d) => ({ time: toUtcSec(d.t), value: d.c }));
+      const line = asLineUniqueSeconds(asc);
       (series as ISeriesApi<'Line'>).setData(line);
-      return;
+    } else {
+      const candles = asCandleUniqueSeconds(asc);
+      (series as ISeriesApi<'Candlestick'>).setData(candles);
     }
 
-    // candle
-    const cw: CandlestickData<UTCTimestamp>[] = asc
-      .filter((d) => [d.o, d.h, d.l, d.c].every(Number.isFinite))
-      .map((d) => ({
-        time: toUtcSec(d.t),
-        open: d.o,
-        high: d.h,
-        low: d.l,
-        close: d.c,
-      }));
-
-    (series as ISeriesApi<'Candlestick'>).setData(cw);
+    // Optional: refit after data change
+    chartRef.current?.timeScale().fitContent();
   }, [data]);
 
   // Optional overlay: show a subtle “No data” message when mode === 'none'

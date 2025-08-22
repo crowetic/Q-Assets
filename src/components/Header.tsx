@@ -91,6 +91,7 @@ const Header = () => {
               py: '0.55em',
               fontSize: { xs: '0.95rem', md: '1.05rem' },
               fontWeight: 700,
+              fontFamily: 'Orbitron',
               textTransform: 'none',
               color: active ? theme.palette.primary.contrastText : theme.palette.text.primary,
               borderColor: theme.palette.text.secondary,

@@ -9,6 +9,7 @@ const InfoOutlineButton = styled(Button)(({ theme }) => ({
   textTransform: 'none',
   fontWeight: 600,
   borderRadius: 8,
+  fontFamily: 'Orbitron',
   px: 2.5,
   py: 1,
   transition: 'all .2s ease',

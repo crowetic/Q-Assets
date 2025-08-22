@@ -9,6 +9,7 @@ const SuccessButton = styled(Button)(({ theme }) => ({
   borderStyle: 'solid',
   textTransform: 'none',
   fontWeight: 600,
+  fontFamily: 'Orbitron',
   px: 2.5,
   py: 1,
   transition: 'all .2s ease',

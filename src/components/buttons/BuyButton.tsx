@@ -8,6 +8,7 @@ const BuyButton = styled(Button)(({ theme }) => ({
   backgroundColor: 'transparent',
   borderWidth: 3,
   borderStyle: 'solid',
+  fontFamily: 'Orbitron',
   textTransform: 'none',
   fontWeight: 800,
   px: 2.5,

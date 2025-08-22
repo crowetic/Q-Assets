@@ -18,6 +18,7 @@ const EditToggleButton = styled(Button, {
     borderWidth: 2,
     borderStyle: 'solid' as const,
     borderRadius: 8,
+    fontFamily: 'Orbitron',
     boxShadow: 'none',
     transition: 'all .2s ease',
     '&:active': { transform: 'translateY(1px)' },

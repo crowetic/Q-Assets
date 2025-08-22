@@ -1,8 +1,10 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useTxTracker, QortalUnconfirmedTx } from './TxTrackerProvider';
-import { useAuth } from 'qapp-core'; // adjust imports if needed
+import { useAuth } from 'qapp-core';
+import { ensureUsableAddress, rememberAuthAddress } from '../utils/address';
 
-const MONITORED_TX_TYPES = [
+// node-accepted types; we still pass them to narrow results
+const ALLOW_TYPES = [
   'PAYMENT',
   'ARBITRARY',
   'TRANSFER_ASSET',
@@ -14,77 +16,84 @@ const MONITORED_TX_TYPES = [
   'LEAVE_GROUP',
 ] as const;
 
-const STORAGE_KEY = 'qassets_txtracker_v1';
+const DEBUG = false;
 
 export const UnconfirmedTxAutoScanner: React.FC<{
-  intervalMs?: number; // default 15s
-  missGoneThreshold?: number; // scans to wait after disappearance, default 2
-  limit?: number; // default 75
-}> = ({ intervalMs = 15_000, missGoneThreshold = 2, limit = 75 }) => {
+  intervalMs?: number;
+  missGoneThreshold?: number;
+  limit?: number;
+}> = ({ intervalMs = 5_000, missGoneThreshold = 2, limit = 200 }) => {
   const { upsertSeen, incrementMissesAndConfirmGone } = useTxTracker();
-  const { user } = useAuth() as any;
-  const myAddress: string | undefined = user?.address || user?.qortalAddress;
-  const lastGoodAddrRef = useRef<string | undefined>(myAddress || undefined);
-  const lastGoodAtRef = useRef<number>(myAddress ? Date.now() : 0);
+  const { user } = (useAuth() as any) ?? {};
+  const authAddr: string | undefined = user?.address || user?.qortalAddress;
+
+  // resolve a usable address (auth or LKG fallback)
+  const [scanAddress, setScanAddress] = useState<string | null>(null);
 
   useEffect(() => {
-    const now = Date.now();
-    if (myAddress) {
-      if (myAddress !== lastGoodAddrRef.current) {
-        // Account changed — clear persisted mem only for this component (not provider)
-        try {
-          localStorage.removeItem(STORAGE_KEY);
-        } catch {}
-        // and reset miss accounting by forcing a full re-detect naturally next tick
-      }
-      lastGoodAddrRef.current = myAddress;
-      lastGoodAtRef.current = now;
-    }
-  }, [myAddress]);
+    let alive = true;
+    // remember current auth for next time, then compute usable
+    if (authAddr) rememberAuthAddress(authAddr);
+    (async () => {
+      const addr = await ensureUsableAddress({ authAddress: authAddr, skipValidate: true });
+      if (alive) setScanAddress(addr);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [authAddr]);
 
   useEffect(() => {
     let cancelled = false;
-    let timer: any;
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
     const tick = async () => {
       const now = Date.now();
-      const args: any = {
-        action: 'SEARCH_TRANSACTIONS',
-        confirmationStatus: 'UNCONFIRMED',
-        txType: MONITORED_TX_TYPES as unknown as string[],
-        address: myAddress,
-        limit,
-        offset: 0,
-        reverse: true,
-      };
+
+      // If we don't have an address, many nodes cap at 20 — respect that.
+      const HARD_CAP_NO_ADDR = 20;
+      const serverLimit = scanAddress
+        ? Math.min(limit ?? 200, 200)
+        : Math.min(limit ?? HARD_CAP_NO_ADDR, HARD_CAP_NO_ADDR);
 
       let list: QortalUnconfirmedTx[] = [];
       try {
-        const res = await qortalRequest(args);
+        const res = await qortalRequest({
+          action: 'SEARCH_TRANSACTIONS',
+          confirmationStatus: 'UNCONFIRMED',
+          // pass address so the node filters + allows higher limit
+          address: scanAddress ?? undefined,
+          txType: [...ALLOW_TYPES], // widen to string[]
+          limit: serverLimit,
+          offset: 0,
+          reverse: true,
+        });
         if (Array.isArray(res)) list = res as QortalUnconfirmedTx[];
-      } catch {
-        // ignore network errors; try again later
+      } catch (e) {
+        if (DEBUG) console.debug('[scanner] fetch error', e);
       }
 
-      // Client-side filter if backend didn't filter by address
-      if (myAddress) list = list.filter((tx) => tx.creatorAddress === myAddress);
-
-      const seen = new Set<string>(list.map((t) => t.signature).filter(Boolean));
-
+      // no client-side filtering — node already scoped by address + types
+      const seen = new Set<string>(list.map((t: any) => t.signature).filter(Boolean));
       if (list.length) upsertSeen(list, now);
       incrementMissesAndConfirmGone(seen, missGoneThreshold, now);
 
-      if (!cancelled) {
-        timer = setTimeout(tick, intervalMs + Math.floor(Math.random() * 1000));
-      }
+      if (!cancelled) timer = setTimeout(tick, intervalMs + Math.floor(Math.random() * 1000));
     };
 
-    timer = setTimeout(tick, 1200);
+    timer = setTimeout(tick, 500);
     return () => {
       cancelled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
     };
-  }, [upsertSeen, incrementMissesAndConfirmGone, myAddress, intervalMs, missGoneThreshold, limit]);
+  }, [
+    scanAddress,
+    intervalMs,
+    missGoneThreshold,
+    limit,
+    upsertSeen,
+    incrementMissesAndConfirmGone,
+  ]);
 
   return null;
 };
