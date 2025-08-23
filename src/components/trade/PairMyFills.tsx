@@ -29,7 +29,7 @@ export default function PairMyFills(props: {
     <Box sx={{ display: 'grid', gap: 0.25 }}>
       {fills.map((f) => (
         <Box
-          key={`${f.orderId}:${f.ts}`}
+          key={`${f.orderId}:${f.ts}:${f.qtyAsset}`}
           sx={{
             display: 'grid',
             gridTemplateColumns: 'auto 1fr auto',

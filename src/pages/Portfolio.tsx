@@ -23,6 +23,7 @@ import SendAssetDialog from '../portfolio/SendAssetDialog';
 import TransactionsPanel from '../portfolio/TransactionsPanel';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
+import TxDetailsDialog from '../portfolio/TxDetailsDialog';
 
 export default function PortfolioPage() {
   const {
@@ -48,32 +49,38 @@ export default function PortfolioPage() {
     assetId: 0,
   });
   const [openTxAssetId, setOpenTxAssetId] = useState<number | null>(null);
+  const [txDialog, setTxDialog] = useState<{ open: boolean; tx: any | null }>({
+    open: false,
+    tx: null,
+  });
 
   const navigate = useNavigate();
 
-  const { address: authAddress, publicKey: authPublicKey } = useAuth();
+  const {
+    address: authAddress,
+    publicKey: authPublicKey,
+    name: userName,
+    authenticateUser,
+  } = useAuth();
 
   const theme = useTheme();
   const isXs = useMediaQuery(theme.breakpoints.down('sm'));
-
-  // const parseHumanAmount = (s: string): number | null => {
-  //   // disallow exponentials/commas/spaces beyond trim
-  //   if (!/^\d+(\.\d+)?$/.test(s)) return null;
-  //   const n = Number(s);
-  //   return Number.isFinite(n) && n > 0 ? n : null;
-  // };
 
   // Resolve primary name for authenticated account (for header prettiness)
   useEffect(() => {
     let cancelled = false;
     (async () => {
       if (!authAddress) {
-        setAuthName(null);
+        authenticateUser();
+        setAuthName(userName || authAddress);
         return;
       }
       try {
-        const n = await qortalRequest({ action: 'GET_PRIMARY_NAME', address: authAddress });
-        if (!cancelled) setAuthName(typeof n === 'string' && n ? n : null);
+        if (userName) setAuthName(userName);
+        if (!userName) {
+          const n = await qortalRequest({ action: 'GET_PRIMARY_NAME', address: authAddress });
+          if (!cancelled) setAuthName(typeof n === 'string' && n ? n : null);
+        }
       } catch {
         if (!cancelled) setAuthName(null);
       }
@@ -328,9 +335,25 @@ export default function PortfolioPage() {
             {walletRows.map((row) => {
               const c = colorFromAssetId(row.assetId);
               const isOpen = openTxAssetId === row.assetId; // state: which asset's tx panel is open
+              const isQort = row.assetId === 0;
               return (
                 <React.Fragment key={row.assetId}>
-                  <Box key={row.assetId} sx={walletRowSx(row.assetId)}>
+                  <Box
+                    key={row.assetId}
+                    sx={{ ...walletRowSx(row.assetId), cursor: 'pointer' }}
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleTx(row.assetId);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleTx(row.assetId);
+                      }
+                    }}
+                  >
                     {/* Avatar */}
                     <Box
                       sx={{
@@ -439,7 +462,10 @@ export default function PortfolioPage() {
                             size="small"
                             variant="contained"
                             startIcon={<SendIcon fontSize="small" />}
-                            onClick={() => setSendDialog({ open: true, assetId: row.assetId })}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSendDialog({ open: true, assetId: row.assetId });
+                            }}
                             disabled={!hasAuth}
                             sx={{
                               justifyContent: 'flex-start',
@@ -454,32 +480,40 @@ export default function PortfolioPage() {
                             {`Send ${row.name}`}
                           </Button>
 
-                          <Button
-                            fullWidth
-                            size="small"
-                            variant="contained"
-                            startIcon={<SwapHoriz fontSize="small" />}
-                            onClick={() => onTrade(row.assetId)}
-                            disabled={!hasAuth}
-                            sx={{
-                              justifyContent: 'flex-start',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              minHeight: 36,
-                              bgcolor: c.accent,
-                              '&:hover': { bgcolor: c.accentHover },
-                            }}
-                          >
-                            {`Trade ${row.name}`}
-                          </Button>
+                          {!isQort && (
+                            <Button
+                              fullWidth
+                              size="small"
+                              variant="contained"
+                              startIcon={<SwapHoriz fontSize="small" />}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onTrade(row.assetId);
+                              }}
+                              disabled={!hasAuth}
+                              sx={{
+                                justifyContent: 'flex-start',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                minHeight: 36,
+                                bgcolor: c.accent,
+                                '&:hover': { bgcolor: c.accentHover },
+                              }}
+                            >
+                              {`Trade ${row.name}`}
+                            </Button>
+                          )}
 
                           <Button
                             fullWidth
                             size="small"
                             variant="outlined"
                             startIcon={<Launch fontSize="small" />}
-                            onClick={() => onViewDetails(row.assetId)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onViewDetails(row.assetId);
+                            }}
                             sx={{
                               justifyContent: 'flex-start',
                               whiteSpace: 'nowrap',
@@ -499,7 +533,10 @@ export default function PortfolioPage() {
                               <IconButton
                                 size="small"
                                 color="inherit"
-                                onClick={() => toggleTx(row.assetId)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleTx(row.assetId);
+                                }}
                                 disabled={!hasAuth}
                               >
                                 <ReceiptLong fontSize="small" />
@@ -512,7 +549,10 @@ export default function PortfolioPage() {
                               <IconButton
                                 size="small"
                                 sx={{ color: c.accent }}
-                                onClick={() => setSendDialog({ open: true, assetId: row.assetId })}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSendDialog({ open: true, assetId: row.assetId });
+                                }}
                                 disabled={!hasAuth}
                               >
                                 <SendIcon fontSize="small" />
@@ -520,22 +560,33 @@ export default function PortfolioPage() {
                             </span>
                           </Tooltip>
 
-                          <Tooltip title={`Trade ${row.name}`}>
-                            <span>
-                              <IconButton
-                                size="small"
-                                sx={{ color: c.accent }}
-                                onClick={() => onTrade(row.assetId)}
-                                disabled={!hasAuth}
-                              >
-                                <SwapHoriz fontSize="small" />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
+                          {!isQort && (
+                            <Tooltip title={`Trade ${row.name}`}>
+                              <span>
+                                <IconButton
+                                  size="small"
+                                  sx={{ color: c.accent }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onTrade(row.assetId);
+                                  }}
+                                  disabled={!hasAuth}
+                                >
+                                  <SwapHoriz fontSize="small" />
+                                </IconButton>
+                              </span>
+                            </Tooltip>
+                          )}
 
                           <Tooltip title="View details">
                             <span>
-                              <IconButton size="small" onClick={() => onViewDetails(row.assetId)}>
+                              <IconButton
+                                size="small"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onViewDetails(row.assetId);
+                                }}
+                              >
                                 <Launch fontSize="small" />
                               </IconButton>
                             </span>
@@ -574,11 +625,17 @@ export default function PortfolioPage() {
                       isDivisible={row.isDivisible}
                       accent={c}
                       formatAmount={formatAssetAmount}
+                      onTxClick={(tx: any) => setTxDialog({ open: true, tx })}
                     />
                   </Box>
                 </React.Fragment>
               );
             })}
+            <TxDetailsDialog
+              open={txDialog.open}
+              tx={txDialog.tx}
+              onClose={() => setTxDialog({ open: false, tx: null })}
+            />
           </Box>
         )}
       </Paper>

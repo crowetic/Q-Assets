@@ -126,7 +126,7 @@ export async function fetchAssetTransactions(
           txId: signature,
           timestamp: ts,
           assetId: 0,
-          amount: normalizeHumanAmount(amt),
+          amount: amt,
           sender,
           recipient,
           type,
@@ -237,8 +237,8 @@ export async function fetchAssetTransactions(
       // Show the amount of THIS asset being offered (if any)
       const haveAid =
         Number(tx.haveAssetId ?? tx?.initiatingOrder?.haveAssetId ?? NaN) || NaN;
-      const wantAid =
-        Number(tx.wantAssetId ?? tx?.initiatingOrder?.wantAssetId ?? NaN) || NaN;
+      // const wantAid =
+        // Number(tx.wantAssetId ?? tx?.initiatingOrder?.wantAssetId ?? NaN) || NaN;
       let amtForThisAsset = 0;
       const amount = Number(tx.amount ?? tx?.initiatingOrder?.amount);
       if (Number.isFinite(amount) && haveAid === assetId) {

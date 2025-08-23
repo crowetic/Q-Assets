@@ -54,22 +54,6 @@ export default function IssueAsset() {
   const theme = useTheme();
 
   useEffect(() => {
-    if (!editorHasInit && assetName.trim()) {
-      const today = new Date().toISOString().split('T')[0];
-      const title =
-        `<center><h2>` +
-        `<span style="color:${theme.palette.info.dark}">ANNouncement</span> - ` +
-        `<span style="color:${theme.palette.primary.light}">${assetName}</span> - ` +
-        `Genesis Announcement - <span style="color:${theme.palette.primary.main}">${today}</span>` +
-        `</h2></center>`;
-      const body = `<p>Describe your asset here...</p>`;
-
-      setHtml(`${title}${body}`); // <-- Prefill via value prop
-      setEditorHasInit(true);
-    }
-  }, [assetName, editorHasInit, theme]);
-
-  useEffect(() => {
     // If no address at all, auto-trigger authentication
     if (!userName) {
       authenticateUser();
@@ -225,6 +209,21 @@ export default function IssueAsset() {
             value={assetName}
             error={!assetName && attemptedSubmit}
             onChange={(e) => setAssetName(e.target.value)}
+            onBlur={() => {
+              if (!editorHasInit && assetName.trim()) {
+                const today = new Date().toISOString().split('T')[0];
+                const title = `<center><h2>
+                              <span style="color:${theme.palette.info.dark}">Announcement</span> - 
+                              <span style="color:${theme.palette.primary.light}">${assetName}</span> - 
+                              Genesis Announcement - 
+                              <span style="color:${theme.palette.primary.main}">${today}</span>
+                              </h2></center>`;
+                const body = `<p>Describe your asset here...</p>`;
+
+                setHtml(`${title}${body}`);
+                setEditorHasInit(true);
+              }
+            }}
             helperText={!assetName && attemptedSubmit ? 'Asset name is required' : ''}
           />
 

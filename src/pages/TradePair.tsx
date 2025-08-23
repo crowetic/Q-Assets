@@ -203,35 +203,62 @@ export default function TradePair() {
   const getOrderCreator = (o: any) =>
     (o as any).creatorAddress ?? (o as any).creator ?? (o as any).address ?? null;
 
-  // Sum cheapest asks up to <= target price (for BUY), returning {qty, cost}
-  function sweepAsksTo(priceLevel: number) {
-    let qty = 0; // asset units
-    let cost = 0; // QORT
-    for (const a of asks) {
-      if (a.priceQortPerAsset <= priceLevel && a.qtyAsset > 0) {
-        qty += a.qtyAsset;
-        cost += a.qtyAsset * a.priceQortPerAsset;
-      } else {
-        break; // asks are sorted cheapest-first in your fetch
-      }
-    }
-    return { qty, cost };
+  const askPrefix = useMemo(() => {
+    let qty = 0,
+      cost = 0;
+    return asks.map((a) => {
+      qty += a.qtyAsset;
+      cost += a.qtyAsset * a.priceQortPerAsset;
+      return { qty, cost };
+    });
+  }, [asks]);
+
+  const bidPrefix = useMemo(() => {
+    let qty = 0,
+      proceeds = 0;
+    return bids.map((b) => {
+      qty += b.qtyAsset;
+      proceeds += b.qtyAsset * b.priceQortPerAsset;
+      return { qty, proceeds };
+    });
+  }, [bids]);
+
+  function sweepAsksThrough(idx: number) {
+    return askPrefix[Math.min(idx, askPrefix.length - 1)] ?? { qty: 0, cost: 0 };
+  }
+  function sweepBidsThrough(idx: number) {
+    return bidPrefix[Math.min(idx, bidPrefix.length - 1)] ?? { qty: 0, proceeds: 0 };
   }
 
-  // Sum highest bids down to >= target price (for SELL), returning {qty, proceeds}
-  function sweepBidsTo(priceLevel: number) {
-    let qty = 0; // asset units (max you can sell into the book)
-    let proceeds = 0; // QORT
-    for (const b of bids) {
-      if (b.priceQortPerAsset >= priceLevel && b.qtyAsset > 0) {
-        qty += b.qtyAsset;
-        proceeds += b.qtyAsset * b.priceQortPerAsset;
-      } else {
-        break; // bids are sorted best-first in your fetch (desc)
-      }
-    }
-    return { qty, proceeds };
-  }
+  // // Sum cheapest asks up to <= target price (for BUY), returning {qty, cost}
+  // function sweepAsksTo(priceLevel: number) {
+  //   let qty = 0; // asset units
+  //   let cost = 0; // QORT
+  //   for (const a of asks) {
+  //     if (a.priceQortPerAsset <= priceLevel && a.qtyAsset > 0) {
+  //       qty += a.qtyAsset;
+  //       cost += a.qtyAsset * a.priceQortPerAsset;
+  //     } else {
+  //       break; // asks are sorted cheapest-first in your fetch
+  //     }
+  //   }
+  //   return { qty, cost };
+  // }
+
+  // // Sum highest bids down to >= target price (for SELL), returning {qty, proceeds}
+  // function sweepBidsTo(priceLevel: number) {
+  //   let qty = 0; // asset units (max you can sell into the book)
+  //   let proceeds = 0; // QORT
+  //   for (const b of bids) {
+  //     if (b.priceQortPerAsset >= priceLevel && b.qtyAsset > 0) {
+  //       qty += b.qtyAsset;
+  //       proceeds += b.qtyAsset * b.priceQortPerAsset;
+  //     } else {
+  //       break; // bids are sorted best-first in your fetch (desc)
+  //     }
+  //   }
+  //   return { qty, proceeds };
+  // }
 
   const refreshMarket = useCallback(async () => {
     try {
@@ -637,7 +664,7 @@ export default function TradePair() {
                             setSweptAvgPrice(null);
                             return;
                           }
-                          const { qty } = sweepBidsTo(p);
+                          const { qty } = sweepBidsThrough(i);
                           const qClamped = quantQtyAsset(qty, divisible);
                           const proceedsClamped = quantQort(p * qClamped);
                           setPrice(String(p));
@@ -696,7 +723,7 @@ export default function TradePair() {
                             setSweptAvgPrice(null);
                             return;
                           }
-                          const { qty } = sweepAsksTo(p);
+                          const { qty } = sweepAsksThrough(i);
                           const qClamped = quantQtyAsset(qty, divisible);
                           const costClamped = quantQort(p * qClamped);
                           setPrice(String(p));

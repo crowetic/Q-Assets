@@ -11,7 +11,8 @@ interface Props {
   assetName: string;
   isDivisible: boolean;
   accent: { accent: string; tint: string; border: string };
-  formatAmount: (n: number, divisible: boolean) => string; // your formatter
+  formatAmount: (n: number, divisible: boolean) => string;
+  onTxClick?: (tx: any) => void;
 }
 
 export default function TransactionsPanel({
@@ -22,6 +23,7 @@ export default function TransactionsPanel({
   isDivisible,
   accent,
   formatAmount,
+  onTxClick,
 }: Props) {
   const { items, loading, error, hasMore, loadMore, initialized } = useAssetTx(
     address,
@@ -31,10 +33,16 @@ export default function TransactionsPanel({
 
   // Auto-load first page on open
   useEffect(() => {
-    if (open && !initialized && !loading) {
-      void loadMore();
-    }
+    if (open && !initialized && !loading) void loadMore();
   }, [open, initialized, loading, loadMore]);
+
+  const normTsMs = (ts: number) => (ts < 1e12 ? ts * 1000 : ts);
+
+  const keyOf = (tx: any, idx: number) =>
+    tx?.signature ||
+    tx?.reference ||
+    tx?.txId ||
+    `${tx?.type ?? 'TX'}-${tx?.timestamp ?? 0}-${idx}`;
 
   return (
     <Collapse in={open} timeout="auto" unmountOnExit>
@@ -73,15 +81,27 @@ export default function TransactionsPanel({
               alignItems: 'center',
             }}
           >
-            {items.map((tx) => {
-              const isOut = tx.sender === address;
+            {items.map((tx, idx) => {
+              const isOut = (tx?.sender ?? '') === address;
               const sign = isOut ? '-' : '+';
               const color = isOut ? 'text.secondary' : undefined;
-              const when = formatDistanceToNow(new Date(tx.timestamp), { addSuffix: true });
+              const tsMs = normTsMs(Number(tx?.timestamp ?? 0));
+              const when =
+                Number.isFinite(tsMs) && tsMs > 0
+                  ? formatDistanceToNow(new Date(tsMs), { addSuffix: true })
+                  : '';
+
+              const otherParty = isOut ? tx?.recipient : tx?.sender;
+              const otherPartyShort =
+                typeof otherParty === 'string' && otherParty.length > 10
+                  ? `${otherParty.slice(0, 10)}…`
+                  : (otherParty ?? '');
+
+              const amount = Number(tx?.amount ?? 0);
 
               return (
-                <React.Fragment key={tx.txId}>
-                  {/* Dot / direction */}
+                <React.Fragment key={keyOf(tx, idx)}>
+                  {/* Dot / direction (click targets the whole row wrapper below) */}
                   <Box
                     sx={{
                       display: { xs: 'none', sm: 'block' },
@@ -93,36 +113,59 @@ export default function TransactionsPanel({
                     }}
                     title={isOut ? 'Sent' : 'Received'}
                   />
-                  {/* Summary */}
-                  <Box sx={{ minWidth: 0 }}>
+
+                  {/* Clickable row content */}
+                  <Box
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onTxClick?.(tx)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onTxClick?.(tx);
+                      }
+                    }}
+                    sx={{
+                      minWidth: 0,
+                      cursor: 'pointer',
+                      p: { xs: 0.5, sm: 0.75 },
+                      borderRadius: 1,
+                      '&:hover': { bgcolor: 'action.hover' },
+                      outline: 'none',
+                      '&:focus-visible': {
+                        boxShadow: (t) => `0 0 0 2px ${t.palette.primary.main}66`,
+                      },
+                    }}
+                    title="Click for full details"
+                  >
                     <Typography
                       variant="body2"
                       sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                      title={tx.type}
+                      title={tx?.type}
                     >
-                      {isOut ? 'Sent' : 'Received'} {assetName}{' '}
+                      {isOut ? 'OUTBOUND' : 'INCOMING'} {assetName}{' '}
                       <Box component="span" sx={{ ml: 0.5, display: 'inline-flex' }}>
-                        <Chip size="small" label={tx.type} />
+                        <Chip size="small" label={tx?.type ?? 'TX'} />
                       </Box>
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
                       {isOut ? 'To' : 'From'}{' '}
-                      <Tooltip title={isOut ? tx.recipient : tx.sender}>
-                        <span style={{ fontFamily: 'monospace' }}>
-                          {(isOut ? tx.recipient : tx.sender).slice(0, 10)}…
-                        </span>
+                      <Tooltip title={String(otherParty ?? '')}>
+                        <span style={{ fontFamily: 'monospace' }}>{otherPartyShort}</span>
                       </Tooltip>{' '}
                       • {when}
                     </Typography>
                   </Box>
+
                   {/* Amount */}
                   <Typography
                     variant="body2"
-                    sx={{ fontFamily: 'monospace', justifySelf: { sm: 'end' } }}
+                    sx={{ fontFamily: 'monospace', justifySelf: { sm: 'end' }, userSelect: 'text' }}
                     color={color as any}
+                    title={String(amount)}
                   >
                     {sign}
-                    {formatAmount(tx.amount, isDivisible)}
+                    {formatAmount(amount, isDivisible)}
                   </Typography>
                 </React.Fragment>
               );
@@ -133,7 +176,7 @@ export default function TransactionsPanel({
         <Box mt={1.25} display="flex" justifyContent="flex-end" gap={1}>
           {hasMore && (
             <Button
-              onClick={() => loadMore()}
+              onClick={loadMore}
               size="small"
               variant="outlined"
               sx={{ borderColor: accent.border, color: accent.accent }}
