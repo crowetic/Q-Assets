@@ -139,6 +139,7 @@ export default function TransactionsPanel({
                     title="Click for full details"
                   >
                     <Typography
+                      component="div"
                       variant="body2"
                       sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
                       title={tx?.type}

@@ -41,6 +41,7 @@ export interface UiMyOrder {
   orderId: string;
   side: Side;                // relative to the non-zero pair asset
   priceQortPerAsset: number; // QORT per 1 pair asset
+  qtyAssetTotal: number;
   qtyAssetOpen: number;      // remaining amount in pair asset units
   ts: number;                // ms
   raw: AddressOrderRow;      // keep for debugging
@@ -183,10 +184,9 @@ function openQtyInAssetUnits(
   const ful  = toNum(row.fulfilled);
   const open = Math.max(0, amt - ful);            // units of amountAssetId
   const aId  = Number(row.amountAssetId);
-  const px   = toNum(row.price);                   // QORT per 1 asset
+  // const px   = toNum(row.price);                   // QORT per 1 asset
 
   if (aId === pairAssetId) return open;            // already in asset units
-  if (aId === 0) return px > 0 ? open / px : 0;    // QORT → asset via price
   return open;// unexpected: best effort
 }
 
@@ -232,72 +232,6 @@ export async function fetchBids(assetId: number, opts?: {limit?: number; offset?
     raw: r,
   }));
 }
-
-
-/** Fetch ASKS: people offering ASSET to get QORT (have=assetId, want=0). */
-// export async function fetchAsks(
-//   assetId: number,
-//   opts?: { limit?: number; offset?: number; reverse?: boolean }
-// ): Promise<BookOrder[]> {
-//   const params = new URLSearchParams();
-//   if (opts?.limit != null) params.set('limit', String(opts.limit));
-//   if (opts?.offset != null) params.set('offset', String(opts.offset));
-//   if (opts?.reverse != null) params.set('reverse', String(opts.reverse));
-
-//   const res = await fetch(`/assets/openorders/${assetId}/${QORT_ID}?${params.toString()}`);
-//   if (!res.ok) throw new Error(`openorders failed (${assetId}->QORT)`);
-
-//   const rows = await res.json();
-//   return rows.map((r: any): BookOrder => {
-//     const amt = Number(r.amount) || 0;
-//     const ful = Number(r.fulfilled) || 0;
-//     const haveRemaining = Math.max(0, amt - ful);
-//     const price = Number(r.price) || 0;
-
-//     return {
-//       orderId: String(r.orderId),
-//       priceQortPerAsset: price,
-//       qtyAsset: haveRemaining,
-//       creator: r.creatorAddress ?? r.creator ?? undefined,
-//       haveAssetId: Number(r.haveAssetId),
-//       wantAssetId: Number(r.wantAssetId),
-//       raw: r,
-//     };
-//   });
-// }
-
-// /** Fetch BIDS: people offering QORT to get ASSET (have=0, want=assetId). */
-// export async function fetchBids(
-//   assetId: number,
-//   opts?: { limit?: number; offset?: number; reverse?: boolean }
-// ): Promise<BookOrder[]> {
-//   const params = new URLSearchParams();
-//   if (opts?.limit != null) params.set('limit', String(opts.limit));
-//   if (opts?.offset != null) params.set('offset', String(opts.offset));
-//   if (opts?.reverse != null) params.set('reverse', String(opts.reverse));
-
-//   const res = await fetch(`/assets/openorders/${QORT_ID}/${assetId}?${params.toString()}`);
-//   if (!res.ok) throw new Error(`openorders failed (QORT->${assetId})`);
-
-//   const rows = await res.json();
-//   return rows.map((r: any): BookOrder => {
-//     const amtAsset = Number(r.amount) || 0;
-//     const amtFilled = Number(r.fulfilled) || 0;
-//     const remaining = Math.max(0, amtAsset - amtFilled);
-//     const price = Number(r.price) || 0;
-//     const qtyAsset = price > 0 ? remaining / price : 0;
-
-//     return {
-//       orderId: String(r.orderId),
-//       priceQortPerAsset: price,
-//       qtyAsset,
-//       creator: r.creatorAddress ?? r.creator ?? undefined,
-//       haveAssetId: Number(r.haveAssetId), // 0
-//       wantAssetId: Number(r.wantAssetId), // assetId
-//       raw: r,
-//     };
-//   });
-// }
 
 export async function fetchOrder(assetOrderId: string) {
   const res = await fetch(`/assets/order/${assetOrderId}`);
@@ -494,7 +428,7 @@ export async function getMyOrdersForAssetUi(
   address: string,
   assetId: number,
   opts: {
-    divisible: boolean;           // for qty clamping
+    divisible: boolean;
     includeClosed?: boolean;
     includeFulfilled?: boolean;
     limit?: number;
@@ -502,7 +436,6 @@ export async function getMyOrdersForAssetUi(
     reverse?: boolean;
   } = { divisible: true }
 ): Promise<UiMyOrder[]> {
-  // Pull all my orders (pair-agnostic)
   const rows = await getAddressOrders(address, {
     includeClosed: opts.includeClosed,
     includeFulfilled: opts.includeFulfilled,
@@ -511,20 +444,25 @@ export async function getMyOrdersForAssetUi(
     reverse: opts.reverse,
   });
 
-  // Keep only orders that are on this pair: (0, assetId) or (assetId, 0)
   const pairRows = (rows ?? []).filter(
     (r) =>
       (r.haveAssetId === 0 && r.wantAssetId === assetId) ||
       (r.haveAssetId === assetId && r.wantAssetId === 0)
   );
 
-  // Map to UI using your amountAssetId logic. otherAssetId is 0 in this screen.
   const mapped = pairRows.map((r) => mapAddressOrderRowToUi(r, assetId, 0, !!opts.divisible));
 
-  // Dedupe + newest first (defensive)
+  // Dedupe
   const byId = new Map<string, UiMyOrder>();
   for (const m of mapped) byId.set(m.orderId, m);
-  return Array.from(byId.values()).sort((a, b) => b.ts - a.ts);
+
+  const deduped = Array.from(byId.values());
+
+  // Sort like books: asks lowest→highest, bids highest→lowest
+  const asks = deduped.filter((o) => o.side === 'sell').sort((a, b) => a.priceQortPerAsset - b.priceQortPerAsset);
+  const bids = deduped.filter((o) => o.side === 'buy').sort((a, b) => b.priceQortPerAsset - a.priceQortPerAsset);
+
+  return [...asks, ...bids];
 }
 
 
@@ -580,8 +518,6 @@ export function mapAddressOrderRowToUi(
   let qtyAssetOpen: number;
   if (row.amountAssetId === assetId) {
     qtyAssetOpen = openAmtInAmountAsset;
-  } else if (row.amountAssetId === QORT_ID) {
-    qtyAssetOpen = price > 0 ? openAmtInAmountAsset / price : 0;
   } else if (row.amountAssetId === otherAssetId) {
     qtyAssetOpen = openAmtInAmountAsset;
   } else {
@@ -598,6 +534,7 @@ export function mapAddressOrderRowToUi(
     orderId: row.orderId,
     side,
     priceQortPerAsset,
+    qtyAssetTotal: amt,
     qtyAssetOpen: qtyClamped,
     ts,
     raw: row,
@@ -731,23 +668,22 @@ export function decodePairTradeEnvelope(
   const iaId = Number(t.initiatorAmountAssetId);
   const taId = Number(t.targetAmountAssetId);
   const ia   = toNum(t.initiatorAmount);
-  const ta   = toNum(t.targetAmount);
+  const ta = toNum(t.targetAmount);
 
   let assetAmt = 0;
   let qortAmt  = 0;
 
-  if (iaId === 0 && taId === pairAssetId) {      // initiator=QORT -> BUY asset
+  if (taId === pairAssetId) {      // initiator=QORT -> BUY asset
     qortAmt = ia; assetAmt = ta;
-  } else if (taId === 0 && iaId === pairAssetId) { // initiator=ASSET -> SELL
+  } else if (iaId === pairAssetId) { // initiator=ASSET -> SELL
     assetAmt = ia; qortAmt = ta;
   } else {
     assetAmt = ta > 0 ? ta : ia;
-    qortAmt  = ta > 0 ? ia : ta;
   }
 
   const o1p = toNum(row?.initiatingOrder?.price);
   const o2p = toNum(row?.targetOrder?.price);
-  const price = o1p > 0 ? o1p : (o2p > 0 ? o2p : (assetAmt > 0 ? qortAmt / assetAmt : 0));
+  const price = o2p > 0 ? o2p : (o1p > 0 ? o1p : (assetAmt > 0 ? qortAmt / assetAmt : 0));
 
   const ts = toNum(t.timestamp);
 
@@ -870,7 +806,7 @@ export function rowToFill(r: any, side: 'buy' | 'sell', pairAssetId: number): Fi
 }
 
 /* =========================
-   My fills (pair)
+    My fills (pair)
    ========================= */
 
 export async function getMyFillsForPair(
@@ -955,7 +891,7 @@ export async function getMyFillsForPair(
 }
 
 /* =========================
-   Chart trades
+    Chart trades
    ========================= */
 
 export function envelopesToChartTrades(envelopes: any[], pairAssetId: number): ChartTrade[] {

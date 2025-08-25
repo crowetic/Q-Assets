@@ -64,6 +64,7 @@ export default function TradePair() {
   // const [trades, setTrades] = useState<Trade[]>([]);
   const [chartTrades, setChartTrades] = useState<Trade[]>([]);
   const [sweptTotalQort, setSweptTotalQort] = useState<number | null>(null);
+  const [sweptProceedsQort, setSweptProceedsQort] = useState<number | null>(null); // SELL proceeds
   const [sweptAvgPrice, setSweptAvgPrice] = useState<number | null>(null);
   const [issuerAddr, setIssuerAddr] = useState<string | null>(null);
   const [balAsset, setBalAsset] = useState<number | null>(null);
@@ -122,10 +123,6 @@ export default function TradePair() {
     return allTrades.slice(start, end);
   }, [allTrades, tradesPage]);
 
-  // useEffect(() => {
-  //   setTrades(pagedTrades);
-  // }, [pagedTrades]);
-
   function fmt(n: number | null | undefined, dp = 8) {
     if (n == null || !Number.isFinite(n)) return '—';
     const f = Math.pow(10, dp);
@@ -169,6 +166,26 @@ export default function TradePair() {
   function quantQort(n: number) {
     return quant(n, QORT_DP);
   }
+
+  const DP = 8;
+  const TEN_DP = 100000000n;
+
+  function decimalToAtomics(s: string, dp = DP): bigint {
+    const m = s.trim().match(/^(\d+)(?:\.(\d{0,18}))?$/); // allow up to 18 just in case
+    if (!m) throw new Error('bad decimal');
+    const intp = m[1] || '0';
+    const frac = (m[2] || '').padEnd(dp, '0').slice(0, dp);
+    return BigInt(intp) * BigInt(10 ** dp) + BigInt(frac || '0');
+  }
+  function atomicsToDecimalString(atoms: bigint, dp = DP): string {
+    const f = BigInt(10 ** dp);
+    const sign = atoms < 0n ? '-' : '';
+    const a = atoms < 0n ? -atoms : atoms;
+    const intp = (a / f).toString();
+    const frac = (a % f).toString().padStart(dp, '0').replace(/0+$/, '');
+    return sign + intp + (frac ? '.' + frac : '');
+  }
+  const toFixedDp = (n: number, dp = DP) => (Number.isFinite(n) ? n.toFixed(dp) : '0');
 
   function normAddr(a?: string | null) {
     return (a || '').trim();
@@ -231,34 +248,39 @@ export default function TradePair() {
   }
 
   // // Sum cheapest asks up to <= target price (for BUY), returning {qty, cost}
-  // function sweepAsksTo(priceLevel: number) {
-  //   let qty = 0; // asset units
-  //   let cost = 0; // QORT
-  //   for (const a of asks) {
-  //     if (a.priceQortPerAsset <= priceLevel && a.qtyAsset > 0) {
-  //       qty += a.qtyAsset;
-  //       cost += a.qtyAsset * a.priceQortPerAsset;
-  //     } else {
-  //       break; // asks are sorted cheapest-first in your fetch
-  //     }
-  //   }
-  //   return { qty, cost };
-  // }
+  function simulateBuy(limitPrice: number, targetQty: number) {
+    let remaining = Math.max(0, targetQty);
+    let taken = 0;
+    let cost = 0;
+    for (const a of asks) {
+      if (a.priceQortPerAsset > limitPrice) break;
+      if (remaining <= 0) break;
+      const take = Math.min(remaining, a.qtyAsset);
+      if (take <= 0) continue;
+      taken += take;
+      cost += take * a.priceQortPerAsset;
+      remaining -= take;
+    }
+    const avg = taken > 0 ? cost / taken : 0;
+    return { taken, cost, avg };
+  }
 
-  // // Sum highest bids down to >= target price (for SELL), returning {qty, proceeds}
-  // function sweepBidsTo(priceLevel: number) {
-  //   let qty = 0; // asset units (max you can sell into the book)
-  //   let proceeds = 0; // QORT
-  //   for (const b of bids) {
-  //     if (b.priceQortPerAsset >= priceLevel && b.qtyAsset > 0) {
-  //       qty += b.qtyAsset;
-  //       proceeds += b.qtyAsset * b.priceQortPerAsset;
-  //     } else {
-  //       break; // bids are sorted best-first in your fetch (desc)
-  //     }
-  //   }
-  //   return { qty, proceeds };
-  // }
+  function simulateSell(limitPrice: number, targetQty: number) {
+    let remaining = Math.max(0, targetQty);
+    let taken = 0;
+    let proceeds = 0;
+    for (const b of bids) {
+      if (b.priceQortPerAsset < limitPrice) break;
+      if (remaining <= 0) break;
+      const take = Math.min(remaining, b.qtyAsset);
+      if (take <= 0) continue;
+      taken += take;
+      proceeds += take * b.priceQortPerAsset;
+      remaining -= take;
+    }
+    const avg = taken > 0 ? proceeds / taken : 0;
+    return { taken, proceeds, avg };
+  }
 
   const refreshMarket = useCallback(async () => {
     try {
@@ -300,11 +322,9 @@ export default function TradePair() {
         .map((env: any) => {
           const io = env.initiatingOrder;
           const t = env.trade;
+          const to = env.targetOrder;
           const qtyAsset = Number(t?.targetAmount ?? io?.amount ?? 0);
-          const price =
-            io?.price != null
-              ? Number(io.price)
-              : Number(t?.initiatorAmount ?? 0) / Math.max(1e-12, qtyAsset);
+          const price = Number(to.price);
           const ts = Number(t?.timestamp ?? io?.timestamp ?? 0);
           const side =
             io && typeof io.haveAssetId === 'number'
@@ -326,7 +346,6 @@ export default function TradePair() {
       setAsks(realAsks);
       setAllTrades(fullNewestFirst);
       setTradesPage(0);
-      // setChartTrades(fullNewestFirst);
 
       if (authAddress) {
         try {
@@ -411,11 +430,39 @@ export default function TradePair() {
   const [price, setPrice] = useState<string>('');
   const [qty, setQty] = useState<string>('');
   const total = useMemo(() => {
-    if (sweptTotalQort != null) return sweptTotalQort; // blended across book
-    const p = Number(price);
-    const q = Number(qty);
+    if (side === 'buy' && sweptTotalQort != null) return sweptTotalQort;
+    if (side === 'sell' && sweptProceedsQort != null) return sweptProceedsQort;
+    const p = Number(price),
+      q = Number(qty);
     return Number.isFinite(p) && Number.isFinite(q) ? p * q : 0;
-  }, [price, qty, sweptTotalQort]);
+  }, [side, price, qty, sweptTotalQort, sweptProceedsQort]);
+
+  useEffect(() => {
+    // reset estimates
+    setSweptAvgPrice(null);
+    setSweptTotalQort(null);
+    setSweptProceedsQort(null);
+
+    const p = quantPrice(Number(price));
+    const q = quantQtyAsset(Number(qty), divisible);
+
+    if (!(p > 0) || !(q > 0)) return;
+
+    if (side === 'buy') {
+      const { taken, cost, avg } = simulateBuy(p, q);
+      if (taken > 0) {
+        setSweptTotalQort(quantQort(cost));
+        setSweptAvgPrice(quantPrice(avg));
+        // Optional: if taken < q, you can hint “only X available up to price”
+      }
+    } else {
+      const { taken, proceeds, avg } = simulateSell(p, q);
+      if (taken > 0) {
+        setSweptProceedsQort(quantQort(proceeds));
+        setSweptAvgPrice(quantPrice(avg));
+      }
+    }
+  }, [price, qty, side, asks, bids, divisible]);
 
   const placeOrder = async () => {
     if (!authAddress) return alert('Sign in first.');
@@ -657,22 +704,28 @@ export default function TradePair() {
                         title="Click to sell at this bid"
                         onClick={(e) => {
                           setSide('sell');
-                          const p = quantPrice(b.priceQortPerAsset);
+                          // clicked price (human string, fixed to 8dp)
+                          const pHuman = toFixedDp(quantPrice(b.priceQortPerAsset), DP);
                           if (e.ctrlKey || e.metaKey) {
-                            setPrice(String(p));
+                            setPrice(pHuman);
                             setSweptTotalQort(null);
                             setSweptAvgPrice(null);
                             return;
                           }
+                          // cumulative qty you can sell through this bid index
                           const { qty } = sweepBidsThrough(i);
-                          const qClamped = quantQtyAsset(qty, divisible);
-                          const proceedsClamped = quantQort(p * qClamped);
-                          setPrice(String(p));
-                          setQty(String(qClamped));
-                          setSweptTotalQort(proceedsClamped);
-                          setSweptAvgPrice(
-                            qClamped > 0 ? quantPrice(proceedsClamped / qClamped) : null
-                          );
+                          // quantity in human string (respect divisibility)
+                          const qtyHuman = divisible ? toFixedDp(qty, DP) : String(Math.floor(qty));
+                          // math in atomics
+                          const qtyAtoms = decimalToAtomics(qtyHuman, DP); // asset atoms
+                          const priceAtoms = decimalToAtomics(pHuman, DP); // QORT atoms per asset
+                          const proceedsAtoms = (qtyAtoms * priceAtoms) / TEN_DP; // QORT atoms
+                          const avgAtoms = qtyAtoms > 0n ? (proceedsAtoms * TEN_DP) / qtyAtoms : 0n; // price atoms
+                          // update UI (inputs remain human)
+                          setPrice(pHuman);
+                          setQty(qtyHuman);
+                          setSweptTotalQort(parseFloat(atomicsToDecimalString(proceedsAtoms, DP))); // number for display
+                          setSweptAvgPrice(parseFloat(atomicsToDecimalString(avgAtoms, DP))); // blended avg price
                         }}
                       >
                         <span>{formatPrice(b.priceQortPerAsset)}</span>
@@ -716,22 +769,28 @@ export default function TradePair() {
                         title="Click to buy at this ask"
                         onClick={(e) => {
                           setSide('buy');
-                          const p = quantPrice(a.priceQortPerAsset);
+                          // 1) clicked price in human string (fixed to 8dp)
+                          const pHuman = toFixedDp(quantPrice(a.priceQortPerAsset), DP);
                           if (e.ctrlKey || e.metaKey) {
-                            setPrice(String(p));
+                            // set only price field, leave totals alone
+                            setPrice(pHuman);
                             setSweptTotalQort(null);
                             setSweptAvgPrice(null);
                             return;
                           }
+                          // 2) cumulative qty through this row (human)
                           const { qty } = sweepAsksThrough(i);
-                          const qClamped = quantQtyAsset(qty, divisible);
-                          const costClamped = quantQort(p * qClamped);
-                          setPrice(String(p));
-                          setQty(String(qClamped));
-                          setSweptTotalQort(costClamped);
-                          setSweptAvgPrice(
-                            qClamped > 0 ? quantPrice(costClamped / qClamped) : null
-                          );
+                          const qtyHuman = divisible ? toFixedDp(qty, DP) : String(Math.floor(qty));
+                          // 3) math in atomics
+                          const qtyAtoms = decimalToAtomics(qtyHuman, DP);
+                          const priceAtoms = decimalToAtomics(pHuman, DP);
+                          const costAtoms = (qtyAtoms * priceAtoms) / TEN_DP; // QORT atoms
+                          const avgAtoms = qtyAtoms > 0n ? (costAtoms * TEN_DP) / qtyAtoms : 0n; // price atoms
+                          // 4) update UI with human strings, keep swept totals as numbers
+                          setPrice(pHuman);
+                          setQty(qtyHuman);
+                          setSweptTotalQort(parseFloat(atomicsToDecimalString(costAtoms, DP)));
+                          setSweptAvgPrice(parseFloat(atomicsToDecimalString(avgAtoms, DP)));
                         }}
                       >
                         <span>{formatPrice(a.priceQortPerAsset)}</span>
@@ -978,6 +1037,7 @@ export default function TradePair() {
               const side = o.side;
               const price = o.priceQortPerAsset;
               const qtyAssetOpen = o.qtyAssetOpen;
+              // const qtyAssetTotal = o.qtyAssetTotal;
               const creator = authAddress; // it's your order
               const byIssuer = isIssuerAddress(creator);
               const ts =
@@ -992,9 +1052,9 @@ export default function TradePair() {
                   key={o.orderId}
                   sx={{
                     display: 'grid',
-                    gridTemplateColumns: 'auto 1fr auto auto',
-                    gap: 1,
+                    gridTemplateColumns: 'auto auto auto 1fr auto', // last column is price
                     alignItems: 'center',
+                    gap: 1,
                     fontSize: 14,
                     px: 1,
                     py: 0.5,
@@ -1006,23 +1066,30 @@ export default function TradePair() {
                   <Box sx={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 0.5 }}>
                     {side.toUpperCase()}
                     {byIssuer && <IssuerTag />}
+                    <Typography variant="body2">Placed:</Typography>
+                    <Box color="text.secondary">{when}</Box>
                   </Box>
-                  <Box title={when}>
-                    {formatQty(qtyAssetOpen, divisible)} {name}
+                  <Box>Remaining: {name}</Box>
+                  <Box color="text.secondary">{formatQty(qtyAssetOpen, divisible)}</Box>
+
+                  {/* this acts like a flexible spacer */}
+                  <Box />
+
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box>{formatPrice(price)} QORT</Box>
+                    <Tooltip title="Cancel order">
+                      <span>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={() => onCancelOrder(o.orderId)}
+                          sx={{ borderColor: 'text.secondary', color: 'text.secondary' }}
+                        >
+                          Cancel
+                        </Button>
+                      </span>
+                    </Tooltip>
                   </Box>
-                  <Box>{formatPrice(price)} QORT</Box>
-                  <Tooltip title="Cancel order">
-                    <span>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        onClick={() => onCancelOrder(o.orderId)}
-                        sx={{ borderColor: 'currentColor', color: 'inherit' }}
-                      >
-                        Cancel
-                      </Button>
-                    </span>
-                  </Tooltip>
                 </Box>
               );
             })}
