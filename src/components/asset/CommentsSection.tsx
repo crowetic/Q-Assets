@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Card,
   CardContent,
@@ -28,8 +28,8 @@ import TiptapEditor from '../TipTapEditor';
 import type { ThreadComment } from '../../types/ThreadedComment';
 import { buildCommentForest, stripPrefixId } from '../../utils/thread';
 
-import { isNameMemberOfGroupId } from '../../utils/access';
-import { MINTER_GROUP_ID, DEV_GROUP_ID } from '../../constants/qdnConstants';
+// import { isNameMemberOfGroupId } from '../../utils/access';
+// import { MINTER_GROUP_ID, DEV_GROUP_ID } from '../../constants/qdnConstants';
 import {
   discoverEligibleCommentPublishers,
   type PublisherWithTags,
@@ -120,6 +120,7 @@ export default function CommentsSection({
   const prefix = useMemo(() => assetCommentsPrefix(assetId), [assetId]);
   // const forest = useMemo(() => buildCommentForest(items), [items]);
   const theme = useTheme();
+  console.log('isIssuer?', isIssuer);
 
   // Load all existing comments (within the primary group namespace)
   useEffect(() => {
@@ -229,41 +230,41 @@ export default function CommentsSection({
   }, [assetId, primaryGroupId, prefix, issuerName]);
 
   // Eligibility: ISSUER, PRIMARY GROUP MEMBER/ADMIN, MINTER MEMBER/ADMIN, DEV MEMBER/ADMIN
-  const canPublish = useCallback(async (): Promise<boolean> => {
-    if (isIssuer) return true;
-    if (!userName) return false;
+  // const canPublish = useCallback(async (): Promise<boolean> => {
+  //   if (isIssuer) return true;
+  //   if (!userName) return false;
 
-    const checks: Array<Promise<boolean>> = [];
+  //   const checks: Array<Promise<boolean>> = [];
 
-    // PAG (member OR admin)
-    if (Number.isFinite(primaryGroupId)) {
-      checks.push(
-        isNameMemberOfGroupId(userName as string, primaryGroupId)
-          .then((r) => !!(r?.isMember || r?.isAdmin))
-          .catch(() => false)
-      );
-    }
+  //   // PAG (member OR admin)
+  //   if (Number.isFinite(primaryGroupId)) {
+  //     checks.push(
+  //       isNameMemberOfGroupId(userName as string, primaryGroupId)
+  //         .then((r) => !!(r?.isMember || r?.isAdmin))
+  //         .catch(() => false)
+  //     );
+  //   }
 
-    // MINTER (member OR admin)
-    if (Number.isFinite(MINTER_GROUP_ID)) {
-      checks.push(
-        isNameMemberOfGroupId(userName as string, MINTER_GROUP_ID)
-          .then((r) => !!(r?.isMember || r?.isAdmin))
-          .catch(() => false)
-      );
-    }
+  //   // MINTER (member OR admin)
+  //   if (Number.isFinite(MINTER_GROUP_ID)) {
+  //     checks.push(
+  //       isNameMemberOfGroupId(userName as string, MINTER_GROUP_ID)
+  //         .then((r) => !!(r?.isMember || r?.isAdmin))
+  //         .catch(() => false)
+  //     );
+  //   }
 
-    // DEV (member OR admin)
-    checks.push(
-      isNameMemberOfGroupId(userName as string, DEV_GROUP_ID)
-        .then((r) => !!(r?.isMember || r?.isAdmin))
-        .catch(() => false)
-    );
+  //   // DEV (member OR admin)
+  //   checks.push(
+  //     isNameMemberOfGroupId(userName as string, DEV_GROUP_ID)
+  //       .then((r) => !!(r?.isMember || r?.isAdmin))
+  //       .catch(() => false)
+  //   );
 
-    if (!checks.length) return false;
-    const results = await Promise.all(checks);
-    return results.some(Boolean);
-  }, [userName, isIssuer, primaryGroupId]);
+  //   if (!checks.length) return false;
+  //   const results = await Promise.all(checks);
+  //   return results.some(Boolean);
+  // }, [userName, isIssuer, primaryGroupId]);
 
   const openNew = (parent?: ThreadComment | null) => {
     setReplyTo(parent ?? null);
@@ -273,7 +274,7 @@ export default function CommentsSection({
 
   const publish = async () => {
     if (!userName) return alert('You need a Qortal name to publish.');
-    if (!(await canPublish())) return alert('You are not allowed to publish here.');
+    // if (!(await canPublish())) return alert('You are not allowed to publish here.');
     const safeHtml = prepareHtmlForPublish(html, theme);
     if (!safeHtml.trim()) return alert('Comment is empty.');
 
@@ -283,9 +284,7 @@ export default function CommentsSection({
       const parentId = replyTo ? replyTo.id : null;
       const rootId = replyTo ? replyTo.rootId || replyTo.id : id;
       const depth = replyTo ? Math.min(MAX_DEPTH, (replyTo.depth ?? 0) + 1) : 0;
-      const myTags =
-        publishers.find((p) => p.name.toLowerCase() === (userName as string).toLowerCase())?.tags ||
-        [];
+      const myTags = publishers.find((p) => p.name === (userName as string))?.tags || [];
 
       const entry: ThreadComment = {
         id,
@@ -401,7 +400,8 @@ export default function CommentsSection({
             color="text.secondary"
             sx={{ mt: '0.5rem', display: 'block' }}
           >
-            HTML is sanitized before publishing.
+            NOTE - Only MINTERS, DEVS, and Primary Asset Group Members' comments will be
+            displayed...
           </Typography>
         </DialogContent>
         <DialogActions>
