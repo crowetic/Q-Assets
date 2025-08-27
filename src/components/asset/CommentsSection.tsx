@@ -27,18 +27,12 @@ import TiptapEditor from '../TipTapEditor';
 
 import type { ThreadComment } from '../../types/ThreadedComment';
 import { buildCommentForest, stripPrefixId } from '../../utils/thread';
-
-// import { isNameMemberOfGroupId } from '../../utils/access';
 import { MINTER_GROUP_ID, DEV_GROUP_ID } from '../../constants/qdnConstants';
-import {
-  discoverEligibleCommentPublishers,
-  type PublisherWithTags,
-} from '../../utils/commentDiscovery';
+
 import { SkeletonComment } from '../common/Loading';
 import BusyButton from '../common/BusyButton';
 import { searchSimpleByIdentifierPrefix } from '../../utils/searchSimple';
-import { tagComments } from '../../utils/roles';
-// import PublishedHtmlRenderer from '../PublishedHtmlRenderer';
+import { addTagsForName, tagComments } from '../../utils/roles';
 
 type NodeWithTags = ThreadComment & { roleTags: string[] };
 
@@ -108,7 +102,7 @@ export default function CommentsSection({
   const { name: userName } = useAuth();
   const [items, setItems] = useState<NodeWithTags[]>([]);
   const [avatars, setAvatars] = useState<Record<string, string | null>>({});
-  const [publishers, setPublishers] = useState<PublisherWithTags[]>([]);
+  // const [publishers, setPublishers] = useState<PublisherWithTags[]>([]);
 
   const [open, setOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<ThreadComment | null>(null);
@@ -122,6 +116,13 @@ export default function CommentsSection({
   // const forest = useMemo(() => buildCommentForest(items), [items]);
   const theme = useTheme();
   console.log('isIssuer?', isIssuer);
+
+  const inputs = {
+    primaryGroupId,
+    MINTER_GROUP_ID,
+    DEV_GROUP_ID,
+    assetIssuer: issuerName || undefined,
+  };
 
   // Load all existing comments (within the primary group namespace)
   useEffect(() => {
@@ -205,12 +206,7 @@ export default function CommentsSection({
         }
 
         // 5) Attach role tags and sort
-        const inputs = {
-          primaryGroupId,
-          MINTER_GROUP_ID,
-          DEV_GROUP_ID,
-          assetIssuer: issuerName || undefined,
-        };
+
         // Tag once on the union
         const union = got.concat(backfilled);
         const finalTagged = await tagComments(union, inputs);
@@ -251,43 +247,6 @@ export default function CommentsSection({
     };
   }, [assetId, primaryGroupId, prefix, issuerName]);
 
-  // Eligibility: ISSUER, PRIMARY GROUP MEMBER/ADMIN, MINTER MEMBER/ADMIN, DEV MEMBER/ADMIN
-  // const canPublish = useCallback(async (): Promise<boolean> => {
-  //   if (isIssuer) return true;
-  //   if (!userName) return false;
-
-  //   const checks: Array<Promise<boolean>> = [];
-
-  //   // PAG (member OR admin)
-  //   if (Number.isFinite(primaryGroupId)) {
-  //     checks.push(
-  //       isNameMemberOfGroupId(userName as string, primaryGroupId)
-  //         .then((r) => !!(r?.isMember || r?.isAdmin))
-  //         .catch(() => false)
-  //     );
-  //   }
-
-  //   // MINTER (member OR admin)
-  //   if (Number.isFinite(MINTER_GROUP_ID)) {
-  //     checks.push(
-  //       isNameMemberOfGroupId(userName as string, MINTER_GROUP_ID)
-  //         .then((r) => !!(r?.isMember || r?.isAdmin))
-  //         .catch(() => false)
-  //     );
-  //   }
-
-  //   // DEV (member OR admin)
-  //   checks.push(
-  //     isNameMemberOfGroupId(userName as string, DEV_GROUP_ID)
-  //       .then((r) => !!(r?.isMember || r?.isAdmin))
-  //       .catch(() => false)
-  //   );
-
-  //   if (!checks.length) return false;
-  //   const results = await Promise.all(checks);
-  //   return results.some(Boolean);
-  // }, [userName, isIssuer, primaryGroupId]);
-
   const openNew = (parent?: ThreadComment | null) => {
     setReplyTo(parent ?? null);
     setHtml('');
@@ -296,7 +255,6 @@ export default function CommentsSection({
 
   const publish = async () => {
     if (!userName) return alert('You need a Qortal name to publish.');
-    // if (!(await canPublish())) return alert('You are not allowed to publish here.');
     const safeHtml = prepareHtmlForPublish(html, theme);
     if (!safeHtml.trim()) return alert('Comment is empty.');
 
@@ -306,7 +264,15 @@ export default function CommentsSection({
       const parentId = replyTo ? replyTo.id : null;
       const rootId = replyTo ? replyTo.rootId || replyTo.id : id;
       const depth = replyTo ? Math.min(MAX_DEPTH, (replyTo.depth ?? 0) + 1) : 0;
-      const myTags = publishers.find((p) => p.name === (userName as string))?.tags || [];
+
+      // ⬇️ Resolve role tags via the new method (issuer + groups). Never lowercase the name.
+      let myTags: string[] = [];
+      try {
+        myTags = await addTagsForName(userName, inputs);
+      } catch {
+        // tagging is best-effort; we'll auto-correct on next load anyway
+        myTags = [];
+      }
 
       const entry: ThreadComment = {
         id,
@@ -316,8 +282,9 @@ export default function CommentsSection({
         ts: Date.now(),
         author: userName,
         html: safeHtml,
-        roleTags: Array.from(new Set(myTags)),
+        roleTags: Array.from(new Set(myTags)), // safe even if empty
       };
+
       const identifier = assetCommentId(assetId, id);
       const data64 = await objectToBase64(entry);
 
@@ -329,7 +296,9 @@ export default function CommentsSection({
         data64,
       } as any);
 
+      // optimistic UI: add the newly published comment at the top
       setItems((prev) => [toNode(entry), ...prev]);
+
       if (!avatars[userName]) {
         const url = await fetchAccountAvatarDataUrl(userName);
         setAvatars((m) => ({ ...m, [userName]: url }));
@@ -344,7 +313,6 @@ export default function CommentsSection({
   };
 
   const forest = useMemo(() => buildCommentForest(items), [items]);
-  // const forest = items
 
   return (
     <>
