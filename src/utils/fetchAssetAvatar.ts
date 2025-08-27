@@ -2,8 +2,7 @@ import { getAssetIdentifiers } from '../constants/qdnConstants';
 
 // Optional: configure the QDN name that owns override avatars for core assets
 const APP_OWNER_NAME =
-  "Q-Assets"
-  undefined;
+  "Q-Assets";
 
 // ---------------- Core-asset helpers ----------------
 

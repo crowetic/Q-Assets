@@ -82,9 +82,9 @@ export async function discoverEligibleCommentPublishers(opts: {
   const minter = normalizeAddrSets(minterRaw);
   const dev = normalizeAddrSets(devRaw);
   
-  console.log('pag', pag);
-  console.log('minter',minter)
-  console.log('dev',dev)
+  // console.log('pag', pag);
+  // console.log('minter',minter)
+  // console.log('dev',dev)
 
   // Union of all addresses (now strongly typed)
   const unionAddrs = new Set<string>([
@@ -109,7 +109,7 @@ export async function discoverEligibleCommentPublishers(opts: {
 
         // If no tags (edge), still eligible because they’re in some cohort; default is untagged PAG member
         const finalTags = tags.length ? tags : [];
-        console.log('wtfnames',names.length)
+        // console.log('wtfnames',names.length)
         return names.map((n) => ({ name: n, tags: finalTags }));
       })
     )

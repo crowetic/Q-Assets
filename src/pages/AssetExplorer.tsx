@@ -95,10 +95,10 @@ const AssetExplorer = () => {
           const issuerBalance = issuerMap[asset.assetId] ?? 0;
           const circulating = Math.max(0, totalSupply - issuerBalance);
 
-          // Debug logs
-          console.log(
-            `[Asset ${asset.assetId}] Total: ${totalSupply}, Issuer: ${issuerBalance}, Circulating: ${circulating}`
-          );
+          // // Debug logs
+          // console.log(
+          //   `[Asset ${asset.assetId}] Total: ${totalSupply}, Issuer: ${issuerBalance}, Circulating: ${circulating}`
+          // );
 
           return {
             ...asset,
