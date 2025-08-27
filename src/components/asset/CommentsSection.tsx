@@ -20,7 +20,6 @@ import { useAuth, objectToBase64 } from 'qapp-core';
 import { useTheme } from '@mui/material';
 import { assetCommentsPrefix, assetCommentId } from '../../constants/qdnConstants';
 import { uniqueId6 } from '../../utils/ids';
-import { searchByIdentifierPrefixInGroup } from '../../utils/qdn';
 import { base64ToObject } from '../../utils/data';
 import { fetchAccountAvatarDataUrl } from '../../utils/qdnAvatar';
 import { prepareHtmlForPublish } from '../../utils/publicationPublisher';
@@ -29,13 +28,10 @@ import TiptapEditor from '../TipTapEditor';
 import type { ThreadComment } from '../../types/ThreadedComment';
 import { buildCommentForest, stripPrefixId } from '../../utils/thread';
 
-import { isNameMemberOfGroupId, isNameAdminOfGroupId } from '../../utils/access';
+import { isNameMemberOfGroupId } from '../../utils/access';
 import { MINTER_GROUP_ID, DEV_GROUP_ID } from '../../constants/qdnConstants';
 import {
   discoverEligibleCommentPublishers,
-  searchAllThenFilterByPublishers,
-  searchByIdentifierPrefixFFSPublishers,
-  searchByIdentifierPrefixForPublishers,
   type PublisherWithTags,
 } from '../../utils/commentDiscovery';
 import { SkeletonComment } from '../common/Loading';
@@ -449,7 +445,10 @@ function ThreadNodeView({
         ml: `calc(${depth} * ${INDENT_STEP})`,
       }}
     >
-      <Avatar src={avatarUrl || undefined} sx={{ width: '2.5rem', height: '2.5rem' }}>
+      <Avatar
+        src={avatarUrl || undefined}
+        sx={{ width: `${AVATAR_SIZE}`, height: `${AVATAR_SIZE}` }}
+      >
         {!avatarUrl ? (author[0]?.toUpperCase() ?? '?') : null}
       </Avatar>
 

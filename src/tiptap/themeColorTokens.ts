@@ -1,4 +1,3 @@
-// src/tiptap/themeColorTokens.ts
 export const THEME_COLOR_TOKENS = [
   'text.primary',
   'text.secondary',

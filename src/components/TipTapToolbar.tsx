@@ -136,14 +136,20 @@ export function TipTapToolbar({ editor }: Props) {
               ? 'h2'
               : is('heading', { level: 3 })
                 ? 'h3'
-                : 'paragraph'
+                : is('heading', { level: 4 })
+                  ? 'h4'
+                  : is('heading', { level: 5 })
+                    ? 'h5'
+                    : is('heading', { level: 6 })
+                      ? 'h6'
+                      : 'paragraph'
         }
         onChange={(e) => {
           const val = e.target.value as string;
           if (val === 'paragraph') {
             editor.chain().focus().setParagraph().run();
           } else {
-            const level = parseInt(val.slice(1), 10) as 1 | 2 | 3;
+            const level = parseInt(val.slice(1), 10) as 1 | 2 | 3 | 4 | 5 | 6;
             editor.chain().focus().toggleHeading({ level }).run();
           }
         }}
@@ -153,6 +159,9 @@ export function TipTapToolbar({ editor }: Props) {
         <MenuItem value="h1">Heading 1</MenuItem>
         <MenuItem value="h2">Heading 2</MenuItem>
         <MenuItem value="h3">Heading 3</MenuItem>
+        <MenuItem value="h4">Heading 4</MenuItem>
+        <MenuItem value="h5">Heading 5</MenuItem>
+        <MenuItem value="h6">Heading 6</MenuItem>
       </Select>
 
       {/* Marks */}
@@ -253,6 +262,17 @@ export function TipTapToolbar({ editor }: Props) {
         </Box>
         <Divider />
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1 }}>
+          <Box sx={{ fontSize: 12, color: 'text.secondary', mr: 1, minWidth: 80 }}>Custom HEX</Box>
+          <Box
+            sx={{
+              width: 24,
+              height: 24,
+              borderRadius: 0.75,
+              border: `1px solid ${theme.palette.divider}`,
+              bgcolor: lastColor,
+              flex: '0 0 auto',
+            }}
+          />
           <Button
             size="small"
             variant="outlined"

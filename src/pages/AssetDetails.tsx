@@ -254,12 +254,16 @@ export default function AssetDetail() {
           </Typography>
         </Grid>
 
-        {/* LEFT: Avatar + basic info */}
+        {/* Avatar + basic info */}
         <Grid size={{ xs: 12, md: 6, lg: 6 }} sx={{ display: 'flex', justifyContent: 'center' }}>
           <Card
             sx={{
               display: 'flex',
               alignItems: 'center',
+              justifyContent: 'center',
+              alignContent: 'center',
+              textAlign: 'center',
+              borderRadius: '2.5rem',
               gap: 3,
               p: 3,
               width: '100%',
@@ -280,7 +284,15 @@ export default function AssetDetail() {
                 <span>{asset.description}</span>
               </Typography>
 
-              <Box mt={1} display="flex" flexWrap="wrap" gap={1} alignItems="center">
+              <Box
+                mt={1}
+                display="flex"
+                flexWrap="wrap"
+                gap={1}
+                alignItems="center"
+                alignContent={'center'}
+                justifyContent={'center'}
+              >
                 <Chip label={`Asset ID: ${asset.assetId}`} />
                 <Chip
                   label={`Dividends: ${assetPub?.dividends ? 'Yes' : 'No'}`}
@@ -443,14 +455,15 @@ export default function AssetDetail() {
             </SectionCard>
           ) : (
             canPublish && (
-              <SectionCard sx={{ mt: 2 }}>
-                <Typography color="text.secondary">No extra groups yet.</Typography>
-                <Box mt={2} display="flex" justifyContent="center" textAlign={'center'}>
-                  <InfoOutlineButton onClick={() => setOpenExtraDlg(true)}>
-                    Add Extra Groups
-                  </InfoOutlineButton>
-                </Box>
-              </SectionCard>
+              // <SectionCard sx={{ mt: 2 }}>
+              //   <Typography color="text.secondary">No extra groups yet.</Typography>
+              //   <Box mt={2} display="flex" justifyContent="center" textAlign={'center'}>
+              //     <InfoOutlineButton onClick={() => setOpenExtraDlg(true)}>
+              //       Add Extra Groups
+              //     </InfoOutlineButton>
+              //   </Box>
+              // </SectionCard>
+              <Typography align="center">ExtraGroup Features coming soon...</Typography>
             )
           )}
         </Grid>
@@ -476,9 +489,9 @@ export default function AssetDetail() {
               <Box
                 sx={{ display: 'flex', justifyContent: 'center', gap: 1, mb: 2, flexWrap: 'wrap' }}
               >
-                <InfoOutlineButton onClick={() => setOpenNewsDlg(true)}>
+                {/* <InfoOutlineButton onClick={() => setOpenNewsDlg(true)}>
                   Add/Edit News Links
-                </InfoOutlineButton>
+                </InfoOutlineButton> */}
                 <NewsPublisher
                   assetId={asset.assetId}
                   primaryGroupId={parseInt(String(assetPub?.primaryGroup?.id || ''), 10)}
@@ -489,7 +502,7 @@ export default function AssetDetail() {
             )}
             {!assetPub?.news?.length ? (
               <Typography color="text.secondary" textAlign="center">
-                No Published News
+                News Publishing Functions, but Doesn't display yet.
               </Typography>
             ) : (
               <Stack spacing={1}>

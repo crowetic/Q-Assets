@@ -9,7 +9,7 @@ import { TipTapToolbar } from './TipTapToolbar';
 import { ThemedColor } from '../tiptap/marks/ThemedColor';
 import {
   THEME_COLOR_TOKENS,
-  themedColorCSS,
+  // themedColorCSS,
   themedColorCSSFromTheme,
 } from '../tiptap/themeColorTokens';
 import { Box, useTheme } from '@mui/material';
@@ -42,7 +42,7 @@ export default function TiptapEditor({ value, onChange }: TiptapEditorProps) {
     const style = document.createElement('style');
     style.setAttribute('data-tiptap-themed-colors', ''); // marker for cleanup
     // If you use CssVarsProvider, prefer this:
-    style.textContent = themedColorCSS(THEME_COLOR_TOKENS);
+    // style.textContent = themedColorCSS(THEME_COLOR_TOKENS);
     // Otherwise, fallback:
     style.textContent = themedColorCSSFromTheme(THEME_COLOR_TOKENS, theme.palette);
     document.head.appendChild(style);
