@@ -29,7 +29,7 @@ import type { ThreadComment } from '../../types/ThreadedComment';
 import { buildCommentForest, stripPrefixId } from '../../utils/thread';
 
 // import { isNameMemberOfGroupId } from '../../utils/access';
-// import { MINTER_GROUP_ID, DEV_GROUP_ID } from '../../constants/qdnConstants';
+import { MINTER_GROUP_ID, DEV_GROUP_ID } from '../../constants/qdnConstants';
 import {
   discoverEligibleCommentPublishers,
   type PublisherWithTags,
@@ -37,6 +37,7 @@ import {
 import { SkeletonComment } from '../common/Loading';
 import BusyButton from '../common/BusyButton';
 import { searchSimpleByIdentifierPrefix } from '../../utils/searchSimple';
+import { tagComments } from '../../utils/roles';
 // import PublishedHtmlRenderer from '../PublishedHtmlRenderer';
 
 type NodeWithTags = ThreadComment & { roleTags: string[] };
@@ -129,42 +130,36 @@ export default function CommentsSection({
       setLoading(true);
       setError(null);
       try {
-        // 0) Discover who’s allowed to speak
-        const pubs = await discoverEligibleCommentPublishers({
-          primaryGroupId,
-          issuerAddress: undefined,
-          issuerName: issuerName,
-        });
-        if (!cancelled) setPublishers(pubs);
-        const allowed = new Set(pubs.map((p) => p.name));
-
         // 1) One wide search: ALL results with this identifier prefix
 
         const hitsAll = await searchSimpleByIdentifierPrefix('DOCUMENT', prefix);
 
-        // 2) Filter to allowed publishers and (paranoia) to our prefix
+        const namesByIdentifier = hitsAll.reduce((m, h) => {
+          const k = h.identifier;
+          const arr = m.get(k) || [];
+          arr.push(h.name);
+          m.set(k, arr);
+          return m;
+        }, new Map<string, string[]>());
+
+        // 2) sort
         const hits = hitsAll
-          .filter((h: any) => h.identifier.startsWith(prefix))
-          .filter((h: any) => allowed.has(h.name))
           // stabilize order: by created, then identifier
           .sort(
-            (a: any, b: any) =>
-              (a.updated ? a.updated : a.created) - (b.updated ? b.updated : b.created) ||
-              a.identifier.localeCompare(b.identifier)
+            (a: any, b: any) => a.created - b.created || a.identifier.localeCompare(b.identifier)
           );
 
         // 3) Fetch each allowed doc → ThreadComment
         const initialDocs = await Promise.all(
           hits.map((h) => fetchHtmlComment(h.name, h.identifier, prefix))
         );
-        const got = (initialDocs.filter(Boolean) as ThreadComment[])
-          // De-dupe by id (across names in bizarre edge cases)
-          .filter(
-            (() => {
-              const seen = new Set<string>();
-              return (d) => (d.id && !seen.has(d.id) ? (seen.add(d.id), true) : false);
-            })()
-          );
+        const got = (initialDocs.filter(Boolean) as ThreadComment[]).filter(
+          (() => {
+            // de-dupe by id
+            const seen = new Set<string>();
+            return (d: ThreadComment) => (d.id && !seen.has(d.id) ? (seen.add(d.id), true) : false);
+          })()
+        );
 
         // 4) (Optional) backfill ancestors *only from allowed publishers*
         const haveIds = new Set(got.map((d) => d.id));
@@ -176,27 +171,54 @@ export default function CommentsSection({
         const backfilled: ThreadComment[] = [];
         for (const mid of needIds) {
           const fullIdentifier = `${prefix}${mid}`;
+          // probe by the names that actually published this identifier (from hitsAll)
+          const candidateNames = namesByIdentifier.get(fullIdentifier) ?? [];
           let found: ThreadComment | null = null;
-          for (const p of pubs) {
+
+          // try known publisher(s) first
+          for (const nm of candidateNames) {
             // eslint-disable-next-line no-await-in-loop
-            const doc = await fetchHtmlComment(p.name, fullIdentifier, prefix);
+            const doc = await fetchHtmlComment(nm, fullIdentifier, prefix);
             if (doc) {
               found = doc;
               break;
             }
           }
-          if (found) backfilled.push(found);
+
+          // fallback: try any known authors from 'got' (last resort)
+          if (!found && got.length) {
+            const uniqueAuthors = Array.from(new Set(got.map((x) => x.author).filter(Boolean)));
+            for (const nm of uniqueAuthors) {
+              // eslint-disable-next-line no-await-in-loop
+              const doc = await fetchHtmlComment(nm, fullIdentifier, prefix);
+              if (doc) {
+                found = doc;
+                break;
+              }
+            }
+          }
+
+          if (found) {
+            haveIds.add(found.id);
+            backfilled.push(found);
+          }
         }
 
         // 5) Attach role tags and sort
-        const byName = new Map(pubs.map((p) => [p.name, p.tags]));
-        const flat = got
-          .concat(backfilled)
+        const inputs = {
+          primaryGroupId,
+          MINTER_GROUP_ID,
+          DEV_GROUP_ID,
+          assetIssuer: issuerName || undefined,
+        };
+        // Tag once on the union
+        const union = got.concat(backfilled);
+        const finalTagged = await tagComments(union, inputs);
+
+        // normalize author casing & sort by comment ts
+        const flat = finalTagged
           .map(toNode)
-          .map((n) => ({
-            ...n,
-            roleTags: Array.from(new Set([...(n.roleTags ?? []), ...(byName.get(n.author) || [])])),
-          }))
+          .map((c) => ({ ...c, author: (c.author || '').trim() })) // keep original case for display
           .sort((a, b) => a.ts - b.ts);
 
         if (!cancelled) setItems(flat);

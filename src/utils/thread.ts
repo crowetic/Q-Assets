@@ -2,35 +2,6 @@ import type { ThreadComment } from "../types/ThreadedComment";
 
 export type ThreadNode = ThreadComment & { children: ThreadNode[] };
 
-/** Build a forest (array of root nodes) from a flat list. */
-// export function buildCommentForest(items: ThreadComment[]): ThreadNode[] {
-//   const byId = new Map<string, ThreadNode>();
-//   const roots: ThreadNode[] = [];
-
-//   // init nodes
-//   for (const c of items) byId.set(c.id, { ...c, children: [] });
-
-//   // link children → parents
-//   for (const c of items) {
-//     const node = byId.get(c.id)!;
-//     if (c.parentId && byId.has(c.parentId)) {
-//       byId.get(c.parentId)!.children.push(node);
-//     } else {
-//       roots.push(node);
-//     }
-//   }
-
-//   // sort each level by timestamp asc (oldest first) for conversation flow
-//   const sortDfs = (n: ThreadNode) => {
-//     n.children.sort((a, b) => a.ts - b.ts);
-//     n.children.forEach(sortDfs);
-//   };
-//   roots.sort((a, b) => a.ts - b.ts);
-//   roots.forEach(sortDfs);
-
-//   return roots;
-// }
-
 /** Extract the compact id (“A1B2C3…”) from an identifier like `${prefix}${id}` */
 export function stripPrefixId(fullIdentifier: string, prefix: string): string {
   return fullIdentifier.startsWith(prefix)

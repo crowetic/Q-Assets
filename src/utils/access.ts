@@ -26,7 +26,7 @@ let _addrCache:
   | null = null;
 
 const normAddr = (s?: string) => (s || '').trim();
-// const normId = (s?: string | null) => (s ?? '').trim().toLowerCase();
+
 
 /* ------------------------- Group fetchers (paged) ----------------------- */
 type GroupMembersResponse =
@@ -124,7 +124,7 @@ async function getAllNamesForAddress(address: string): Promise<string[]> {
 
     const normalizeList = (arr: any): string[] =>
       (Array.isArray(arr) ? arr : [])
-        .map((s) => String(s ?? '').trim())
+        .map((s) => encodeURIComponent(s))
         .filter(Boolean);
 
     let out = normalizeList(names);
@@ -148,7 +148,7 @@ async function getAllNamesForAddress(address: string): Promise<string[]> {
     // De-dupe case-insensitively, but keep original spelling/hyphens
     const seen = new Set<string>();
     return out.filter((n) => {
-      const k = n.toLowerCase();
+      const k = encodeURIComponent(n);
       if (seen.has(k)) return false;
       seen.add(k);
       return true;
@@ -192,7 +192,7 @@ export async function listManagementGroupNames(
     const map = new Map<string, { name: string; role: Role }>();
     for (const arr of perAddr) {
       for (const rec of arr) {
-        const key = rec.name.toLowerCase();
+        const key = encodeURIComponent(rec.name);
         const prev = map.get(key);
         if (!prev || (rec.role === 'admin' && prev.role !== 'admin')) {
           map.set(key, rec);
@@ -210,13 +210,13 @@ export async function listManagementGroupNames(
 export async function isNameInManagementGroup(name?: string | null): Promise<boolean> {
   if (!name) return false;
   const names = await listManagementGroupNames();
-  return names.some((m) => m.name.toLowerCase() === name.toLowerCase());
+  return names.some((m) => encodeURIComponent(m.name) === encodeURIComponent(name));
 }
 
 export async function isNameAdminInManagementGroup(name?: string | null): Promise<boolean> {
   if (!name) return false;
   const names = await listManagementGroupNames();
-  return names.some((m) => m.name.toLowerCase() === name.toLowerCase() && m.role === 'admin');
+  return names.some((m) => encodeURIComponent(m.name) === encodeURIComponent(name) && m.role === 'admin');
 }
 
 /* --------------------------- Publish eligibility ------------------------ */

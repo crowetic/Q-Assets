@@ -13,7 +13,7 @@ async function getAllNamesForAddress(address: string): Promise<string[]> {
   try {
     const names = await getAllAccountNames(address).catch(() => null);
     const normalize = (arr: any) =>
-      (Array.isArray(arr) ? arr : []).map((s) => String(s ?? '').trim()).filter(Boolean);
+      (Array.isArray(arr) ? arr : []).map((s) => encodeURIComponent(s)).filter(Boolean);
     let out = normalize(names);
     if (!out.length) {
       const primary = await getPrimaryAccountName(address).catch(() => null);
@@ -22,7 +22,7 @@ async function getAllNamesForAddress(address: string): Promise<string[]> {
     // de-dupe case-insensitive
     const seen = new Set<string>();
     return out.filter((n) => {
-      const k = n.toLowerCase();
+      const k = encodeURIComponent(n);
       if (seen.has(k)) return false;
       seen.add(k);
       return true;
@@ -80,7 +80,11 @@ export async function discoverEligibleCommentPublishers(opts: {
 
   const pag    = normalizeAddrSets(pagRaw);
   const minter = normalizeAddrSets(minterRaw);
-  const dev    = normalizeAddrSets(devRaw);
+  const dev = normalizeAddrSets(devRaw);
+  
+  console.log('pag', pag);
+  console.log('minter',minter)
+  console.log('dev',dev)
 
   // Union of all addresses (now strongly typed)
   const unionAddrs = new Set<string>([
@@ -111,11 +115,11 @@ export async function discoverEligibleCommentPublishers(opts: {
     )
   );
 
-  // Flatten + dedupe by lowercased name, keep superset of tags
+  // Flatten + dedupe by encoded name, keep superset of tags
   const byName = new Map<string, PublisherWithTags>();
   for (const arr of perAddr) {
     for (const rec of arr) {
-      const key = rec.name.toLowerCase();
+      const key = encodeURIComponent(rec.name);
       const prev = byName.get(key);
       if (!prev) byName.set(key, { name: rec.name, tags: Array.from(new Set(rec.tags)) });
       else byName.set(key, { name: prev.name, tags: Array.from(new Set([...prev.tags, ...rec.tags])) });
@@ -124,7 +128,7 @@ export async function discoverEligibleCommentPublishers(opts: {
 
   // Include issuer
   if (issuerName) {
-    const key = issuerName.trim().toLowerCase();
+    const key = encodeURIComponent(issuerName);
     const prev = byName.get(key);
     const issuerTags = ['ASSET ISSUER'];
     if (!prev) byName.set(key, { name: issuerName, tags: issuerTags });
