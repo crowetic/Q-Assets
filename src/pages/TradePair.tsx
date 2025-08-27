@@ -107,13 +107,13 @@ export default function TradePair() {
     [candles]
   );
 
-  useEffect(() => {
-    const lows = candles.map((c) => c.low);
-    const highs = candles.map((c) => c.high);
-    const min = Math.min(...lows);
-    const max = Math.max(...highs);
-    // console.log('[candles]', { count: candles.length, min, max, same: min === max });
-  }, [candles]);
+  // useEffect(() => {
+  //   const lows = candles.map((c) => c.low);
+  //   const highs = candles.map((c) => c.high);
+  //   const min = Math.min(...lows);
+  //   const max = Math.max(...highs);
+  //   console.log('[candles]', { count: candles.length, min, max, same: min === max });
+  // }, [candles]);
 
   const depth = useMemo(() => buildDepth(bids, asks, { maxLevels: 60 }), [bids, asks]);
 
