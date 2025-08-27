@@ -48,6 +48,7 @@ import {
   type Trade,
 } from '../utils/chartData';
 import SmartPriceChart from '../components/trade/SmartPriceChart';
+import ActionsToolbar from '../components/asset/ActionsToolbar';
 
 export default function TradePair() {
   const { assetId } = useParams<{ assetId: string }>();
@@ -74,6 +75,7 @@ export default function TradePair() {
   const [bucketMinutes, setBucketMinutes] = useState<number>(60); // 1, 5, 15, 60 etc.
   const [allTrades, setAllTrades] = useState<Trade[]>([]);
   const [tradesPage, setTradesPage] = useState(0);
+
   const TRADES_PAGE_SIZE = 50;
 
   const { address: authAddress, publicKey: authPublicKey } = useAuth() as any;
@@ -608,6 +610,7 @@ export default function TradePair() {
           Mid: {formatPrice(mid)} QORT
         </Typography>
       </Box>
+      <ActionsToolbar assetId={id} assetName={name} />
       {/* Chart stub */}
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
         <ToggleButtonGroup

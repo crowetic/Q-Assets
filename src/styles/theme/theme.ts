@@ -99,7 +99,7 @@ const lightTheme = createTheme({
     },
     background: {
       default: 'rgb(235, 235, 235)',
-      paper: 'rgb(197, 197, 197)', // darker card background
+      paper: 'rgb(218, 217, 217)', // darker card background
     },
     text: {
       primary: 'rgba(1, 3, 7, 0.93)', // 87% black (slightly softened)
@@ -149,12 +149,13 @@ const darkTheme = createTheme({
     },
     secondary: {
       main: 'rgb(55, 73, 97)',
-      dark: 'rgba(17, 20, 54, 0.9)',
+      // dark: 'rgba(17, 20, 54, 0.9)',
+      dark: 'rgba(16, 23, 53, 0.94)',
       light: 'rgb(96, 165, 211)',
     },
     background: {
       default: 'rgb(11, 14, 19)',
-      paper: 'rgba(25, 33, 43, 0.9)',
+      paper: 'rgba(10, 18, 26, 0.94)',
     },
     text: {
       primary: 'rgb(255, 255, 255)',
@@ -162,9 +163,9 @@ const darkTheme = createTheme({
     },
     info: {
       main: 'rgb(42, 136, 199)',
-      light: 'rgb(129, 177, 199)',
+      light: 'rgb(120, 196, 231)',
       dark: 'rgb(26, 107, 139)',
-      contrastText: 'rgba(128, 211, 250, 0.88)',
+      contrastText: 'rgba(151, 216, 247, 0.88)',
     },
     success: {
       main: 'rgba(16, 100, 54, 0.86) ',
@@ -185,7 +186,7 @@ const darkTheme = createTheme({
       contrastText: 'rgba(253, 45, 45, 0.75)',
     },
     action: {
-      hover: 'rgba(69, 79, 105, 0.75)', 
+      hover: 'rgba(69, 79, 105, 0.61)', 
       
     }
   },

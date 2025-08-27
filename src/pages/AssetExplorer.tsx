@@ -110,31 +110,6 @@ const AssetExplorer = () => {
         setAssets(enriched);
         localStorage.setItem('allAssets', JSON.stringify(enriched));
         setBalances(balanceMap);
-
-        const limit = pLimit(6); // max 6 concurrent promises
-
-        const avatarEntries: [number, string | null][] = await Promise.all(
-          enriched.map((a) =>
-            limit(async (): Promise<[number, string | null]> => {
-              try {
-                if (a.name == 'QORT' || a.name == 'QORT-from-QORA' || a.name == 'Legacy-QORA') {
-                  const url = await fetchAssetAvatar('Q-Assets', a.name);
-                  return [a.assetId, url ?? null];
-                }
-
-                const issuerName = await getPrimaryAccountName(a.owner);
-                if (!issuerName) return [a.assetId, null];
-
-                const dataUrl = await fetchAssetAvatar(issuerName, a.name);
-                return [a.assetId, dataUrl ?? null];
-              } catch {
-                return [a.assetId, null];
-              }
-            })
-          )
-        );
-
-        setAvatarMap(Object.fromEntries(avatarEntries));
       } catch (err) {
         console.error('Asset load error:', err);
       } finally {
@@ -144,6 +119,65 @@ const AssetExplorer = () => {
 
     loadAssets();
   }, [userAddress]);
+
+  useEffect(() => {
+    if (assets.length === 0) return;
+
+    const ctrl = new AbortController();
+    const limit = pLimit(6); // keep some politeness
+    let aborted = false;
+
+    // helper: small timeout wrapper so a slow node doesn’t stall a slot forever
+    const withTimeout = <T,>(p: Promise<T>, ms = 8000) =>
+      new Promise<T>((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('timeout')), ms);
+        p.then(
+          (v) => {
+            clearTimeout(t);
+            resolve(v);
+          },
+          (e) => {
+            clearTimeout(t);
+            reject(e);
+          }
+        );
+      });
+
+    // incremental setter
+    const setOne = (id: number, url: string | null) =>
+      setAvatarMap((prev) => (prev[id] ? prev : { ...prev, [id]: url }));
+
+    assets.forEach((a) =>
+      limit(async () => {
+        if (aborted || ctrl.signal.aborted) return;
+
+        try {
+          if (avatarMap[a.assetId] != null) return; // already loaded
+
+          let url: string | null = null;
+          if (a.name === 'QORT' || a.name === 'QORT-from-QORA' || a.name === 'Legacy-QORA') {
+            url = await withTimeout(fetchAssetAvatar('Q-Assets', a.name)).catch(() => null);
+          } else {
+            const issuerName = await withTimeout(getPrimaryAccountName(a.owner)).catch(() => null);
+            if (issuerName) {
+              url = await withTimeout(fetchAssetAvatar(issuerName, a.name)).catch(() => null);
+            }
+          }
+
+          if (!aborted && !ctrl.signal.aborted) {
+            setOne(a.assetId, url);
+          }
+        } catch {
+          if (!aborted && !ctrl.signal.aborted) setOne(a.assetId, null);
+        }
+      })
+    );
+
+    return () => {
+      aborted = true;
+      ctrl.abort();
+    };
+  }, [assets]);
 
   return (
     <Box sx={{ padding: '2rem' }}>
@@ -325,6 +359,7 @@ const AssetExplorer = () => {
                     >
                       {avatarMap[asset.assetId] ? (
                         <img
+                          loading="lazy"
                           src={avatarMap[asset.assetId]!}
                           alt={`${asset.name} Avatar`}
                           style={{
@@ -337,7 +372,8 @@ const AssetExplorer = () => {
                         />
                       ) : (
                         <img
-                          src="/src/core-assets/asset-placeholder.svg" // or a tiny inline SVG/emoji/etc.
+                          loading="lazy"
+                          src={avatarMap[asset.assetId]!}
                           alt="No avatar"
                           style={{
                             width: '100%',

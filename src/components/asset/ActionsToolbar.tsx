@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
-import { Stack, Button, Divider } from '@mui/material';
+import { Stack, Divider } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import OrbitronButton from '../buttons/OrbitronButton';
 
 export interface ActionsToolbarProps {
   assetId: number;
@@ -10,9 +11,6 @@ export interface ActionsToolbarProps {
   onOpenUpvotes?: () => void;
   onOpenAssetData?: () => void;
 }
-
-// qortalRequest is provided by Hub; declare for TS if not globally typed
-// declare const qortalRequest: (args: unknown) => Promise<unknown>;
 
 export default function ActionsToolbar({
   assetId,
@@ -37,107 +35,116 @@ export default function ActionsToolbar({
 
   const handleJoinPrimaryGroup = async () => {
     setJoinErr(null);
-
-    // If we don't have a numeric group id, fallback to previous behavior
     if (!groupIdNum) {
-      if (primaryGroup?.joinLink) {
-        window.open(primaryGroup.joinLink, '_blank');
-        return;
-      }
-      if (primaryGroup?.id) {
-        navigate(`/groups/${primaryGroup.id}`);
-        return;
-      }
       setJoinErr('No group id');
       return;
     }
 
     try {
       setJoining(true);
-      await qortalRequest({
-        action: 'JOIN_GROUP',
-        groupId: groupIdNum,
-      } as any);
+      await qortalRequest({ action: 'JOIN_GROUP', groupId: groupIdNum } as any);
       setJoined(true);
     } catch (e: any) {
-      // Keep it blunt and visible on the button label
-      const msg = e?.message || 'Join failed';
-      setJoinErr(msg);
+      setJoinErr(e?.message || 'Join failed');
       setJoined(false);
     } finally {
       setJoining(false);
     }
   };
 
-  const btnStyle = {
-    width: { xs: '100%', sm: 'auto' },
-    minWidth: { sm: '12rem' },
-    padding: '0.25rem 0.5rem',
-    fontSize: '0.8em',
-  } as const;
+  const fullWidthStyle = { width: { xs: '100%', sm: 'auto' }, minWidth: { sm: '12rem' } } as const;
+
+  const joinActive = joined || joining || !!joinErr;
+
+  const joinLabel = joined
+    ? 'Joined ✓'
+    : joining
+      ? 'Joining…'
+      : joinErr
+        ? 'Join Failed'
+        : groupIdNum
+          ? 'Join Primary Asset Group'
+          : 'No Asset Group Found';
 
   return (
     <>
-      <Divider sx={{ mt: '1rem', mb: '0.5rem', opacity: 0.3 }} />
+      <Divider sx={{ mt: '0.25rem', mb: '0.25rem', opacity: 0.3 }} />
       <Stack
         direction={{ xs: 'column', sm: 'row' }}
         spacing={1}
-        justifyContent={'space-around'}
+        justifyContent="space-around"
         useFlexGap
         flexWrap="wrap"
         sx={{
           width: '100%',
           columnGap: { sm: '0.75rem' },
-          rowGap: { xs: '0.5rem', sm: '0.75rem' },
+          rowGap: { xs: '0.1rem', sm: '0.25rem' },
         }}
       >
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={() => navigate(`/trade/${assetId}`)}
-          sx={btnStyle}
-        >
-          Trade {assetName}
-        </Button>
+        {primaryGroup && (
+          <OrbitronButton
+            variant="outlined"
+            size="small"
+            onClick={() => navigate(`/trade/${assetId}`)}
+            sx={fullWidthStyle}
+          >
+            Trade {assetName}
+          </OrbitronButton>
+        )}
 
-        <Button
+        {primaryGroup ? (
+          <OrbitronButton
+            variant="outlined"
+            size="small"
+            onClick={handleJoinPrimaryGroup}
+            disabled={joining || joined}
+            active={joinActive}
+            sx={fullWidthStyle}
+          >
+            {joinLabel}
+          </OrbitronButton>
+        ) : (
+          <OrbitronButton
+            variant="outlined"
+            size="small"
+            onClick={() => navigate(`/assets/${assetId}`)}
+            sx={fullWidthStyle}
+          >
+            View Asset Details
+          </OrbitronButton>
+        )}
+
+        <OrbitronButton
           variant="outlined"
           size="small"
           onClick={onOpenAssetData}
-          disabled={true}
-          sx={btnStyle}
+          disabled
+          sx={fullWidthStyle}
         >
           Asset Data (Coming Soon)
-        </Button>
+        </OrbitronButton>
 
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={handleJoinPrimaryGroup}
-          disabled={joining || joined || !primaryGroup}
-          sx={btnStyle}
-        >
-          {joined
-            ? 'Joined ✓'
-            : joining
-              ? 'Joining…'
-              : joinErr
-                ? `Join Failed`
-                : groupIdNum
-                  ? 'Join Primary Asset Group'
-                  : 'Open Primary Asset Group'}
-        </Button>
-
-        {onOpenComment && (
-          <Button variant="outlined" onClick={onOpenComment} sx={btnStyle}>
+        {primaryGroup && onOpenComment && (
+          <OrbitronButton
+            variant="outlined"
+            size="small"
+            onClick={onOpenComment}
+            sx={fullWidthStyle}
+          >
             Asset-Comments
-          </Button>
+          </OrbitronButton>
         )}
 
-        {onOpenUpvotes && (
-          <Button variant="outlined" onClick={onOpenUpvotes} disabled={true} sx={btnStyle}>
+        {primaryGroup && onOpenUpvotes && (
+          <OrbitronButton
+            variant="outlined"
+            size="small"
+            onClick={onOpenUpvotes}
+            disabled
+            sx={fullWidthStyle}
+          >
             Upvotes (Coming Soon)
-          </Button>
+          </OrbitronButton>
         )}
       </Stack>
     </>
