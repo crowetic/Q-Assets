@@ -1,12 +1,34 @@
 import { getAssetInfo } from "../utils/qortalAssetRequests";
 import type { Service } from "qapp-core"; // or your local types
 
+export const Q_ASSETS_OWNER_ADDRESS = 'QWZDZBKafP19Hin4HivuV6WXgWaBaWUMrN'
 export const Q_ASSET_APP_PUBLISHER: string = 'Q-Assets'
 export const Q_ASSET_APP_VERSION: number = 0.21
 export const isBeta: boolean = true
 
 export const Q_ASSETS_VERSION: string = isBeta ? Q_ASSET_APP_VERSION + "b" : Q_ASSET_APP_VERSION.toString() 
 export const ASSETS_KEY = "qa_assets_index" + Q_ASSET_APP_VERSION
+
+export const MINTER_GROUP_ID = 694
+export const DEV_GROUP_ID = 1
+
+export const assetCommentsPrefix   = (assetId: number) => `asset_comment__${assetId}__`;      // per-entry
+export const assetUpvotesPrefix    = (assetId: number) => `asset_paid_upvote__${assetId}__`;  // per-entry
+export const assetNewsPrefix = (assetId: number) => `asset_news_pub__${assetId}__`;     // per-entry
+
+// Optional 'head' docs for quick fetch of the latest (we still do per-entry for history)
+export const assetNewsHeadId       = (assetId: number) => `asset_news_head__${assetId}`;
+
+// ----- builders -----
+export const assetCommentId = (assetId: number, id6: string) =>
+  `${assetCommentsPrefix(assetId)}${id6}`;
+
+export const assetPaidUpvoteId = (assetId: number, id6: string) =>
+  `${assetUpvotesPrefix(assetId)}${id6}`;
+
+export const assetNewsItemId = (assetId: number, id6: string) =>
+  `${assetNewsPrefix(assetId)}${id6}`;
+
 
 
 export async function getAssetIdentifiers(assetName: string, assetId?: number): Promise<{

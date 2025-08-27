@@ -1,6 +1,6 @@
 import pLimit from 'p-limit';
 import { WIKI_GROUP_ID, WIKI_IDENTIFIER_PREFIX, WIKI_SECTIONS } from '../constants/wiki';
-import { getPrimaryAccountName, getAllAccountNames } from '../utils/qortalApi';
+import { getPrimaryAccountName, getAllAccountNames } from './qortalApi';
 import { base64ToObject, base64ToUtf8, utf8ToBase64 } from './data';
 import { objectToBase64 } from 'qapp-core';
 
@@ -39,8 +39,9 @@ function parseMembersPayload(json: GroupMembersResponse): GroupMemberRow[] {
   return [];
 }
 
-async function fetchGroupMembersRaw(): Promise<GroupMemberRow[]> {
-  const url = `/groups/members/${WIKI_GROUP_ID}?limit=0&reverse=true`;
+async function fetchGroupMembersRaw(groupId: number): Promise<GroupMemberRow[]> {
+  if (!groupId) groupId = WIKI_GROUP_ID
+  const url = `/groups/members/${groupId}?limit=0&reverse=true`;
   const res = await fetch(url, { headers: { accept: 'application/json' } });
   if (!res.ok) throw new Error(`Group members fetch failed: ${res.status} ${res.statusText}`);
   const json = (await res.json()) as GroupMembersResponse;
@@ -48,7 +49,12 @@ async function fetchGroupMembersRaw(): Promise<GroupMemberRow[]> {
 }
 
 async function fetchAllRows(onlyAdmins: boolean): Promise<GroupMemberRow[]> {
-  const rows = await fetchGroupMembersRaw();
+  const rows = await fetchGroupMembersRaw(WIKI_GROUP_ID);
+  return onlyAdmins ? rows.filter((r) => r.isAdmin === true) : rows;
+}
+
+async function fetchGroupMembers(onlyAdmins: boolean, groupId: number): Promise<GroupMemberRow[]> {
+  const rows = await fetchGroupMembersRaw(groupId);
   return onlyAdmins ? rows.filter((r) => r.isAdmin === true) : rows;
 }
 
@@ -64,6 +70,28 @@ export async function getGroupAddressSets(): Promise<{
 
   try {
     const [adminsRaw, membersRaw] = await Promise.all([fetchAllRows(true), fetchAllRows(false)]);
+    const memberAddrs = new Set(membersRaw.map((r) => normAddr(r.member || r.address)));
+    const adminAddrs = new Set(adminsRaw.map((r) => normAddr(r.member || r.address)));
+    for (const a of adminAddrs) memberAddrs.add(a); // admins are members too
+    _addrCache = { memberAddrs, adminAddrs, at: now };
+    return { memberAddrs, adminAddrs };
+  } catch (e) {
+    console.error('getGroupAddressSets error:', e);
+    return { memberAddrs: new Set(), adminAddrs: new Set() };
+  }
+}
+
+export async function getGroupAddressSetsById(groupId: number): Promise<{
+  memberAddrs: Set<string>;
+  adminAddrs: Set<string>;
+}> {
+  const now = Date.now();
+  if (_addrCache && now - _addrCache.at < CACHE_TTL_MS) {
+    return { memberAddrs: _addrCache.memberAddrs, adminAddrs: _addrCache.adminAddrs };
+  }
+
+  try {
+    const [adminsRaw, membersRaw] = await Promise.all([fetchGroupMembers(true, groupId), fetchGroupMembers(false, groupId)]);
     const memberAddrs = new Set(membersRaw.map((r) => normAddr(r.member || r.address)));
     const adminAddrs = new Set(adminsRaw.map((r) => normAddr(r.member || r.address)));
     for (const a of adminAddrs) memberAddrs.add(a); // admins are members too
@@ -132,9 +160,21 @@ async function getAllNamesForAddress(address: string): Promise<string[]> {
 
 /* ----------------- Flattened list of publisher NAMES -------------------- */
 /** Returns the full set of publisher names (flattened) with role, hyphen-safe. */
-export async function listManagementGroupNames(): Promise<Array<{ name: string; role: Role }>> {
+export async function listManagementGroupNames(
+  groupId?: number
+): Promise<Array<{ name: string; role: Role }>> {
   try {
-    const { memberAddrs, adminAddrs } = await getGroupAddressSets();
+    // declare outside and assign in branches
+    let memberAddrs: Set<string>;
+    let adminAddrs: Set<string>;
+
+    if (typeof groupId === 'number') {
+      ({ memberAddrs, adminAddrs } = await getGroupAddressSetsById(groupId));
+    } else {
+      // legacy path (uses the cached WIKI group internally)
+      ({ memberAddrs, adminAddrs } = await getGroupAddressSets());
+    }
+
     const addrs = Array.from(memberAddrs);
     const limit = pLimit(8);
 
@@ -148,7 +188,7 @@ export async function listManagementGroupNames(): Promise<Array<{ name: string; 
       )
     );
 
-    // Flatten + de-dupe by lowercased name; if any duplicate has admin role, keep admin
+    // Flatten + de-dupe by name (case-insensitive); prefer admin role if any duplicate
     const map = new Map<string, { name: string; role: Role }>();
     for (const arr of perAddr) {
       for (const rec of arr) {
@@ -459,4 +499,123 @@ export async function saveWikiMenu(items: WikiMenuItem[], publisherName: string)
     identifier: WIKI_MENU_IDENTIFIER,
     data64: payload,
   });
+}
+
+
+export async function findGroupPublishersWithResource(
+  identifier: string
+): Promise<Candidate[]> {
+  const publishers = await listManagementGroupNames(); // [{name, role}]
+  if (!publishers.length) return [];
+
+  const results = await Promise.all(
+    publishers.map((p) =>
+      discoverLimit(async () => {
+        try {
+          const res = await qortalRequest({
+            action: 'SEARCH_QDN_RESOURCES',
+            service: 'DOCUMENT',
+            name: p.name,           // EXACT name; hyphen-safe
+            identifier,             // EXACT identifier
+          });
+
+          const rows = Array.isArray(res) ? res : (res ? [res] : []);
+          if (!rows.length) return null;
+
+          const best = rows
+            .filter((r: any) => r?.identifier === identifier && r?.name === p.name)
+            .sort(
+              (a: any, b: any) =>
+                (Number(b.updated ?? b.created ?? 0) || 0) -
+                (Number(a.updated ?? a.created ?? 0) || 0)
+            )[0];
+
+          if (!best) return null;
+
+          return {
+            name: p.name,
+            role: p.role,
+            ts: Number(best.updated ?? best.created ?? 0) || 0,
+          } as Candidate;
+        } catch {
+          return null;
+        }
+      })
+    )
+  );
+
+  const hits = (results.filter(Boolean) as Candidate[]);
+  const admins  = hits.filter(h => h.role === 'admin').sort((a,b) => b.ts - a.ts);
+  const members = hits.filter(h => h.role === 'member').sort((a,b) => b.ts - a.ts);
+  return admins.concat(members);
+}
+
+export async function isNameAdminOfGroupId(name: string, groupId: number): Promise<boolean> {
+  try {
+    // 1) resolve address for name
+    const address = await qortalRequest({ action: 'GET_ADDRESS_FROM_NAME', name } as any)
+      .catch(() => null);
+    if (!address) return false;
+
+    // 2) fetch group admins (adjust to your Core endpoints if different)
+    // This endpoint mirrors what you used for wiki: /groups/members/<id>?limit=0
+    const res = await fetch(`/groups/members/${groupId}?limit=0&reverse=true`, {
+      headers: { accept: 'application/json' },
+    }).then(r => r.json()).catch(() => null);
+
+    const rows: Array<{ member?: string; address?: string; isAdmin?: boolean }> =
+      Array.isArray(res) ? res : (Array.isArray(res?.members) ? res.members : []);
+
+    const admins = new Set(
+      rows.filter(r => r.isAdmin).map(r => String(r.member || r.address || '').trim())
+    );
+    return admins.has(String(address).trim());
+  } catch {
+    return false;
+  }
+}
+
+export async function isNameMemberOfGroupId(
+  name: string,
+  groupId: number
+): Promise<{ isMember: boolean; isAdmin: boolean; address?: string }> {
+  try {
+    // 1) Resolve address from name
+    const address = await qortalRequest({
+      action: 'GET_ADDRESS_FROM_NAME',
+      name,
+    } as any).catch(() => null);
+    if (!address) return { isMember: false, isAdmin: false };
+
+    // 2) Fetch all members of the group
+    const res = await fetch(`/groups/members/${groupId}?limit=0&reverse=true`, {
+      headers: { accept: 'application/json' },
+    }).then((r) => r.json()).catch(() => null);
+
+    const rows: Array<{ member?: string; address?: string; isAdmin?: boolean }> = Array.isArray(res)
+      ? res
+      : Array.isArray((res as any)?.members)
+        ? (res as any).members
+        : [];
+
+    // Normalize addresses (some rows use member, some address)
+    const norm = (s?: string) => (s || '').trim();
+    const target = norm(address);
+
+    let found = false;
+    let admin = false;
+
+    for (const row of rows) {
+      const addr = norm(row.member) || norm(row.address);
+      if (addr === target) {
+        found = true;
+        admin = !!row.isAdmin;
+        break;
+      }
+    }
+
+    return { isMember: found, isAdmin: admin, address: target };
+  } catch {
+    return { isMember: false, isAdmin: false };
+  }
 }

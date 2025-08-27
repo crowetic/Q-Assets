@@ -1,0 +1,47 @@
+{
+  "schema": "qars-snapshot@1",
+  "assetId": 6,
+  "asOfHeight": 145123,
+  "asOfTimeMs": 1756154123456,
+
+  "windowBlocks": 2880,        
+  "weightsVersion": 1,            
+  "codeVersion": "1.0.0",          
+
+  "metrics": {
+    "tradesCount": 124,
+    "volAsset": 5321.34,
+    "volQort": 711.2,
+    "uniqueTraders": 67,
+    "bookDiversity": 0.52,
+    "holdersCount": 402,
+    "holdersDelta": 9,
+    "totalFeesQort": 3.41,
+    "paidUpvotes": 3,
+    "paidUpvotesQort": 12.0,
+    "issuerActivityScore": 4,
+    "dividendEvents": 0,
+    "dividendQortTotal": 0,
+    "selfDealPenalty": 0.04,
+    "sybilPenalty": 0.0
+  },
+
+  "scoreEpoch": 87.3,             
+  "inputsProof": {
+    "nodeInfo": { "height": 145200, "network": "main" },
+    "ranges": [
+      { "name": "trades", "fromHeight": 142320, "toHeight": 145200, "sha256": "..." },
+      { "name": "holders", "asOfHeight": 145200, "sha256": "..." }
+    ],
+    "sampleRefs": {
+      "trades": ["<txId1>", "<txId2>", "<txId3>"],  
+      "orders": ["<createOrderTxId>"]
+    }
+  },
+
+  "publisher": {
+    "address": "Qxxxx...",
+    "groupVerified": false,      
+    "signature": "<publisherSignatureOverFile>"
+  }
+}

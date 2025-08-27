@@ -47,6 +47,14 @@ import {
   readAssetsIndexSync,
 } from '../bootstrap/assetsBootstrap';
 import { prepareHtmlForPublish } from '../utils/publicationPublisher';
+import ActionsSection from '../components/asset/ActionsToolbar';
+import CommentsSection from '../components/asset/CommentsSection';
+// import PaidUpvotesSection from '../components/asset/PaidUpvoteSection';
+import NewsPublisher from '../components/news/NewsPublisher';
+import PageContainer from '../components/layout/PageContainer';
+import SectionCard from '../components/layout/SectionCard';
+import { useNavigate } from 'react-router-dom';
+import ActionsToolbar from '../components/asset/ActionsToolbar';
 
 type Enriched = {
   assetId: number;
@@ -96,7 +104,7 @@ export default function AssetDetail() {
   const [divPeriod, setDivPeriod] = useState<'1W' | '2W' | '1M' | '3M' | '6M' | '1Y'>(
     assetPub?.dividendPeriod ?? '1M'
   );
-
+  const navigate = useNavigate();
   // const isIssuer = asset && userAddress && asset.owner === userAddress;
   const isIssuer = !!asset && !!userAddress && asset.owner === userAddress;
 
@@ -229,295 +237,258 @@ export default function AssetDetail() {
   if (!asset) return <Typography>Loading asset...</Typography>;
 
   return (
-    <Box
-      p={'1rem'}
-      display="flex"
-      flexDirection="column"
-      justifyContent="stretch"
-      alignItems="stretch"
-    >
-      {/* Header */}
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexDirection: 'column',
-          minHeight: '15rem',
-        }}
+    <PageContainer>
+      {/* Header row: title + (left info, right actions) */}
+      {/* Header row: centered pair (Info + Actions) */}
+      <Grid
+        container
+        spacing={2}
+        justifyContent="center"
+        alignItems="stretch"
+        sx={{ maxWidth: '75%', mx: 'auto' }} // centers the pair
       >
-        <Typography variant="h3" textAlign="center">
-          Asset Details
-        </Typography>
+        {/* Title (full width, centered) */}
+        <Grid size={{ xs: 12 }}>
+          <Typography variant="h3" textAlign="center">
+            Asset Details
+          </Typography>
+        </Grid>
 
-        <Card
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 4,
-            p: 3,
-            mb: 4,
-            justifyContent: 'center',
-            textAlign: 'center',
-            maxWidth: '100%',
-            minWidth: '33.3%',
-          }}
-        >
-          {avatar && (
-            <Avatar
-              src={avatar}
-              sx={{ minWidth: '10rem', minHeight: '10rem', maxWidth: '20rem', maxHeight: '20rem' }}
-            />
-          )}
-          <Box>
-            <Typography variant="h4">{asset.name}</Typography>
-            <Typography variant="subtitle1">
-              <span>{asset.description}</span>
-            </Typography>
-            <Box mt={1}>
-              <Chip label={`Asset ID: ${asset.assetId}`} />
-              <Spacer />
-              <Chip
-                label={`Dividends: ${assetPub?.dividends ? 'Yes' : 'No'}`}
-                color={assetPub?.dividends ? 'success' : 'default'}
-                variant={assetPub?.dividends ? 'filled' : 'outlined'}
+        {/* LEFT: Avatar + basic info */}
+        <Grid size={{ xs: 12, md: 6, lg: 6 }} sx={{ display: 'flex', justifyContent: 'center' }}>
+          <Card
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 3,
+              p: 3,
+              width: '100%',
+              maxWidth: '80rem', // keeps a nice readable width
+              height: '100%', // matches Actions card height
+            }}
+          >
+            {avatar && (
+              <Avatar
+                src={avatar}
+                sx={{ minWidth: 120, minHeight: 120, width: 160, height: 160 }}
               />
-              {assetPub?.dividends && assetPub?.dividendPeriod && (
-                <Chip label={`Period: ${assetPub.dividendPeriod}`} color="secondary" />
-              )}
-              {canPublish ? (
-                <Box sx={{ mt: 1 }}>
+            )}
+
+            <Box flex={1}>
+              <Typography variant="h4">{asset.name}</Typography>
+              <Typography variant="subtitle1">
+                <span>{asset.description}</span>
+              </Typography>
+
+              <Box mt={1} display="flex" flexWrap="wrap" gap={1} alignItems="center">
+                <Chip label={`Asset ID: ${asset.assetId}`} />
+                <Chip
+                  label={`Dividends: ${assetPub?.dividends ? 'Yes' : 'No'}`}
+                  color={assetPub?.dividends ? 'success' : 'default'}
+                  variant={assetPub?.dividends ? 'filled' : 'outlined'}
+                />
+                {assetPub?.dividends && assetPub?.dividendPeriod && (
+                  <Chip label={`Period: ${assetPub.dividendPeriod}`} color="secondary" />
+                )}
+              </Box>
+
+              <Box mt={1}>
+                <Typography>
+                  Divisible:{' '}
+                  <span style={{ color: theme.palette.secondary.light }}>
+                    {asset.isDivisible ? 'Yes' : 'No'}
+                  </span>
+                </Typography>
+                <Typography>
+                  Unspendable:{' '}
+                  <span style={{ color: theme.palette.secondary.light }}>
+                    {asset.isUnspendable ? 'Yes' : 'No'}
+                  </span>
+                </Typography>
+              </Box>
+
+              {canPublish && (
+                <Box mt={1}>
                   <InfoOutlineButton onClick={() => setOpenDivDlg(true)}>
                     Edit Dividends
                   </InfoOutlineButton>
                 </Box>
-              ) : null}
-              <Typography>
-                Divisible:{' '}
-                <span style={{ color: theme.palette.secondary.light }}>
-                  {asset.isDivisible ? 'Yes' : 'No'}
-                </span>
-              </Typography>
-              <Typography>
-                Unspendable:{' '}
-                <span style={{ color: theme.palette.secondary.light }}>
-                  {asset.isUnspendable ? 'Yes' : 'No'}
-                </span>
-              </Typography>
+              )}
             </Box>
-          </Box>
-        </Card>
-      </Box>
+          </Card>
+        </Grid>
+        <ActionsToolbar
+          assetId={asset.assetId}
+          assetName={asset.name}
+          primaryGroup={{
+            id: assetPub?.primaryGroup?.id,
+            joinLink: assetPub?.primaryGroup?.joinLink,
+          }}
+          onOpenComment={() =>
+            document
+              .getElementById('comments-section-anchor')
+              ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }
+          onOpenUpvotes={() => {
+            /* later */
+          }}
+          onOpenAssetData={() => {
+            /* if you want a distinct handler here */
+          }}
+        />
+      </Grid>
 
-      {/* Grid Info */}
-      <Grid container spacing={1} sx={{ display: 'flex', flexDirection: 'row' }}>
-        {/* Supply */}
-        <Grid
-          size={{ xs: 12, sm: 12, md: 12, lg: 6 }}
-          minHeight={{ sm: '10rem', md: '10rem', lg: '10rem' }}
-        >
+      {/* Row: Supply + Issuer */}
+      <Grid container spacing={2}>
+        <Grid size={{ xs: 12, md: 6, lg: 6 }}>
           <Typography variant="h4" textAlign="center">
             Supply
           </Typography>
-          <Card
-            sx={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignContent: 'center',
-              alignItems: 'center',
-              justifyContent: 'space-evenly',
-              width: '100%',
-              minHeight: '7rem',
-              height: '50%',
-            }}
-          >
-            <CardContent sx={{}}>
-              <Box display="flex" alignItems="center" gap={1}>
-                <Typography>Circulating:</Typography>
-                <Chip
-                  label={formatAssetAmount(asset.circulating, asset.isDivisible)}
-                  sx={{ color: theme.palette.text.primary }}
-                />
-              </Box>
-              <Typography>
-                Total:{' '}
-                <span style={{ color: theme.palette.secondary.light }}>
-                  {formatAssetAmount(asset.totalSupply, asset.isDivisible)}
-                </span>
-              </Typography>
-            </CardContent>
-          </Card>
+          <SectionCard>
+            <Box
+              display="flex"
+              textAlign="center"
+              justifyContent={'center'}
+              alignItems="center"
+              gap={1}
+            >
+              <Typography>Circulating:</Typography>
+              <Chip
+                label={formatAssetAmount(asset.circulating, asset.isDivisible)}
+                sx={{ color: theme.palette.text.primary }}
+              />
+            </Box>
+            <Typography sx={{ mt: 1 }}>
+              Total:{' '}
+              <span style={{ color: theme.palette.secondary.light }}>
+                {formatAssetAmount(asset.totalSupply, asset.isDivisible)}
+              </span>
+            </Typography>
+          </SectionCard>
         </Grid>
 
-        {/* Issuer */}
-        <Grid
-          size={{ xs: 12, sm: 12, md: 12, lg: 6 }}
-          minHeight={{ sm: '10rem', md: '10rem', lg: '10rem' }}
-        >
+        <Grid size={{ xs: 12, md: 6, lg: 6 }}>
           <Typography variant="h4" textAlign="center">
             Issuer
           </Typography>
-          <Card
-            sx={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignContent: 'center',
-              alignItems: 'center',
-              justifyContent: 'space-evenly',
-              width: '100%',
-              minHeight: '7rem',
-              height: '50%',
-            }}
-          >
-            <CardContent sx={{}}>
-              <Typography>
-                Name:{' '}
-                <span style={{ color: theme.palette.primary.contrastText }}>{issuerName}</span>
-              </Typography>
-              <Typography>
-                Address:{' '}
-                <span style={{ color: theme.palette.primary.contrastText }}>{asset.owner}</span>
-              </Typography>
-            </CardContent>
-          </Card>
+          <SectionCard>
+            <Typography>
+              Name: <span style={{ color: theme.palette.primary.contrastText }}>{issuerName}</span>
+            </Typography>
+            <Typography sx={{ mt: 1 }}>
+              Address:{' '}
+              <span style={{ color: theme.palette.primary.contrastText }}>{asset.owner}</span>
+            </Typography>
+          </SectionCard>
         </Grid>
 
-        {/* Primary Asset Group */}
-        <Grid
-          size={{ xs: 12, sm: 12, md: 12, lg: 12 }}
-          minHeight={{ sm: '10rem', md: '10rem', lg: '10rem' }}
-        >
+        {/* Row: Asset Groups */}
+        <Grid size={{ xs: 12 }} minHeight={{ sm: '7rem', md: '7rem', lg: '7rem' }}>
           <Typography variant="h4" textAlign="center">
             Asset Groups
           </Typography>
-          <Card
-            sx={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignContent: 'center',
-              alignItems: 'center',
-              justifyContent: 'space-evenly',
-              width: '100%',
-              minHeight: '7rem',
-              height: '50%',
-            }}
-          >
-            <CardContent sx={{}}>
-              {assetPub?.primaryGroup ? (
-                <>
-                  <Typography>
-                    Name:{' '}
-                    <span style={{ color: theme.palette.primary.contrastText }}>
-                      {assetPub.primaryGroup.name}
-                    </span>
-                  </Typography>
-                  <Typography>
-                    GroupID:{' '}
-                    <span style={{ color: theme.palette.secondary.light }}>
-                      {assetPub.primaryGroup.id}
-                    </span>
-                  </Typography>
-                  {canPublish ? (
-                    <Box
-                      sx={{
-                        mt: 'auto',
-                        p: 1,
-                        display: 'flex',
-                        alignContent: 'center',
-                        justifyContent: 'space-evenly',
-                      }}
-                    >
-                      <InfoOutlineButton onClick={() => setOpenPrimaryDlg(true)}>
-                        Add/Edit Primary Group
-                      </InfoOutlineButton>
-                    </Box>
-                  ) : null}
-                </>
-              ) : (
-                <Typography color="text.secondary">No group data</Typography>
-              )}
-            </CardContent>
-          </Card>
+          <SectionCard>
+            {assetPub?.primaryGroup ? (
+              <>
+                <Typography>
+                  Name:{' '}
+                  <span style={{ color: theme.palette.primary.contrastText }}>
+                    {assetPub.primaryGroup.name}
+                  </span>
+                </Typography>
+                <Typography sx={{ mt: 1 }}>
+                  GroupID:{' '}
+                  <span style={{ color: theme.palette.secondary.light }}>
+                    {assetPub.primaryGroup.id}
+                  </span>
+                </Typography>
+                {canPublish && (
+                  <Box mt={2} display="flex" justifyContent="center">
+                    <InfoOutlineButton onClick={() => setOpenPrimaryDlg(true)}>
+                      Add/Edit Primary Group
+                    </InfoOutlineButton>
+                  </Box>
+                )}
+              </>
+            ) : (
+              <Typography color="text.secondary">No group data</Typography>
+            )}
+          </SectionCard>
+
           {(assetPub?.extraGroups?.length ?? 0) > 0 ? (
-            <Box>
-              <Typography variant="h4" textAlign="center">
+            <SectionCard sx={{ mt: 2 }}>
+              <Typography variant="h5" textAlign="center" sx={{ mb: 1 }}>
                 Other Groups
               </Typography>
-              <Card sx={{ mt: 1 }}>
-                <CardContent>
-                  <Stack spacing={1}>
-                    {assetPub!.extraGroups!.map((g) => (
-                      <>
-                        <Typography>
-                          Name:{' '}
-                          <span style={{ color: theme.palette.primary.contrastText }}>
-                            {g.name}
-                          </span>
-                        </Typography>
-                        <Typography>
-                          GroupID:{' '}
-                          <span style={{ color: theme.palette.secondary.light }}>{g.id}</span>
-                        </Typography>
-                      </>
-                    ))}
-                  </Stack>
-                </CardContent>
-                {canPublish ? (
-                  <Box sx={{ p: 1, display: 'flex', justifyContent: 'center' }}>
-                    <InfoOutlineButton onClick={() => setOpenExtraDlg(true)}>
-                      Add/Edit Extra Groups
-                    </InfoOutlineButton>
+              <Stack spacing={1}>
+                {assetPub!.extraGroups!.map((g, i) => (
+                  <Box key={`${g.id}-${i}`}>
+                    <Typography>
+                      Name:{' '}
+                      <span style={{ color: theme.palette.primary.contrastText }}>{g.name}</span>
+                    </Typography>
+                    <Typography>
+                      GroupID: <span style={{ color: theme.palette.secondary.light }}>{g.id}</span>
+                    </Typography>
                   </Box>
-                ) : null}
-              </Card>
-            </Box>
+                ))}
+              </Stack>
+              {canPublish && (
+                <Box mt={2} display="flex" justifyContent="center">
+                  <InfoOutlineButton onClick={() => setOpenExtraDlg(true)}>
+                    Add/Edit Extra Groups
+                  </InfoOutlineButton>
+                </Box>
+              )}
+            </SectionCard>
           ) : (
             canPublish && (
-              <Box>
-                {/* If no extra groups, hide the empty card but still allow issuer to add */}
-                <Card
-                  sx={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignContent: 'center',
-                    alignItems: 'center',
-                    justifyContent: 'space-evenly',
-                    width: '100%',
-                  }}
-                >
-                  <CardContent>
-                    <Typography color="text.secondary">No extra groups yet.</Typography>
-                  </CardContent>
-                  <Box sx={{ p: 1, display: 'flex', justifyContent: 'center' }}>
-                    <InfoOutlineButton onClick={() => setOpenExtraDlg(true)}>
-                      Add Extra Groups
-                    </InfoOutlineButton>
-                  </Box>
-                </Card>
-              </Box>
+              <SectionCard sx={{ mt: 2 }}>
+                <Typography color="text.secondary">No extra groups yet.</Typography>
+                <Box mt={2} display="flex" justifyContent="center" textAlign={'center'}>
+                  <InfoOutlineButton onClick={() => setOpenExtraDlg(true)}>
+                    Add Extra Groups
+                  </InfoOutlineButton>
+                </Box>
+              </SectionCard>
             )
           )}
         </Grid>
-      </Grid>
-      <Box mt={1}>
-        <Box display="flex" alignItems="center" justifyContent="center" mb={1} mt={4}>
-          <Typography variant="h4" textAlign="center">
+
+        {/* Row: Comments (full width on mobile, half on lg if you want) */}
+        <Grid size={{ xs: 12, lg: 12 }}>
+          <div id="comments-section-anchor" />
+          <CommentsSection
+            assetId={asset.assetId}
+            primaryGroupId={parseInt(String(assetPub?.primaryGroup?.id || ''), 10)}
+            issuerName={issuerName}
+            isIssuer={!!canPublish}
+          />
+        </Grid>
+
+        {/* Row: News (side-by-side with comments on lg) */}
+        <Grid size={{ xs: 12 }}>
+          <Typography variant="h4" textAlign="center" sx={{ mt: 2 }}>
             News
           </Typography>
-        </Box>
-        <Card
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignContent: 'center',
-            alignItems: 'center',
-            justifyContent: 'space-evenly',
-          }}
-        >
-          <CardContent sx={{}}>
+          <SectionCard sx={{ mt: 1 }}>
+            {canPublish && (
+              <Box
+                sx={{ display: 'flex', justifyContent: 'center', gap: 1, mb: 2, flexWrap: 'wrap' }}
+              >
+                <InfoOutlineButton onClick={() => setOpenNewsDlg(true)}>
+                  Add/Edit News Links
+                </InfoOutlineButton>
+                <NewsPublisher
+                  assetId={asset.assetId}
+                  primaryGroupId={parseInt(String(assetPub?.primaryGroup?.id || ''), 10)}
+                  isIssuer={!!canPublish}
+                  onPublished={() => setNewsForm((s) => s.slice())}
+                />
+              </Box>
+            )}
             {!assetPub?.news?.length ? (
               <Typography color="text.secondary" textAlign="center">
-                {' '}
                 No Published News
               </Typography>
             ) : (
@@ -528,7 +499,7 @@ export default function AssetDetail() {
                   .reverse()
                   .map((n, i) => (
                     <Box
-                      key={i}
+                      key={`${n.postId || n.title}-${i}`}
                       sx={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 1 }}
                     >
                       <Typography variant="body2" color="text.secondary">
@@ -536,11 +507,7 @@ export default function AssetDetail() {
                       </Typography>
                       <Typography variant="body1">{n.title}</Typography>
                       {n.postId ? (
-                        <Link
-                          href={`/APP/Q-Blog/${n.postId}`} //TODO - Add modal with viewer similar to what was done on Q-Mintership. ALSO - ADD NEWS PUBLISHING SO THAT RELIANCE UPON Q-BLOG LINKS ISN'T NECESSARY.
-                          target=""
-                          rel="noopener"
-                        >
+                        <Link href={`/APP/Q-Blog/${n.postId}`} rel="noopener">
                           Open
                         </Link>
                       ) : null}
@@ -548,78 +515,52 @@ export default function AssetDetail() {
                   ))}
               </Stack>
             )}
-            {canPublish ? (
-              <Box
-                sx={{
-                  mt: 'auto',
-                  p: 1,
-                  display: 'flex',
-                  alignContent: 'center',
-                  justifyContent: 'space-evenly',
-                }}
-              >
-                <InfoOutlineButton onClick={() => setOpenNewsDlg(true)}>
-                  Add/Edit News
-                </InfoOutlineButton>
-              </Box>
-            ) : null}
-          </CardContent>
-        </Card>
-        {canPublish ? (
-          <Box
-            sx={{
-              mt: 'auto',
-              p: 1,
-              display: 'flex',
-              alignContent: 'center',
-              justifyContent: 'space-evenly',
-            }}
-          >
-            <InfoOutlineButton onClick={() => setOpenExFieldDlg(true)}>
-              Add/Edit Custom Fields
-            </InfoOutlineButton>
-          </Box>
-        ) : null}
-      </Box>
+          </SectionCard>
 
-      {/* Genesis Publication */}
-      <Box mt={4}>
-        <Box display="flex" alignItems="center" justifyContent="center" mb={1}>
-          <Typography variant="h4" textAlign="center">
+          {canPublish && (
+            <Box mt={1} display="flex" justifyContent="center">
+              <InfoOutlineButton onClick={() => setOpenExFieldDlg(true)}>
+                Add/Edit Custom Fields
+              </InfoOutlineButton>
+            </Box>
+          )}
+        </Grid>
+
+        {/* Row: Genesis Publication */}
+        <Grid size={{ xs: 12 }}>
+          <Typography variant="h4" textAlign="center" sx={{ mt: 2 }}>
             Genesis Publication
           </Typography>
-        </Box>
+          {assetPub?.html ? (
+            <Paper elevation={2} sx={{ p: 3, backgroundColor: theme.palette.primary.light }}>
+              <Box
+                sx={{
+                  typography: 'body1',
+                  '& h1, h2, h3, h4, h5, h6': { mt: 2 },
+                  '& p': { mt: 1.5 },
+                }}
+                dangerouslySetInnerHTML={{ __html: assetPub.html }}
+              />
+            </Paper>
+          ) : (
+            <Alert severity="info">No publication found.</Alert>
+          )}
+          {canPublish && (
+            <Box display="flex" alignItems="center" justifyContent="center" gap={2} mb={1} p={2}>
+              <Typography>You are the ISSUER of this asset. Click to edit.</Typography>
+              <EditToggleButton
+                editing={editing}
+                onClick={() => setEditing((s) => !s)}
+                aria-expanded={editing}
+                aria-controls="asset-editor-panel"
+              >
+                {editing ? 'CLOSE EDITOR' : ' EDIT PUBLICATION / PUBLISH CHANGES'}
+              </EditToggleButton>
+            </Box>
+          )}
+        </Grid>
+      </Grid>
 
-        {assetPub?.html ? (
-          <Paper elevation={2} sx={{ p: 3, backgroundColor: theme.palette.primary.light }}>
-            <Box
-              sx={{
-                typography: 'body1',
-                '& h1, h2, h3, h4, h5, h6': { mt: 2 },
-                '& p': { mt: 1.5 },
-              }}
-              dangerouslySetInnerHTML={{ __html: assetPub.html }}
-            />
-          </Paper>
-        ) : (
-          <Alert severity="info">No publication found.</Alert>
-        )}
-        {canPublish ? (
-          <Box display="flex" alignItems="center" justifyContent="center" gap={2} mb={1} p={2}>
-            <Typography>You are the ISSUER of this asset. Click to edit.</Typography>
-            <EditToggleButton
-              editing={editing}
-              onClick={() => setEditing((s) => !s)}
-              aria-expanded={editing}
-              aria-controls="asset-editor-panel"
-            >
-              {editing ? 'CLOSE EDITOR' : ' EDIT PUBLICATION / PUBLISH CHANGES'}
-            </EditToggleButton>
-          </Box>
-        ) : null}
-      </Box>
-
-      {/* All Dialogs for Issuer Editing -------------------------------------------------------------------------------------------*/}
       <Dialog
         open={openPrimaryDlg}
         onClose={() => setOpenPrimaryDlg(false)}
@@ -1040,6 +981,6 @@ export default function AssetDetail() {
           </Box>
         </Paper>
       </Collapse>
-    </Box>
+    </PageContainer>
   );
 }

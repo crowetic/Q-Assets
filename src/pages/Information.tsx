@@ -33,7 +33,7 @@ import {
   isAddressAdminInManagementGroup,
   // type LoadedSection,
   type WikiMenuItem,
-} from '../utils/wikiAccess';
+} from '../utils/access';
 import { useAuth } from 'qapp-core';
 import TiptapEditor from '../components/TipTapEditor';
 // import { themeAtom } from '../state/global/system';
