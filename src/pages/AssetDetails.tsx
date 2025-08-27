@@ -466,6 +466,40 @@ export default function AssetDetail() {
           )}
         </Grid>
 
+        {/* Row: Genesis Publication */}
+        <Grid size={{ xs: 12 }}>
+          <Typography variant="h4" textAlign="center" sx={{ mt: 2 }}>
+            Genesis Publication
+          </Typography>
+          {assetPub?.html ? (
+            <Paper elevation={2} sx={{ p: 3, backgroundColor: theme.palette.primary.light }}>
+              <Box
+                sx={{
+                  typography: 'body1',
+                  '& h1, h2, h3, h4, h5, h6': { mt: 2 },
+                  '& p': { mt: 1.5 },
+                }}
+                dangerouslySetInnerHTML={{ __html: assetPub.html }}
+              />
+            </Paper>
+          ) : (
+            <Alert severity="info">No publication found.</Alert>
+          )}
+          {canPublish && (
+            <Box display="flex" alignItems="center" justifyContent="center" gap={2} mb={1} p={2}>
+              <Typography>You are the ISSUER of this asset. Click to edit.</Typography>
+              <EditToggleButton
+                editing={editing}
+                onClick={() => setEditing((s) => !s)}
+                aria-expanded={editing}
+                aria-controls="asset-editor-panel"
+              >
+                {editing ? 'CLOSE EDITOR' : ' EDIT PUBLICATION / PUBLISH CHANGES'}
+              </EditToggleButton>
+            </Box>
+          )}
+        </Grid>
+
         {/* Row: Comments (full width on mobile, half on lg if you want) */}
         <Grid size={{ xs: 12, lg: 12 }}>
           <div id="comments-section-anchor" />
@@ -477,7 +511,7 @@ export default function AssetDetail() {
           />
         </Grid>
 
-        {/* Row: News (side-by-side with comments on lg) */}
+        {/* NEWS */}
         <Grid size={{ xs: 12 }}>
           <Typography variant="h4" textAlign="center" sx={{ mt: 2 }}>
             News
@@ -533,40 +567,6 @@ export default function AssetDetail() {
               <InfoOutlineButton onClick={() => setOpenExFieldDlg(true)}>
                 Add/Edit Custom Fields
               </InfoOutlineButton>
-            </Box>
-          )}
-        </Grid>
-
-        {/* Row: Genesis Publication */}
-        <Grid size={{ xs: 12 }}>
-          <Typography variant="h4" textAlign="center" sx={{ mt: 2 }}>
-            Genesis Publication
-          </Typography>
-          {assetPub?.html ? (
-            <Paper elevation={2} sx={{ p: 3, backgroundColor: theme.palette.primary.light }}>
-              <Box
-                sx={{
-                  typography: 'body1',
-                  '& h1, h2, h3, h4, h5, h6': { mt: 2 },
-                  '& p': { mt: 1.5 },
-                }}
-                dangerouslySetInnerHTML={{ __html: assetPub.html }}
-              />
-            </Paper>
-          ) : (
-            <Alert severity="info">No publication found.</Alert>
-          )}
-          {canPublish && (
-            <Box display="flex" alignItems="center" justifyContent="center" gap={2} mb={1} p={2}>
-              <Typography>You are the ISSUER of this asset. Click to edit.</Typography>
-              <EditToggleButton
-                editing={editing}
-                onClick={() => setEditing((s) => !s)}
-                aria-expanded={editing}
-                aria-controls="asset-editor-panel"
-              >
-                {editing ? 'CLOSE EDITOR' : ' EDIT PUBLICATION / PUBLISH CHANGES'}
-              </EditToggleButton>
             </Box>
           )}
         </Grid>
