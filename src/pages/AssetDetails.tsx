@@ -3,7 +3,7 @@ import {
   Typography,
   Box,
   Card,
-  CardContent,
+  // CardContent,
   Avatar,
   Paper,
   Link,
@@ -28,7 +28,7 @@ import AddIcon from '@mui/icons-material/Add';
 import { useParams } from 'react-router-dom';
 import { fetchAssetAvatar } from '../utils/fetchAssetAvatar';
 import { fetchAssetPublication } from '../utils/fetchAssetPublication';
-import { Spacer, useAuth } from 'qapp-core';
+import { useAuth } from 'qapp-core';
 import { getPrimaryAccountName } from '../utils/qortalApi';
 import { getAssetIdentifiers } from '../constants/qdnConstants';
 import { fileToBase64 } from '../utils/data';
@@ -47,13 +47,12 @@ import {
   readAssetsIndexSync,
 } from '../bootstrap/assetsBootstrap';
 import { prepareHtmlForPublish } from '../utils/publicationPublisher';
-import ActionsSection from '../components/asset/ActionsToolbar';
 import CommentsSection from '../components/asset/CommentsSection';
 // import PaidUpvotesSection from '../components/asset/PaidUpvoteSection';
 import NewsPublisher from '../components/news/NewsPublisher';
 import PageContainer from '../components/layout/PageContainer';
 import SectionCard from '../components/layout/SectionCard';
-import { useNavigate } from 'react-router-dom';
+// import { useNavigate } from 'react-router-dom';
 import ActionsToolbar from '../components/asset/ActionsToolbar';
 
 type Enriched = {
@@ -104,8 +103,7 @@ export default function AssetDetail() {
   const [divPeriod, setDivPeriod] = useState<'1W' | '2W' | '1M' | '3M' | '6M' | '1Y'>(
     assetPub?.dividendPeriod ?? '1M'
   );
-  const navigate = useNavigate();
-  // const isIssuer = asset && userAddress && asset.owner === userAddress;
+  // const navigate = useNavigate();
   const isIssuer = !!asset && !!userAddress && asset.owner === userAddress;
 
   const canPublish = isIssuer && issuerName && issuerName === (userName as string | undefined);
