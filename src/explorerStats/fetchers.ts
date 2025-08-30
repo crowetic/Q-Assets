@@ -1,7 +1,7 @@
 // src/explorerStats/fetchers.ts
 import { TRADE_FETCH_N } from "./types";
 import { searchSimpleByIdentifierPrefix } from "../utils/searchSimple";
-import { assetCommentsPrefix } from "../constants/qdnConstants";
+// import { assetCommentsPrefix } from "../constants/qdnConstants";
 
 // a) Most recent trade ts (fast)
 export async function fetchLastTradeTs(assetId: number): Promise<number | null> {
@@ -152,8 +152,8 @@ export async function fetchTradesSummary(assetId: number): Promise<{
       .then(r => r.ok ? r.json() : []);
     const lastTs = Array.isArray(recent) && recent.length ? Number(recent[0].timestamp) : null;
 
-    // last N trades full objects (e.g., limit=100)
-    const N = 100;
+    // last N trades full objects (e.g., limit=1000)
+    const N = 1000;
     const trades = await fetch(`/assets/trades/0/${assetId}?limit=${N}&reverse=true`)
       .then(r => r.ok ? r.json() : []);
 
