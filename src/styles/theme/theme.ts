@@ -136,7 +136,7 @@ const lightTheme = createTheme({
     link: {
       main: 'rgb(2, 80, 133)',          // info.main
       hover: 'rgb(28, 93, 146)',        // info.light
-      visited: 'rgb(71, 6, 135)',       // subtle purple for visited
+      visited: 'rgb(31, 31, 31)',       // subtle purple for visited
       underline: 'rgba(2, 80, 133, .5)' // faint underline color
     }
 
@@ -246,10 +246,10 @@ const darkTheme = createTheme({
       contrastText: 'rgba(151, 216, 247, 0.88)',
     },
     success: {
-      main: 'rgba(16, 100, 54, 0.86) ',
+      main: 'rgba(18, 146, 75, 0.86) ',
       dark: 'rgba(8, 53, 26, 0.79)',
-      light: 'rgba(0, 150, 45, 0.78)',
-      contrastText: 'rgba(81, 247, 131, 0.93)',
+      light: 'rgba(28, 192, 77, 0.78)',
+      contrastText: 'rgba(104, 238, 144, 0.93)',
     },
     warning: {
       main: 'rgb(126, 74, 16)',
@@ -270,7 +270,7 @@ const darkTheme = createTheme({
     link: {
       main: 'rgb(120, 196, 231)',        // info.light
       hover: 'rgb(42, 136, 199)',        // info.main (slightly deeper on hover)
-      visited: 'rgb(171, 138, 219)',     // soft violet
+      visited: 'rgb(189, 187, 190)',     // soft violet
       underline: 'rgba(120, 196, 231, .55)'
     }
   },

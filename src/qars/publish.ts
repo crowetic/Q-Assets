@@ -1,10 +1,11 @@
 // src/qars/publish.ts
 import { publishSnapshotToQdn, fetchWeights, fetchCurrentHeight } from './io';
 import { collectMetrics } from './compute';
-import { scoreEpoch } from './weights';
-import type { QarsSnapshot } from '../types/qarsTypes';
+// import { scoreEpoch } from './weights';
+import { buildQarsSnapshot } from './builder';
+// import type { QarsSnapshot } from '../types/qarsTypes';
 import {
-  qarsSnapshotSchema,
+  // qarsSnapshotSchema,
   APP_QARS_CODE_VERSION,
   snapshotHeadId,
   snapshotEpochId,
@@ -66,26 +67,61 @@ export async function computeAndPublishQars(params: {
   // Collect + score
   const { metrics, inputsProof } = await collectMetrics({ assetId, windowBlocks });
   const weights = await fetchWeights(weightsVersion);
-  const s = scoreEpoch(metrics, weights);
+  // const s = scoreEpoch(metrics, weights);
 
-  // Build snapshot (schema and version are strict via Option B typing)
-  const snapshot: QarsSnapshot = {
-    schema: qarsSnapshotSchema(),   // e.g. `qars-snapshot@${QARS_SCHEMA_VERSION}`
+  const nodeInfo = ensureNodeInfo(inputsProof?.nodeInfo, asOfHeight);
+
+  // // Build snapshot (schema and version are strict via Option B typing)
+  // const snapshot: QarsSnapshot = {
+  //   schema: qarsSnapshotSchema(),   // e.g. `qars-snapshot@${QARS_SCHEMA_VERSION}`
+  //   assetId,
+  //   asOfHeight,
+  //   asOfTimeMs,
+  //   windowBlocks,
+  //   weightsVersion,                 // <-- honor the caller / resolved version
+  //   codeVersion: APP_QARS_CODE_VERSION,
+  //   metrics,
+  //   scoreEpoch: s,
+  //   inputsProof,
+  //   publisher: {
+  //     address: publisher.address,
+  //     groupVerified: !!publisher.groupVerified,
+  //     signature: undefined,
+  //   },
+  // };
+
+  function ensureNodeInfo(
+  candidate: { height?: number; network?: string } | undefined,
+  fallbackHeight: number
+): { height: number; network: string } {
+  const height =
+    typeof candidate?.height === 'number' && Number.isFinite(candidate.height)
+      ? candidate.height
+      : fallbackHeight;
+
+  const rawNet = candidate?.network;
+  const network = rawNet && typeof rawNet === 'string' && rawNet.trim()
+    ? rawNet
+    : 'main'; // or await fetchNodeInfo().network if you prefer
+
+  return { height, network };
+}
+
+const snapshot = buildQarsSnapshot(
+  {
     assetId,
     asOfHeight,
     asOfTimeMs,
     windowBlocks,
-    weightsVersion,                 // <-- honor the caller / resolved version
+    weightsVersion,
     codeVersion: APP_QARS_CODE_VERSION,
-    metrics,
-    scoreEpoch: s,
-    inputsProof,
-    publisher: {
-      address: publisher.address,
-      groupVerified: !!publisher.groupVerified,
-      signature: undefined,
-    },
-  };
+    nodeInfo,
+  },
+  metrics as any, // MetricsInput aligns with your QarsMetrics keys
+  { ranges: inputsProof.ranges, sampleRefs: inputsProof.sampleRefs },
+  { address: publisher.address, groupVerified: !!publisher.groupVerified },
+  weights // let builder compute scoreEpoch with the same weights
+);
 
   // Optional signing (over canonical JSON)
   const canonical = canonicalizeJson(snapshot);
