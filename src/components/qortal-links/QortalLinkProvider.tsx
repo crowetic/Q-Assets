@@ -1,16 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  IconButton,
-  Box,
-  Button,
-  Portal,
-  Typography,
-} from '@mui/material';
-import MinimizeIcon from '@mui/icons-material/Minimize';
+import { IconButton, Box, Button } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 
 import { arbitraryToRenderUrl, toAbsoluteHubUrl } from './renderUrl';
@@ -23,9 +13,6 @@ import { useTheme } from '@mui/material';
 import { buildInternal } from './buildInternalPath';
 import { getHubOrigin } from './qortalEnv';
 // import { installQortalBridgeClient, installQortalBridgeHost } from './bridgeHost';
-import { Rnd } from 'react-rnd';
-import OpenInFullIcon from '@mui/icons-material/OpenInFull';
-import CloseFullscreenIcon from '@mui/icons-material/CloseFullscreen';
 import Popup from './Popup';
 
 type Ctx = { openQortalLink: (href: string) => Promise<void> };
