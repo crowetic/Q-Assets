@@ -19,9 +19,45 @@ type Props = {
   sx?: any;
 };
 
+// utils/linkifyQortal.ts
+export function linkifyQortalHtml(html: string): string {
+  if (!html || !html.includes('qortal://')) return html;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
+
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  const re = /(qortal:\/\/[^\s<>"']+)/gi; // only qortal://
+
+  const ops: Array<{ node: Text; frag: DocumentFragment }> = [];
+  for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
+    const text = n.nodeValue || '';
+    if (!re.test(text)) continue;
+    re.lastIndex = 0;
+
+    const frag = doc.createDocumentFragment();
+    let last = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) {
+      if (m.index > last) frag.append(text.slice(last, m.index));
+      const a = doc.createElement('a');
+      a.href = m[0];
+      a.rel = 'noopener';
+      a.target = '_self';
+      a.textContent = m[0];
+      frag.append(a);
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) frag.append(text.slice(last));
+    ops.push({ node: n, frag });
+  }
+  for (const { node, frag } of ops) node.parentNode?.replaceChild(frag, node);
+
+  return (doc.body.firstElementChild as HTMLElement)?.innerHTML ?? html;
+}
+
 export default function PublishedHtmlRenderer({
   html,
-  scopeClassName = 'qdn-content',
+  scopeClassName = 'qdn-content qdn-html',
   useCssVars,
   extraCss,
   sx,
@@ -51,6 +87,8 @@ export default function PublishedHtmlRenderer({
     return `${scoped}${extraCss ? `\n${extraCss}` : ''}`;
   }, [alreadyHasThemedStyle, shouldUseCssVars, theme, scopeClassName, extraCss]);
 
+  const htmlinked = linkifyQortalHtml(html);
+
   return (
     <>
       {!alreadyHasThemedStyle && mappingCss && <style data-themed-colors>{mappingCss}</style>}
@@ -64,7 +102,7 @@ export default function PublishedHtmlRenderer({
           '& img': { maxWidth: '100%', height: 'auto', display: 'block', my: 2 },
           ...sx,
         }}
-        dangerouslySetInnerHTML={{ __html: html }}
+        dangerouslySetInnerHTML={{ __html: htmlinked }}
       />
     </>
   );

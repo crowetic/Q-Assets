@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { useEditor, EditorContent } from '@tiptap/react';
+import { useEffect, useRef } from 'react';
+import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { TextStyle } from '@tiptap/extension-text-style';
 import Color from '@tiptap/extension-color';
@@ -7,61 +7,110 @@ import TextAlign from '@tiptap/extension-text-align';
 import Image from '@tiptap/extension-image';
 import { TipTapToolbar } from './TipTapToolbar';
 import { ThemedColor } from '../tiptap/marks/ThemedColor';
-import {
-  THEME_COLOR_TOKENS,
-  // themedColorCSS,
-  themedColorCSSFromTheme,
-} from '../tiptap/themeColorTokens';
+import { THEME_COLOR_TOKENS, themedColorCSSFromTheme } from '../tiptap/themeColorTokens';
 import { Box, useTheme } from '@mui/material';
+// import QortalLink from '../tiptap/extensions/QortalLink';
+import { QortalAutoLink } from '../tiptap/extensions/QortalAutoLink';
+import { Link } from '@tiptap/extension-link';
 
 interface TiptapEditorProps {
-  value: string;
-  onChange: (html: string) => void;
+  value: string; // initial content only
+  onChange: (html: string) => void; // fires on blur or manual commit
+  onReady?: (api: {
+    editor: Editor;
+    getHTML: () => string;
+    setHTML: (h: string) => void;
+    commit: () => void;
+  }) => void;
 }
 
-export default function TiptapEditor({ value, onChange }: TiptapEditorProps) {
+const QORTAL_RE = /^qortal:\/\/\S+$/i;
+
+const QortalLink = Link.configure({
+  openOnClick: false,
+  autolink: false,
+  linkOnPaste: false,
+  HTMLAttributes: {
+    target: '_self',
+    rel: 'noopener',
+  },
+  protocols: ['http', 'https', 'mailto', 'tel', { scheme: 'qortal', optionalSlashes: false }],
+  validate: (href) => QORTAL_RE.test(href) || /^(https?|mailto|tel):/i.test(href),
+});
+
+export default function TiptapEditor({ value, onChange, onReady }: TiptapEditorProps) {
   const theme = useTheme();
+  const didSetInitial = useRef(false);
 
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
         heading: { levels: [1, 2, 3, 4, 5, 6] },
+        link: false,
       }),
       TextStyle,
-      Color, // keep for “Custom…” hex colors
-      ThemedColor, // our semantic token mark
+      Color,
+      ThemedColor,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Image.configure({ allowBase64: true, HTMLAttributes: { class: 'tiptap-image' } }),
+      QortalLink,
+      QortalAutoLink,
     ],
-    content: value,
-    onUpdate: ({ editor }) => onChange(editor.getHTML()),
+    // no onUpdate -> no per-keystroke state updates
   });
+  const linkExt = editor?.extensionManager.extensions.find((e) => e.name === 'link');
+  console.log('link ext options:', linkExt?.options);
+  console.log('schema link attrs:', editor?.schema.marks.link?.spec.attrs);
 
-  // Inject CSS mapping once (or on theme change if you use the fallback)
+  // Inject theme color CSS once (or when theme changes)
   useEffect(() => {
     const style = document.createElement('style');
-    style.setAttribute('data-tiptap-themed-colors', ''); // marker for cleanup
-    // If you use CssVarsProvider, prefer this:
-    // style.textContent = themedColorCSS(THEME_COLOR_TOKENS);
-    // Otherwise, fallback:
+    style.setAttribute('data-tiptap-themed-colors', '');
     style.textContent = themedColorCSSFromTheme(THEME_COLOR_TOKENS, theme.palette);
     document.head.appendChild(style);
     return () => {
       style.remove();
     };
-  }, [theme.palette]); // keep if using fallback; safe either way
+  }, [theme.palette]);
 
+  // Set initial content once
   useEffect(() => {
-    if (editor && value !== editor.getHTML()) {
-      editor.commands.setContent(value);
-    }
-  }, [value, editor]);
+    if (!editor) return;
+    if (didSetInitial.current) return;
+    editor.commands.setContent(value ?? '', { emitUpdate: false });
+    didSetInitial.current = true;
+  }, [editor, value]);
+
+  // Commit on blur
+  useEffect(() => {
+    if (!editor) return;
+    const handleBlur = () => onChange(editor.getHTML());
+    editor.on('blur', handleBlur);
+    return () => {
+      editor.off('blur', handleBlur);
+    }; // <-- fixed
+  }, [editor, onChange]);
+
+  // Expose API for manual commit on Publish
+  useEffect(() => {
+    if (!editor || !onReady) return;
+    onReady({
+      editor,
+      getHTML: () => editor.getHTML(),
+      setHTML: () => {
+        editor.commands.setContent(value ?? '', { emitUpdate: false });
+      },
+      commit: () => {
+        onChange(editor.getHTML());
+      },
+    });
+  }, [editor, onReady, onChange]);
 
   if (!editor) return null;
 
   return (
     <Box
-      className="tiptap" // IMPORTANT: scope for CSS mapping
+      className="tiptap"
       sx={{
         '& ul': { pl: '1.5rem', listStyleType: 'disc', my: 1.5 },
         '& ol': { pl: '1.5rem', listStyleType: 'decimal', my: 1.5 },

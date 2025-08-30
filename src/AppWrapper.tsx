@@ -1,7 +1,6 @@
 import { GlobalProvider } from 'qapp-core';
 import Layout from './styles/Layout';
 import { publicSalt } from './qapp-config';
-// import React, { useEffect } from 'react';
 import { TxTrackerProvider } from './unconfirmedTxTracker/TxTrackerProvider';
 import { UnconfirmedTxWidget } from './unconfirmedTxTracker/UnconfirmedTxWidget';
 import { UnconfirmedTxAutoScanner } from './unconfirmedTxTracker/UnconfirmedTxAutoScanner';

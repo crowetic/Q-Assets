@@ -17,6 +17,7 @@ export const ThemedColor = Mark.create({
   spanning: true,
   inclusive: true, // behaves like the Color mark
   priority: 1001, // higher than TextStyle/Color so our data-attr survives normalizations
+  excludes: '',
 
   addAttributes() {
     return {

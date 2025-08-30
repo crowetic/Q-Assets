@@ -1,8 +1,8 @@
-import { createTheme } from '@mui/material/styles';
+import { createTheme, alpha } from '@mui/material/styles';
 
 const commonThemeOptions = {
   typography: {
-    FontFamily: ['Orbitron', 'Inter', 'NataSans', 'Exo2'].join(','),
+    fontFamily: ['Orbitron', 'Inter', 'NataSans', 'Exo2'].join(','),
     h1: {
       fontSize: '2.5rem',
       fontWeight: 650,
@@ -80,6 +80,7 @@ const commonThemeOptions = {
       },
     },
   },
+  
 };
 
 const lightTheme = createTheme({
@@ -131,10 +132,87 @@ const lightTheme = createTheme({
     },
     action: {
       hover: 'rgba(81, 132, 148, 0.72)' // your choice of light hover
+    },
+    link: {
+      main: 'rgb(2, 80, 133)',          // info.main
+      hover: 'rgb(28, 93, 146)',        // info.light
+      visited: 'rgb(71, 6, 135)',       // subtle purple for visited
+      underline: 'rgba(2, 80, 133, .5)' // faint underline color
     }
 
   },
+
+  components: {
+    
+
+    // Global link defaults (applies to <a>, ProseMirror, your QDN HTML boxes)
+    MuiCssBaseline: {
+      styleOverrides: (theme) => ({
+        /* global anchors */
+        'a': {
+          color: theme.palette.link.main,
+          textDecorationColor: theme.palette.link.underline ?? theme.palette.link.main,
+          textUnderlineOffset: '2px',
+        },
+        'a:hover': {
+          color: theme.palette.link.hover,
+          textDecoration: 'underline',
+        },
+        'a:visited': {
+          color: theme.palette.link.visited,
+        },
+        'a:focus-visible': {
+          outline: `2px solid ${alpha(theme.palette.link.main, 0.35)}`,
+          outlineOffset: '2px',
+          borderRadius: '2px',
+        },
+
+        /* TipTap content (ProseMirror) */
+        '.ProseMirror a': {
+          color: theme.palette.link.main,
+          textDecorationColor: theme.palette.link.underline ?? theme.palette.link.main,
+        },
+
+        /* Your QDN HTML containers (add className="qdn-html" to the Box) */
+        '.qdn-html a': {
+          color: theme.palette.link.main,
+          textDecorationColor: theme.palette.link.underline ?? theme.palette.link.main,
+        },
+      })
+    },
+
+    // Optional: default MUI <Link> to inherit typography and underline-on-hover
+    MuiLink: {
+      defaultProps: { underline: 'hover', color: 'inherit' },
+      styleOverrides: {
+        root: ({ theme }) => ({
+          color: theme.palette.link.main,
+          '&:hover': { color: theme.palette.link.hover },
+          '&:visited': { color: theme.palette.link.visited },
+        }),
+      },
+    },
+
+    // Optional: let <Typography> render links nicely inside it
+    MuiTypography: {
+      styleOverrides: {
+        root: ({ theme }) => ({
+          '& a': {
+            color: theme.palette.link.main,
+            textDecorationColor: theme.palette.link.underline ?? theme.palette.link.main,
+          },
+          '& a:hover': {
+            color: theme.palette.link.hover,
+          },
+          '& a:visited': {
+            color: theme.palette.link.visited,
+          },
+        }),
+      },
+    },
+  },
 });
+
 
 const darkTheme = createTheme({
   ...commonThemeOptions,
@@ -144,18 +222,18 @@ const darkTheme = createTheme({
       main: 'rgba(65, 112, 173, 0.93)',
       dark: 'rgb(15, 24, 36)',
       // light: 'rgb(44, 104, 150)',
-      light: 'rgb(59, 62, 65)',
+      light: 'rgb(53, 54, 56)',
       contrastText: 'rgba(149, 191, 223, 0.81)'
     },
     secondary: {
-      main: 'rgb(55, 73, 97)',
+      main: 'rgb(52, 75, 104)',
       // dark: 'rgba(17, 20, 54, 0.9)',
       dark: 'rgba(16, 23, 53, 0.94)',
       light: 'rgb(96, 165, 211)',
     },
     background: {
       default: 'rgb(11, 14, 19)',
-      paper: 'rgba(10, 18, 26, 0.94)',
+      paper: 'rgba(22, 32, 43, 0.94)',
     },
     text: {
       primary: 'rgb(255, 255, 255)',
@@ -188,10 +266,73 @@ const darkTheme = createTheme({
     action: {
       hover: 'rgba(69, 79, 105, 0.61)', 
       
+    },
+    link: {
+      main: 'rgb(120, 196, 231)',        // info.light
+      hover: 'rgb(42, 136, 199)',        // info.main (slightly deeper on hover)
+      visited: 'rgb(171, 138, 219)',     // soft violet
+      underline: 'rgba(120, 196, 231, .55)'
     }
   },
   
+  components: {
+    MuiDialog: { styleOverrides: { paper: { backgroundImage: 'none' } } },
+    MuiPopover: { styleOverrides: { paper: { backgroundImage: 'none' } } },
+    MuiCssBaseline: {
+      styleOverrides: (theme) => ({
+        'a': {
+          color: theme.palette.link.main,
+          textDecorationColor: theme.palette.link.underline ?? theme.palette.link.main,
+          textUnderlineOffset: '2px',
+        },
+        'a:hover': {
+          color: theme.palette.link.hover,
+          textDecoration: 'underline',
+        },
+        'a:visited': {
+          color: theme.palette.link.visited,
+        },
+        'a:focus-visible': {
+          outline: `2px solid ${alpha(theme.palette.link.main, 0.45)}`,
+          outlineOffset: '2px',
+          borderRadius: '2px',
+        },
+        '.ProseMirror a, .qdn-html a': {
+          color: theme.palette.link.main,
+          textDecorationColor: theme.palette.link.underline ?? theme.palette.link.main,
+        },
+      })
+    },
+    MuiLink: {
+      defaultProps: { underline: 'hover', color: 'inherit' },
+      styleOverrides: {
+        root: ({ theme }) => ({
+          color: theme.palette.link.main,
+          '&:hover': { color: theme.palette.link.hover },
+          '&:visited': { color: theme.palette.link.visited },
+        }),
+      },
+    },
+    MuiTypography: {
+      styleOverrides: {
+        root: ({ theme }) => ({
+          '& a': {
+            color: theme.palette.link.main,
+            textDecorationColor: theme.palette.link.underline ?? theme.palette.link.main,
+          },
+          '& a:hover': {
+            color: theme.palette.link.hover,
+          },
+          '& a:visited': {
+            color: theme.palette.link.visited,
+          },
+        }),
+      },
+    },
+  },
 });
+
+
 
 
 export { lightTheme, darkTheme };

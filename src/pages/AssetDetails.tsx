@@ -54,6 +54,8 @@ import PageContainer from '../components/layout/PageContainer';
 import SectionCard from '../components/layout/SectionCard';
 // import { useNavigate } from 'react-router-dom';
 import ActionsToolbar from '../components/asset/ActionsToolbar';
+import PublishedHtmlRenderer from '../components/PublishedHtmlRenderer';
+import { useAlert } from '../components/alerts';
 
 type Enriched = {
   assetId: number;
@@ -105,13 +107,14 @@ export default function AssetDetail() {
   );
   // const navigate = useNavigate();
   const isIssuer = !!asset && !!userAddress && asset.owner === userAddress;
+  const { alert } = useAlert();
 
   const canPublish = isIssuer && issuerName && issuerName === (userName as string | undefined);
   const id = useMemo(() => Number(assetId), [assetId]);
 
   useEffect(() => {
     if (editing) setHtml(assetPub?.html ?? '');
-  }, [editing]);
+  }, [isIssuer, editing]);
 
   useEffect(() => {
     if (!editing) setHtml(assetPub?.html ?? '');
@@ -472,14 +475,25 @@ export default function AssetDetail() {
             Genesis Publication
           </Typography>
           {assetPub?.html ? (
+            // <Paper elevation={2} sx={{ p: 3, backgroundColor: theme.palette.primary.light }}>
+            //   <Box
+            //     sx={{
+            //       typography: 'body1',
+            //       '& h1, h2, h3, h4, h5, h6': { mt: 2 },
+            //       '& p': { mt: 1.5 },
+            //     }}
+            //     dangerouslySetInnerHTML={{ __html: PublishedHtmlRenderer(assetPub.html) }}
+            //   />
+            // </Paper>
             <Paper elevation={2} sx={{ p: 3, backgroundColor: theme.palette.primary.light }}>
-              <Box
+              <PublishedHtmlRenderer
+                html={assetPub.html}
+                scopeClassName="qdn-content"
                 sx={{
                   typography: 'body1',
                   '& h1, h2, h3, h4, h5, h6': { mt: 2 },
                   '& p': { mt: 1.5 },
                 }}
-                dangerouslySetInnerHTML={{ __html: assetPub.html }}
               />
             </Paper>
           ) : (

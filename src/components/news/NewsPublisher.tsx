@@ -15,6 +15,7 @@ import { prepareHtmlForPublish } from '../../utils/publicationPublisher';
 import { assetNewsItemId } from '../../constants/qdnConstants';
 import { isNameAdminOfGroupId } from '../../utils/access';
 import { uniqueId6 } from '../../utils/ids';
+import { useAlert } from '../alerts';
 
 export default function NewsPublisher({
   assetId,
@@ -38,6 +39,8 @@ export default function NewsPublisher({
     if (!primaryGroupId) return false;
     return isNameAdminOfGroupId(userName as string, primaryGroupId);
   };
+
+  const { alert } = useAlert();
 
   return (
     <>

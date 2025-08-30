@@ -49,6 +49,7 @@ import {
 } from '../utils/chartData';
 import SmartPriceChart from '../components/trade/SmartPriceChart';
 import ActionsToolbar from '../components/asset/ActionsToolbar';
+import { useAlert } from '../components/alerts';
 
 export default function TradePair() {
   const { assetId } = useParams<{ assetId: string }>();
@@ -80,6 +81,8 @@ export default function TradePair() {
 
   const { address: authAddress, publicKey: authPublicKey } = useAuth() as any;
   const c = colorFromAssetId(id);
+
+  const { alert } = useAlert();
 
   const candles = useMemo(() => {
     const lookbackMs = rangeHours * 60 * 60 * 1000;

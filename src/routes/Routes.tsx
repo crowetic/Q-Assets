@@ -10,6 +10,10 @@ import TradePair from '../pages/TradePair';
 import Information from '../pages/Information';
 import { PortfolioProvider } from '../portfolio/PortfolioProvider';
 
+import { QortalLinkProvider } from '../components/qortal-links/QortalLinkProvider';
+import { QortalLinkHandler } from '../components/qortal-links/QortalLinkHandler';
+import { AlertProvider } from '../components/alerts';
+
 function PortfolioProviderLayout() {
   return (
     <PortfolioProvider>
@@ -17,17 +21,40 @@ function PortfolioProviderLayout() {
     </PortfolioProvider>
   );
 }
-
-interface CustomWindow extends Window {
-  _qdnBase: string;
+declare global {
+  interface CustomWindow extends Window {
+    _qdnContext?: 'render' | 'preview' | string;
+    _qdnBase: string; // e.g. "/render/APP/Q-Assets"
+    _qdnPath?: string; // e.g. "/info#ann2"
+  }
 }
-const baseURL = (window as CustomWindow)._qdnBase;
+
+// const baseURL = (window as CustomWindow)._qdnBase;
+
+function getBasename(): string {
+  let base = (window as CustomWindow)._qdnBase || '';
+  // Normalize: ensure no trailing slash (RR is fine either way, but consistency helps).
+  if (base.endsWith('/') && base !== '/') base = base.slice(0, -1);
+  return base;
+}
 
 export function Routes() {
   const routes: RouteObject[] = [
     {
       path: '/',
-      element: <AppWrapper />,
+      element: (
+        <>
+          {/* <QdnRuntimeGuard />
+          <QdnPathGuard /> */}
+          <AlertProvider>
+            <QortalLinkProvider>
+              <QortalLinkHandler>
+                <AppWrapper />
+              </QortalLinkHandler>
+            </QortalLinkProvider>
+          </AlertProvider>
+        </>
+      ),
       children: [
         { index: true, element: <Home /> },
         { path: 'assets', element: <AssetExplorer /> },
@@ -44,7 +71,7 @@ export function Routes() {
     },
   ];
 
-  const router = createBrowserRouter(routes, { basename: baseURL });
+  const router = createBrowserRouter(routes, { basename: getBasename() });
 
   return <RouterProvider router={router} />;
 }
