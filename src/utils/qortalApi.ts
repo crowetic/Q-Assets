@@ -246,4 +246,115 @@ export async function issueAsset(
 }
 
 
+// --- core: create unsigned UPDATE_ASSET ---
+
+/**
+ * Build an unsigned UPDATE_ASSET transaction for /assets/update.
+ *
+ * You can update any subset of:
+ *  - newOwner (Qortal name or address)
+ *  - newDescription (string)
+ *  - newData (string or object -> stringified)
+ *
+ * @param ownerAddress     current owner's address (your account address)
+ * @param ownerPublicKey   current owner's public key
+ * @param assetId          asset to update
+ * @param changes          fields to change (any subset)
+ * @param opts             fee/txGroupId overrides
+ * @returns base58-encoded unsigned transaction
+ */
+export async function createUpdateAssetTransaction(
+  ownerAddress: string,
+  ownerPublicKey: string,
+  assetId: number,
+  changes: {
+    newOwner?: string;            // Qortal name or address
+    newDescription?: string;
+    newData?: string | object;    // if object, will be JSON.stringified
+  },
+  opts?: {
+    fee?: number;                 // default 0.01
+    txGroupId?: number;           // default 0
+  }
+): Promise<string> {
+  if (!changes || (!changes.newOwner && !changes.newDescription && typeof changes.newData === 'undefined')) {
+    throw new Error('Nothing to update: provide at least one of newOwner, newDescription, or newData');
+  }
+
+  const account = await getAccount(ownerAddress);
+
+  // Normalize optional fields
+  const txBody: any = {
+    timestamp: Date.now(),
+    reference: account.reference,
+    fee: opts?.fee ?? 0.01,
+    txGroupId: opts?.txGroupId ?? 0,
+    assetId,
+    ownerPublicKey
+  };
+
+  if (typeof changes.newOwner === 'string' && changes.newOwner.trim().length > 0) {
+    // Accept Qortal name or address
+    txBody.newOwner = await resolveRecipientToAddress(changes.newOwner.trim());
+  }
+
+  if (typeof changes.newDescription === 'string') {
+    txBody.newDescription = changes.newDescription;
+  }
+
+  if (typeof changes.newData !== 'undefined') {
+    txBody.newData = typeof changes.newData === 'string'
+      ? changes.newData
+      : JSON.stringify(changes.newData);
+  }
+
+  const res = await fetch('/assets/update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(txBody),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Update asset failed: ${res.status} ${res.statusText} ${text}`);
+  }
+
+  const unsigned = await res.text();
+
+  // Qortal type guard (mirrors your other helpers)
+  if (!await isValidQortalTx(unsigned, 'UPDATE_ASSET')) {
+    throw new Error(`Response from /assets/update doesn't look like UPDATE_ASSET; got: ${unsigned.slice(0, 16)}…`);
+  }
+
+  return unsigned;
+}
+
+// --- convenience: build → sign → broadcast ---
+
+/**
+ * High-level convenience API to update an asset and broadcast it.
+ */
+export async function updateAsset(
+  ownerAddress: string,
+  ownerPublicKey: string,
+  assetId: number,
+  changes: {
+    newOwner?: string;            // Qortal name or address
+    newDescription?: string;
+    newData?: string | object;
+  },
+  opts?: { fee?: number; txGroupId?: number }
+): Promise<object> {
+  const unsigned = await createUpdateAssetTransaction(
+    ownerAddress,
+    ownerPublicKey,
+    assetId,
+    changes,
+    opts
+  );
+
+  return await signAndBroadcast(unsigned);
+}
+
+
 

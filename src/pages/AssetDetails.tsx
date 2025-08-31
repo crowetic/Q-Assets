@@ -56,6 +56,8 @@ import SectionCard from '../components/layout/SectionCard';
 import ActionsToolbar from '../components/asset/ActionsToolbar';
 import PublishedHtmlRenderer from '../components/PublishedHtmlRenderer';
 import { useAlert } from '../components/alerts';
+import { updateAsset, getAccount } from '../utils/qortalApi';
+import { getAssetInfo } from '../utils/qortalAssetRequests';
 
 type Enriched = {
   assetId: number;
@@ -105,6 +107,13 @@ export default function AssetDetail() {
   const [divPeriod, setDivPeriod] = useState<'1W' | '2W' | '1M' | '3M' | '6M' | '1Y'>(
     assetPub?.dividendPeriod ?? '1M'
   );
+
+  //asset desctiption / on-chain / update state
+  const [openDescDlg, setOpenDescDlg] = useState(false);
+  const [descForm, setDescForm] = useState<string>('');
+  const [descErr, setDescErr] = useState<string>('');
+  const savingDescRef = useRef(false);
+
   // const navigate = useNavigate();
   const isIssuer = !!asset && !!userAddress && asset.owner === userAddress;
   const { alert } = useAlert();
@@ -141,6 +150,8 @@ export default function AssetDetail() {
         }
 
         if (!mini) return; // not found
+
+        setDescForm(mini?.description ?? '');
 
         // issuer name
         let iname = '';
@@ -321,9 +332,12 @@ export default function AssetDetail() {
               </Box>
 
               {canPublish && (
-                <Box mt={1}>
+                <Box mt={1} display="flex" justifyContent="center" gap={1} flexWrap="wrap">
                   <InfoOutlineButton onClick={() => setOpenDivDlg(true)}>
                     Edit Dividends
+                  </InfoOutlineButton>
+                  <InfoOutlineButton onClick={() => setOpenDescDlg(true)}>
+                    Edit Description (on-chain)
                   </InfoOutlineButton>
                 </Box>
               )}
@@ -928,6 +942,86 @@ export default function AssetDetail() {
             }}
           >
             Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={openDescDlg}
+        onClose={() => {
+          setOpenDescDlg(false);
+          setDescErr('');
+        }}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Edit Asset Description</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={1}>
+            <Typography variant="body2" color="text.secondary">
+              This updates the asset’s on-chain <code>description</code> using{' '}
+              <code>/assets/update</code>.
+            </Typography>
+
+            <TextField
+              label="Description"
+              value={descForm}
+              onChange={(e) => {
+                setDescForm(e.target.value);
+                setDescErr('');
+              }}
+              multiline
+              minRows={4}
+              inputProps={{ maxLength: 2000 }} // adjust if chain has a smaller/greater limit
+              error={!!descErr}
+              helperText={descErr || `${(descForm ?? '').length}/2000`}
+            />
+          </Stack>
+        </DialogContent>
+
+        <DialogActions>
+          <Button onClick={() => setOpenDescDlg(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            disabled={
+              savingDescRef.current || !asset || (asset.description ?? '') === (descForm ?? '')
+            }
+            onClick={async () => {
+              try {
+                if (!asset) return;
+                const newDescription = (descForm ?? '').trim();
+                if (!newDescription) {
+                  setDescErr('Description cannot be empty.');
+                  return;
+                }
+
+                savingDescRef.current = true;
+
+                // Need the owner public key for signing
+                const acct = await getAccount(asset.owner);
+                const ownerPubKey = acct?.publicKey;
+                if (!ownerPubKey) throw new Error('Owner public key unavailable');
+
+                await updateAsset(
+                  asset.owner,
+                  ownerPubKey,
+                  asset.assetId,
+                  { newDescription },
+                  { fee: 0.01, txGroupId: 0 }
+                );
+
+                // Local UI reflect
+                setAsset((prev) => (prev ? { ...prev, description: newDescription } : prev));
+                alert('Description updated on-chain.');
+                setOpenDescDlg(false);
+              } catch (e: any) {
+                setDescErr(`Update failed: ${e?.message || e || 'unknown error'}`);
+              } finally {
+                savingDescRef.current = false;
+              }
+            }}
+          >
+            Publish
           </Button>
         </DialogActions>
       </Dialog>
