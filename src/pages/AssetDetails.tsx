@@ -57,7 +57,7 @@ import ActionsToolbar from '../components/asset/ActionsToolbar';
 import PublishedHtmlRenderer from '../components/PublishedHtmlRenderer';
 import { useAlert } from '../components/alerts';
 import { updateAsset, getAccount } from '../utils/qortalApi';
-import { getAssetInfo } from '../utils/qortalAssetRequests';
+// import { getAssetInfo } from '../utils/qortalAssetRequests';
 
 type Enriched = {
   assetId: number;
