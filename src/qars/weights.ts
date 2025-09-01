@@ -1,6 +1,7 @@
 // src/qars/weights.ts
 import type { QarsMetrics, QarsWeightsV1 } from '../types/qarsTypes';
 
+
 // Penalties: linear weights *subtract* from score
 const PENALTY_KEYS: (keyof QarsMetrics)[] = ['selfDealPenalty', 'sybilPenalty'];
 

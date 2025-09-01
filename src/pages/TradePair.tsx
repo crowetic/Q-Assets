@@ -50,6 +50,7 @@ import {
 import SmartPriceChart from '../components/trade/SmartPriceChart';
 import ActionsToolbar from '../components/asset/ActionsToolbar';
 import { useAlert } from '../components/alerts';
+import { useTheme, useMediaQuery } from '@mui/material';
 
 export default function TradePair() {
   const { assetId } = useParams<{ assetId: string }>();
@@ -81,6 +82,8 @@ export default function TradePair() {
 
   const { address: authAddress, publicKey: authPublicKey } = useAuth() as any;
   const c = colorFromAssetId(id);
+  const theme = useTheme();
+  const isXs = useMediaQuery(theme.breakpoints.down('sm'));
 
   const { alert } = useAlert();
 
@@ -600,7 +603,16 @@ export default function TradePair() {
   }, [side, needQort, needAsset, balQort, balAsset, authAddress]);
 
   return (
-    <Box sx={{ p: { xs: 2, md: 3 }, display: 'grid', gap: 2 }}>
+    <Box
+      sx={{
+        p: { xs: 2, md: 3 },
+        display: 'grid',
+        gap: 2,
+        width: '100%',
+        maxWidth: '100%',
+        overflowX: 'hidden',
+      }}
+    >
       <Box
         display="flex"
         alignItems="baseline"
@@ -621,6 +633,7 @@ export default function TradePair() {
           value={rangeHours}
           exclusive
           onChange={(_, v) => v && setRangeHours(v)}
+          sx={{ flexWrap: 'wrap', rowGap: 0.5 }}
         >
           <ToggleButton value={1}>1h</ToggleButton>
           <ToggleButton value={24}>24h</ToggleButton>
@@ -632,6 +645,7 @@ export default function TradePair() {
           value={bucketMinutes}
           exclusive
           onChange={(_, v) => v && setBucketMinutes(v)}
+          sx={{ flexWrap: 'wrap', rowGap: 0.5 }}
         >
           <ToggleButton value={1}>1m</ToggleButton>
           <ToggleButton value={5}>5m</ToggleButton>
@@ -639,7 +653,7 @@ export default function TradePair() {
           <ToggleButton value={60}>1h</ToggleButton>
         </ToggleButtonGroup>
       </Box>
-      <Paper sx={{ p: 2, display: 'grid', gap: 2 }}>
+      <Paper sx={{ p: 2, display: 'grid', gap: 2, maxWidth: '100%', overflow: 'hidden' }}>
         {loading ? (
           <Box display="flex" justifyContent="center" py={6}>
             <CircularProgress />
@@ -674,6 +688,7 @@ export default function TradePair() {
           display: 'grid',
           gridTemplateColumns: { xs: '1fr', md: '1.2fr 1fr' },
           gap: 2,
+          '& > *': { minWidth: 0 },
         }}
       >
         {/* Left: Order book + Recent trades */}
@@ -684,9 +699,23 @@ export default function TradePair() {
             </Typography>
             <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
               <Box>
-                <Typography variant="caption" color="text.secondary">
-                  Bids (QORT)
-                </Typography>
+                <Box
+                  sx={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(0,1fr) auto',
+                    columnGap: 1,
+                    alignItems: 'baseline',
+                    px: 1,
+                    mb: 0.5,
+                  }}
+                >
+                  <Typography variant="caption" color="text.secondary">
+                    Price
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ justifySelf: 'end' }}>
+                    Qty
+                  </Typography>
+                </Box>
                 <Box sx={{ mt: 0.5, display: 'grid', gap: 0.25 }}>
                   {bids.map((b, i) => {
                     const creator = getOrderCreator(b);
@@ -695,7 +724,13 @@ export default function TradePair() {
                       <Box
                         key={i}
                         sx={{
-                          display: 'flex',
+                          display: 'grid',
+                          gridTemplateColumns: 'minmax(0,1fr) auto',
+                          alignItems: 'center',
+                          columnGap: '1',
+                          fontValueNumeric: 'tabular-nums',
+                          fontSize: { xs: 12, sm: 14 },
+                          minWidth: 0,
                           justifyContent: 'space-between',
                           bgcolor: 'success.main',
                           color: 'success.contrastText',
@@ -734,9 +769,37 @@ export default function TradePair() {
                           setSweptAvgPrice(parseFloat(atomicsToDecimalString(avgAtoms, DP))); // blended avg price
                         }}
                       >
-                        <span>{formatPrice(b.priceQortPerAsset)}</span>
-                        {byIssuer && <IssuerTag />}
-                        <span>{formatQty(b.qtyAsset, divisible)}</span>
+                        <span
+                          style={{
+                            overflow: 'hidden',
+                            textOverflow: 'elipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {formatPrice(b.priceQortPerAsset)}
+                        </span>
+                        <Box
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 0.5,
+                            justifySelf: 'end',
+                          }}
+                        >
+                          {byIssuer && <IssuerTag />}
+                          <span
+                            style={
+                              {
+                                // display: 'flex',
+                                // alignItems: 'center',
+                                // gap: '0.5',
+                                // justifySelf: 'end',
+                              }
+                            }
+                          >
+                            {formatQty(b.qtyAsset, divisible)}
+                          </span>
+                        </Box>
                       </Box>
                     );
                   })}
@@ -748,10 +811,28 @@ export default function TradePair() {
                   )}
                 </Box>
               </Box>
-              <Box>
-                <Typography variant="caption" color="text.secondary">
-                  Asks (QORT)
-                </Typography>
+              <Box
+                sx={{
+                  justifyContent: 'space-between',
+                }}
+              >
+                <Box
+                  sx={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(0,1fr) auto',
+                    columnGap: 1,
+                    alignItems: 'baseline',
+                    px: 1,
+                    mb: 0.5,
+                  }}
+                >
+                  <Typography variant="caption" color="text.secondary">
+                    Price
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ justifySelf: 'end' }}>
+                    Qty
+                  </Typography>
+                </Box>
                 <Box sx={{ mt: 0.5, display: 'grid', gap: 0.25 }}>
                   {asks.map((a, i) => {
                     const creator = getOrderCreator(a);
@@ -760,7 +841,13 @@ export default function TradePair() {
                       <Box
                         key={i}
                         sx={{
-                          display: 'flex',
+                          display: 'grid',
+                          gridTemplateColumns: 'minmax(0,1fr) auto',
+                          alignItems: 'center',
+                          columnGap: '1',
+                          fontValueNumeric: 'tabular-nums',
+                          fontSize: { xs: 12, sm: 14 },
+                          minWidth: 0,
                           justifyContent: 'space-between',
                           bgcolor: 'error.main',
                           color: 'error.contrastText',
@@ -799,9 +886,37 @@ export default function TradePair() {
                           setSweptAvgPrice(parseFloat(atomicsToDecimalString(avgAtoms, DP)));
                         }}
                       >
-                        <span>{formatPrice(a.priceQortPerAsset)}</span>
-                        {byIssuer && <IssuerTag />}
-                        <span>{formatQty(a.qtyAsset, divisible)}</span>
+                        <span
+                          style={{
+                            overflow: 'hidden',
+                            textOverflow: 'elipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {formatPrice(a.priceQortPerAsset)}
+                        </span>
+                        <Box
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 0.5,
+                            justifySelf: 'end',
+                          }}
+                        >
+                          {byIssuer && <IssuerTag />}
+                          <span
+                            style={
+                              {
+                                // display: 'flex',
+                                // alignItems: 'center',
+                                // gap: '0.5',
+                                // justifySelf: 'end',
+                              }
+                            }
+                          >
+                            {formatQty(a.qtyAsset, divisible)}
+                          </span>
+                        </Box>
                       </Box>
                     );
                   })}
@@ -832,41 +947,113 @@ export default function TradePair() {
             </Box>
 
             <Box sx={{ display: 'grid', gap: 0.25 }}>
-              {pagedTrades.map((t, i) => (
-                <Box
-                  key={`${t.ts}-${t.price}-${t.quantity}-${i}`}
-                  sx={{
-                    display: 'grid',
-                    gridTemplateColumns: 'auto 1fr auto auto',
-                    gap: 1,
-                    fontSize: 14,
-                    alignItems: 'center',
-                  }}
-                >
+              {pagedTrades.map((t, i) => {
+                const whenStr = new Date(t.ts < 1e11 ? t.ts * 1000 : t.ts).toLocaleString(
+                  [],
+                  isXs
+                    ? { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' } // compact on xs
+                    : {
+                        year: 'numeric',
+                        month: 'short',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      }
+                );
+
+                if (isXs) {
+                  // --- Mobile card layout ---
+                  return (
+                    <Box
+                      key={`${t.ts}-${t.price}-${t.quantity}-${i}`}
+                      sx={{
+                        display: 'grid',
+                        gap: 0.25,
+                        p: 1,
+                        borderRadius: 1,
+                        bgcolor: 'background.paper',
+                        border: 1,
+                        borderColor: 'divider',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'baseline',
+                        }}
+                      >
+                        <Box
+                          sx={{
+                            fontWeight: 700,
+                            color: t.side === 'buy' ? 'success.main' : 'error.main',
+                          }}
+                        >
+                          {t.side.toUpperCase()}
+                        </Box>
+                        <Box sx={{ color: 'text.secondary', fontSize: 12 }}>{whenStr}</Box>
+                      </Box>
+
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1 }}>
+                        <Box
+                          sx={{
+                            minWidth: 0,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {formatQty(t.quantity, divisible)} {name}
+                        </Box>
+                        <Box sx={{ fontWeight: 600 }}>{formatPrice(t.price)} QORT</Box>
+                      </Box>
+                    </Box>
+                  );
+                }
+
+                // --- Desktop 4-col grid ---
+                return (
                   <Box
+                    key={`${t.ts}-${t.price}-${t.quantity}-${i}`}
                     sx={{
-                      color: t.side === 'buy' ? 'success.main' : 'error.main',
-                      fontWeight: 700,
+                      display: 'grid',
+                      gridTemplateColumns: 'auto 1fr auto auto',
+                      gap: 1,
+                      fontSize: 14,
+                      alignItems: 'center',
+                      minWidth: 0,
+                      fontVariantNumeric: 'tabular-nums',
                     }}
                   >
-                    {t.side.toUpperCase()}
+                    <Box
+                      sx={{
+                        color: t.side === 'buy' ? 'success.main' : 'error.main',
+                        fontWeight: 700,
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {t.side.toUpperCase()}
+                    </Box>
+                    <Box
+                      sx={{
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {formatQty(t.quantity, divisible)} {name}
+                    </Box>
+                    <Box sx={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {formatPrice(t.price)} QORT
+                    </Box>
+                    <Box sx={{ textAlign: 'right', color: 'text.secondary', whiteSpace: 'nowrap' }}>
+                      {whenStr}
+                    </Box>
                   </Box>
-                  <Box>
-                    {formatQty(t.quantity, divisible)} {name}
-                  </Box>
-                  <Box sx={{ textAlign: 'right' }}>{formatPrice(t.price)} QORT</Box>
-                  <Box sx={{ textAlign: 'right', color: 'text.secondary' }}>
-                    {new Date(t.ts < 1e11 ? t.ts * 1000 : t.ts).toLocaleString([], {
-                      year: 'numeric',
-                      month: 'short', // or '2-digit'
-                      day: '2-digit',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: undefined, // set to '2-digit' if you want seconds
-                    })}
-                  </Box>
-                </Box>
-              ))}
+                );
+              })}
 
               {allTrades.length === 0 && (
                 <Typography variant="caption" color="text.secondary">
@@ -1058,7 +1245,11 @@ export default function TradePair() {
                   key={o.orderId}
                   sx={{
                     display: 'grid',
-                    gridTemplateColumns: 'auto auto auto 1fr auto', // last column is price
+                    gridTemplateColumns: {
+                      xs: '1fr', // stack on mobile
+                      sm: 'auto auto auto 1fr auto',
+                    },
+                    rowGap: { xs: 0.5, sm: 0 },
                     alignItems: 'center',
                     gap: 1,
                     fontSize: 14,
@@ -1067,21 +1258,51 @@ export default function TradePair() {
                     borderRadius: 0.5,
                     bgcolor: side === 'buy' ? 'success.main' : 'error.main',
                     color: side === 'buy' ? 'success.contrastText' : 'error.contrastText',
+                    fontVariantNumeric: 'tabular-nums',
                   }}
                 >
-                  <Box sx={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  {/* line 1 */}
+                  <Box
+                    sx={{
+                      fontWeight: 600,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 0.5,
+                      minWidth: 0,
+                    }}
+                  >
                     {side.toUpperCase()}
                     {byIssuer && <IssuerTag />}
-                    <Typography variant="body2">Placed:</Typography>
-                    <Box color="text.secondary">{when}</Box>
+                    <Typography variant="body2" sx={{ ml: 1 }}>
+                      Placed:
+                    </Typography>
+                    <Box sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>{when}</Box>
                   </Box>
-                  <Box>Remaining: {name}</Box>
-                  <Box color="text.secondary">{formatQty(qtyAssetOpen, divisible)}</Box>
 
-                  {/* this acts like a flexible spacer */}
-                  <Box />
+                  {/* line 2 on xs (Remaining + qty) */}
+                  <Box
+                    sx={{ display: { xs: 'flex', sm: 'none' }, justifyContent: 'space-between' }}
+                  >
+                    <Box>Remaining: {name}</Box>
+                    <Box color="text.secondary">{formatQty(qtyAssetOpen, divisible)}</Box>
+                  </Box>
 
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  {/* original columns reappear ≥sm */}
+                  <Box sx={{ display: { xs: 'none', sm: 'block' } }}>Remaining: {name}</Box>
+                  <Box sx={{ display: { xs: 'none', sm: 'block' }, color: 'text.secondary' }}>
+                    {formatQty(qtyAssetOpen, divisible)}
+                  </Box>
+
+                  <Box sx={{ display: { xs: 'none', sm: 'block' } }} />
+
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1,
+                      justifyContent: { xs: 'space-between', sm: 'flex-start' },
+                    }}
+                  >
                     <Box>{formatPrice(price)} QORT</Box>
                     <Tooltip title="Cancel order">
                       <span>

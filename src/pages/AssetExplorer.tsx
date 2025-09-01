@@ -584,7 +584,7 @@ const AssetExplorer = () => {
                               You Hold:{' '}
                             </Typography>
                             <Typography component="span" color="success.contrastText">
-                              {balance}
+                              {formatAssetAmount(balance, asset.isDivisible)}
                             </Typography>
                           </Box>
                         )}

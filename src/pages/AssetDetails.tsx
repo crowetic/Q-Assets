@@ -47,7 +47,7 @@ import {
   readAssetsIndexSync,
 } from '../bootstrap/assetsBootstrap';
 import { prepareHtmlForPublish } from '../utils/publicationPublisher';
-import CommentsSection from '../components/asset/CommentsSection';
+import CommentsSection from '../components/comments/CommentsSection';
 // import PaidUpvotesSection from '../components/asset/PaidUpvoteSection';
 import NewsPublisher from '../components/news/NewsPublisher';
 import PageContainer from '../components/layout/PageContainer';
