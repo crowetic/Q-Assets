@@ -132,7 +132,7 @@ export function AssetCardStats({ assetId }: StatsProps) {
   })();
 
   return (
-    <Stack direction="row" flexWrap="wrap" sx={{ mt: 1 }}>
+    <Stack direction="row" flexWrap="wrap" sx={{ mt: 1 }} overflow={'none'}>
       {/* volume first so users see “QORT value” quickly */}
       {!isBase && (
         <StatsTag
@@ -383,15 +383,17 @@ const AssetExplorer = () => {
     };
   }, [assets]);
 
+  // inside your component render
   return (
-    <Box sx={{ padding: '2rem' }}>
+    <Box sx={{ p: { xs: 1.25, sm: 2 } }}>
       {loading ? (
         <Box display="flex" justifyContent="center" py={8}>
           <CircularProgress />
         </Box>
       ) : (
         <>
-          <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center' }}>
+          {/* Controls */}
+          <Box sx={{ mb: 2, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
             <Typography variant="h6" sx={{ mr: 1 }}>
               Sort by
             </Typography>
@@ -428,12 +430,16 @@ const AssetExplorer = () => {
               {sortDir === 'asc' ? 'Asc ↑' : 'Desc ↓'}
             </button>
           </Box>
+
+          {/* SIMPLE responsive grid: packs 1..N columns depending on space */}
           <Box
             sx={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(38rem, 1fr))', // stable, chunky cards
-              gap: 3,
-              overflowX: 'hidden',
+              gridTemplateColumns: {
+                xs: '1fr',
+                sm: 'repeat(auto-fit, minmax(30rem, 1fr))',
+              },
+              gap: 2,
             }}
           >
             {sortedAssets.map((asset) => {
@@ -449,11 +455,10 @@ const AssetExplorer = () => {
                   <Paper
                     elevation={5}
                     sx={{
-                      minWidth: '10rem',
-                      minHeight: '10rem',
                       overflow: 'hidden',
-                      padding: '1.5rem',
+                      p: { xs: 1.25, sm: 1.5 },
                       height: '100%',
+
                       backgroundColor: isOwned
                         ? theme.palette.secondary.dark
                         : balance > 0
@@ -470,174 +475,166 @@ const AssetExplorer = () => {
                         : balance > 0
                           ? '4px solid #1e90ff'
                           : '4px solid transparent',
-                      transition: 'transform 0.2s ease',
-                      '&:hover': {
-                        transform: 'scale(0.995)',
-                        borderWidth: '1',
-                        borderStyle: 'solid',
-                        cursor: 'pointer',
-                        borderColor: theme.palette.info.light,
-                      },
+
                       display: 'flex',
-                      flexDirection: 'column',
+                      flexDirection: { xs: 'column', sm: 'row' }, // vertical on phones, horizontal otherwise
+                      alignItems: 'stretch',
+                      gap: { xs: 1, sm: 1.25 },
+                      flexWrap: 'noWrap',
+                      // keep “card” feel, but don’t jiggle on touch
+                      transition: 'transform .18s ease, border-color .18s ease',
+                      '@media (hover: hover) and (pointer: fine)': {
+                        '&:hover': {
+                          transform: 'scale(0.999) translateY(-1px) gap(1.0)',
+                          borderColor: theme.palette.info.light,
+                          borderWidth: '1',
+                          borderStyle: 'solid',
+                          cursor: 'pointer',
+                        },
+                      },
                     }}
                   >
-                    <Box
-                      sx={{
-                        display: 'flex',
-                        flexDirection: { xs: 'column', lg: 'row' },
-                        // flexWrap: 'wrap', // allow wrap at lg to avoid forcing width
-                        gap: 1,
-                        minWidth: 0, // allow shrink
-                        alignItems: 'stretch',
-                      }}
-                    >
-                      {/* TEXT BLOCK */}
-                      <Box flex={1}>
-                        <Typography variant="h4" fontWeight="bold" color="secondary.light">
-                          {asset.name}
-                        </Typography>
+                    {/* TEXT */}
+                    <Box sx={{ flex: '1 1 0', minWidth: 0 }}>
+                      <Typography variant="h4" fontWeight={800} color="secondary.light">
+                        {asset.name}
+                      </Typography>
 
-                        <Typography variant="body2" sx={{ mb: 2 }}>
-                          {asset.description || 'No description'}
-                        </Typography>
-
-                        <Box
-                          component="div"
-                          sx={{
-                            p: 0.5,
-                            fontFamily: 'monospace',
-                            bgcolor: theme.palette.secondary.main,
-                            border: `1px solid ${theme.palette.divider}`,
-                            borderRadius: 1,
-                            fontSize: '0.875rem',
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-word',
-                            mb: 1,
-                          }}
-                        >
-                          <Box>
-                            <Typography
-                              variant="subtitle2"
-                              fontWeight="700"
-                              color="text.secondary"
-                              component="span"
-                            >
-                              Asset ID:{' '}
-                            </Typography>
-                            <Typography component="span">{asset.assetId}</Typography>
-                          </Box>
-
-                          <Box>
-                            <Typography
-                              variant="subtitle2"
-                              fontWeight="600"
-                              color="text.secondary"
-                              component="span"
-                            >
-                              Total Supply:{' '}
-                            </Typography>
-                            <Typography component="span">
-                              {typeof asset.totalSupply === 'number'
-                                ? formatAssetAmount(asset.totalSupply, asset.isDivisible)
-                                : asset.totalSupply}
-                            </Typography>
-                          </Box>
-
-                          <Box>
-                            <Typography
-                              variant="subtitle2"
-                              color="text.secondary"
-                              fontWeight={600}
-                              component="span"
-                            >
-                              Circulating:{' '}
-                            </Typography>
-                            <Typography component="span">
-                              {typeof asset.circulating === 'number'
-                                ? formatAssetAmount(asset.circulating, asset.isDivisible)
-                                : asset.circulating}
-                            </Typography>
-                          </Box>
-
-                          {balance > 0 && (
-                            <Box>
-                              <Typography
-                                variant="subtitle1"
-                                color="secondary.light"
-                                component="span"
-                                fontWeight={700}
-                                bgcolor={'background.paper'}
-                              >
-                                You Hold:{' '}
-                              </Typography>
-                              <Typography
-                                component="span"
-                                color="success.contrastText"
-                                bgcolor={'background.paper'}
-                              >
-                                {balance}
-                              </Typography>
-                            </Box>
-                          )}
-                        </Box>
-
-                        {/* NEW: Stats box */}
-                        {asset.assetId > 2 && <AssetCardStats assetId={asset.assetId} />}
-
-                        {isOwned && (
-                          <Typography
-                            variant="h5"
-                            color="success.light"
-                            fontWeight={800}
-                            bgcolor={'background.paper'}
-                            sx={{ mt: 1 }}
-                          >
-                            ASSET ISSUER
-                          </Typography>
-                        )}
-                      </Box>
-
-                      {/* ASSET AVATAR */}
-                      <Box
+                      <Typography
+                        variant="body2"
                         sx={{
-                          // fixed basis at lg, full width on small; never exceed container
-                          flex: { xs: '0 0 auto', lg: '0 0 16rem' }, // wider at desktop
-                          width: { xs: '100%', lg: '16rem' },
-                          height: { xs: '15rem', sm: '18rem', md: '20rem', lg: 'auto' }, // tall on mobile; on desktop, fill row height
-                          alignSelf: { xs: 'center', lg: 'center' }, // fill height when in row layout
-                          justifySelf: 'center',
-                          alignContent: 'center',
-                          justifycontent: 'center',
-                          display: 'block',
-                          minWidth: 0,
-                          maxWidth: '100%',
+                          mb: 1.25,
+                          display: '-webkit-box',
+                          WebkitBoxOrient: 'vertical',
+                          WebkitLineClamp: { xs: 3, sm: 3, md: 3 },
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          wordBreak: 'break-word',
                         }}
                       >
-                        {avatarMap[asset.assetId] ? (
-                          <img
-                            loading="lazy"
-                            src={avatarMap[asset.assetId]!}
-                            alt={`${asset.name} Avatar`}
-                            style={{
-                              display: 'block',
-                              width: '100%',
-                              height: '100%',
-                              objectFit: 'contain',
-                              borderRadius: '500rem',
-                            }}
-                            onError={(e) => (e.currentTarget.style.display = 'none')}
-                          />
-                        ) : (
-                          <div
-                            style={{
-                              width: '100%',
-                              height: '100%',
-                              opacity: 0.5,
-                            }}
-                          />
+                        {asset.description || 'No description'}
+                      </Typography>
+
+                      <Box
+                        component="div"
+                        sx={{
+                          p: 0.75,
+                          fontFamily: 'monospace',
+                          bgcolor: theme.palette.secondary.main,
+                          border: `1px solid ${theme.palette.divider}`,
+                          borderRadius: 1,
+                          fontSize: '0.875rem',
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                          mb: 1,
+                        }}
+                      >
+                        <Box>
+                          <Typography
+                            variant="subtitle2"
+                            fontWeight={700}
+                            color="text.secondary"
+                            component="span"
+                          >
+                            Asset ID:{' '}
+                          </Typography>
+                          <Typography component="span">{asset.assetId}</Typography>
+                        </Box>
+
+                        <Box>
+                          <Typography
+                            variant="subtitle2"
+                            fontWeight={600}
+                            color="text.secondary"
+                            component="span"
+                          >
+                            Total Supply:{' '}
+                          </Typography>
+                          <Typography component="span">
+                            {typeof asset.totalSupply === 'number'
+                              ? formatAssetAmount(asset.totalSupply, asset.isDivisible)
+                              : asset.totalSupply}
+                          </Typography>
+                        </Box>
+
+                        <Box>
+                          <Typography
+                            variant="subtitle2"
+                            color="text.secondary"
+                            fontWeight={600}
+                            component="span"
+                          >
+                            Circulating:{' '}
+                          </Typography>
+                          <Typography component="span">
+                            {typeof asset.circulating === 'number'
+                              ? formatAssetAmount(asset.circulating, asset.isDivisible)
+                              : asset.circulating}
+                          </Typography>
+                        </Box>
+
+                        {balance > 0 && (
+                          <Box>
+                            <Typography
+                              variant="subtitle1"
+                              color="secondary.light"
+                              component="span"
+                              fontWeight={700}
+                            >
+                              You Hold:{' '}
+                            </Typography>
+                            <Typography component="span" color="success.contrastText">
+                              {balance}
+                            </Typography>
+                          </Box>
                         )}
                       </Box>
+
+                      {asset.assetId > 2 && <AssetCardStats assetId={asset.assetId} />}
+
+                      {isOwned && (
+                        <Typography
+                          variant="h5"
+                          color="success.light"
+                          fontWeight={800}
+                          sx={{ mt: 0.5 }}
+                        >
+                          ASSET ISSUER
+                        </Typography>
+                      )}
+                    </Box>
+
+                    {/* AVATAR — always centered, always a square, size = clamp(min, fluid, max) */}
+                    <Box
+                      sx={{
+                        flex: { xs: '0 0 auto', sm: '0 0 auto' },
+                        alignSelf: 'center',
+                        // Row layout: cap width; Column layout (xs): larger but still bounded
+                        width: { xs: 'min(70%, 220px)', sm: 'clamp(140px, 18vw, 180px)' },
+                        aspectRatio: '1 / 1',
+                        borderRadius: '999px',
+                        overflow: 'hidden',
+                        display: 'grid',
+                        placeItems: 'center',
+                        mx: { sm: 1 }, // tiny breathing room from text
+                      }}
+                    >
+                      {avatarMap[asset.assetId] ? (
+                        <img
+                          loading="lazy"
+                          src={avatarMap[asset.assetId]!}
+                          alt={`${asset.name} Avatar`}
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'cover', // fills the circle; switch to 'contain' if you prefer letterbox
+                            display: 'block',
+                          }}
+                          onError={(e) => (e.currentTarget.style.display = 'none')}
+                        />
+                      ) : (
+                        <div style={{ width: '100%', height: '100%', opacity: 0.5 }} />
+                      )}
                     </Box>
                   </Paper>
                 </Link>
