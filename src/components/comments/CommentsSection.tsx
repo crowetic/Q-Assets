@@ -86,6 +86,16 @@ const toNode = (t: ThreadComment): NodeWithTags => ({
   roleTags: Array.isArray(t.roleTags) ? t.roleTags : [],
 });
 
+const byCreatedAsc = (a: { ts?: number; createdTs?: number; id?: string }, b: typeof a) => {
+  const ta = Number.isFinite(a.createdTs) ? (a.createdTs as number) : (a.ts as number);
+  const tb = Number.isFinite(b.createdTs) ? (b.createdTs as number) : (b.ts as number);
+  if (ta !== tb) return ta - tb;
+  // stable tiebreak
+  return String(a.id || '').localeCompare(String(b.id || ''));
+};
+
+const byCreatedDesc = (a: any, b: any) => -byCreatedAsc(a, b);
+
 async function fetchHtmlComment(
   name: string,
   identifier: string,
@@ -196,7 +206,8 @@ export default function CommentsSection({
   const prefix = useMemo(() => assetCommentsPrefix(assetId), [assetId]);
   const forestRaw = useMemo(() => buildCommentForest(items), [items]);
   const forest = useMemo(() => pruneDeletedForest(forestRaw as any), [forestRaw]);
-  const totalRoots = forest.length;
+  const forestRootsDesc = useMemo(() => [...forest].sort(byCreatedDesc), [forest]);
+  const totalRoots = forestRootsDesc.length;
   const pageSize = Math.max(1, Number(pageSizeProp ?? 10));
   const totalPages = Math.max(1, Math.ceil(totalRoots / pageSize));
 
@@ -221,7 +232,7 @@ export default function CommentsSection({
 
   const start = (page - 1) * pageSize;
   const end = Math.min(start + pageSize, totalRoots);
-  const pageRoots = forest.slice(start, end);
+  const pageRoots = forestRootsDesc.slice(start, end);
 
   const inputs = {
     primaryGroupId,
@@ -455,7 +466,7 @@ export default function CommentsSection({
                 const base = i === 0 ? [] : prev;
                 const seen = new Set(base.map((x) => x.id));
                 const merged = base.concat(t.map(toNode).filter((x) => !seen.has(x.id)));
-                return merged.sort((a, b) => a.ts - b.ts);
+                return merged.sort(byCreatedAsc);
               });
             }
           });
@@ -649,9 +660,9 @@ export default function CommentsSection({
 
       // Optimistic local mark
       setItems((prev) =>
-        prev.map((it) =>
-          it.id === deleteTarget.id ? { ...it, html: '', deleted: true, ts: Date.now() } : it
-        )
+        prev
+          .map((it) => (it.id === deleteTarget.id ? { ...it, html: '', deleted: true } : it))
+          .sort(byCreatedAsc)
       );
 
       setDeleteOpen(false);
@@ -766,7 +777,7 @@ export default function CommentsSection({
                   }}
                 >
                   <Typography variant="caption" color="text.secondary">
-                    Showing {start + 1}-{end} of {totalRoots} threads
+                    Showing newest {start + 1}-{end} of {totalRoots} threads
                   </Typography>
                   <Pagination
                     count={totalPages}
@@ -919,6 +930,8 @@ function ThreadNodeView({
   const ts = node.ts;
   const html = typeof node.html === 'string' ? node.html : '';
   const avatarUrl = avatars[author] ?? null;
+  const isEdited =
+    Number.isFinite(node.updatedTs) && (node.updatedTs as number) > (node.ts as number);
 
   return (
     <Paper
@@ -942,7 +955,9 @@ function ThreadNodeView({
 
       <Box>
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-          {new Date(ts).toLocaleString()} — {author} {isDeleted ? '— (deleted)' : ''}
+          {new Date(node.ts).toLocaleString()} — {author}
+          {isEdited ? ` — edited ${new Date(node.updatedTs!).toLocaleString()}` : ''}
+          {isDeleted ? ' — (deleted)' : ''}
         </Typography>
 
         {(node.roleTags?.length ?? 0) > 0 && (
