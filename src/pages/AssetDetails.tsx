@@ -359,9 +359,7 @@ export default function AssetDetail() {
           onOpenUpvotes={() => {
             /* later */
           }}
-          onOpenAssetData={() => {
-            /* if you want a distinct handler here */
-          }}
+          showAssetData={true}
         />
       </Grid>
 

@@ -13,6 +13,7 @@ import { PortfolioProvider } from '../portfolio/PortfolioProvider';
 import { QortalLinkProvider } from '../components/qortal-links/QortalLinkProvider';
 import { QortalLinkHandler } from '../components/qortal-links/QortalLinkHandler';
 import { AlertProvider } from '../components/alerts';
+import AssetDataPage from '../pages/AssetDataPage';
 
 function PortfolioProviderLayout() {
   return (
@@ -59,6 +60,7 @@ export function Routes() {
         { index: true, element: <Home /> },
         { path: 'assets', element: <AssetExplorer /> },
         { path: 'assets/:assetId', element: <AssetDetail /> },
+        { path: 'assetdata/:assetId', element: <AssetDataPage /> },
         {
           element: <PortfolioProviderLayout />,
           children: [{ path: 'portfolio', element: <Portfolio /> }],

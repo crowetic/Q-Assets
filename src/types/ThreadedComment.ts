@@ -4,6 +4,8 @@ export type ThreadComment = {
   parentId: string | null;    // null for top level, else parent’s id
   depth: number;              // 0 for top level, 1..N for replies
   ts: number;                 // epoch ms
+  createdTs: number,
+  updatedTs?: number,
   author: string;             // qortal name
   html: string;               // sanitized html
   roleTags?: string[]; 

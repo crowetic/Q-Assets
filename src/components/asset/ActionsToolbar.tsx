@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Stack, Divider } from '@mui/material';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import OrbitronButton from '../buttons/OrbitronButton';
 
 export interface ActionsToolbarProps {
@@ -9,7 +9,7 @@ export interface ActionsToolbarProps {
   primaryGroup?: { id?: string; joinLink?: string };
   onOpenComment?: () => void;
   onOpenUpvotes?: () => void;
-  onOpenAssetData?: () => void;
+  showAssetData?: boolean;
 }
 
 export default function ActionsToolbar({
@@ -18,13 +18,15 @@ export default function ActionsToolbar({
   primaryGroup,
   onOpenComment,
   onOpenUpvotes,
-  onOpenAssetData,
+  showAssetData = true,
 }: ActionsToolbarProps) {
   const navigate = useNavigate();
 
   const [joining, setJoining] = useState(false);
   const [joinErr, setJoinErr] = useState<string | null>(null);
   const [joined, setJoined] = useState(false);
+
+  const { pathname } = useLocation();
 
   // Normalize to a numeric groupId if possible (e.g. "691" -> 691)
   const groupIdNum = useMemo(() => {
@@ -50,6 +52,16 @@ export default function ActionsToolbar({
     } finally {
       setJoining(false);
     }
+  };
+
+  const tradePage = pathname.includes('/trade');
+
+  const dataPage = pathname.startsWith('/assetdata');
+
+  const assetDetailsPage = pathname.startsWith('/assets');
+
+  const handleOpenAssetData = () => {
+    navigate(`/assetdata/${assetId}`);
   };
 
   const fullWidthStyle = { width: { xs: '100%', sm: 'auto' }, minWidth: { sm: '12rem' } } as const;
@@ -81,7 +93,7 @@ export default function ActionsToolbar({
           rowGap: { xs: '0.1rem', sm: '0.25rem' },
         }}
       >
-        {primaryGroup && (
+        {!tradePage && (
           <OrbitronButton
             variant="outlined"
             size="small"
@@ -92,7 +104,7 @@ export default function ActionsToolbar({
           </OrbitronButton>
         )}
 
-        {primaryGroup ? (
+        {primaryGroup && (
           <OrbitronButton
             variant="outlined"
             size="small"
@@ -103,7 +115,9 @@ export default function ActionsToolbar({
           >
             {joinLabel}
           </OrbitronButton>
-        ) : (
+        )}
+
+        {!assetDetailsPage && (
           <OrbitronButton
             variant="outlined"
             size="small"
@@ -114,15 +128,16 @@ export default function ActionsToolbar({
           </OrbitronButton>
         )}
 
-        <OrbitronButton
-          variant="outlined"
-          size="small"
-          onClick={onOpenAssetData}
-          disabled
-          sx={fullWidthStyle}
-        >
-          Asset Data (Coming Soon)
-        </OrbitronButton>
+        {showAssetData && !dataPage && (
+          <OrbitronButton
+            variant="outlined"
+            size="small"
+            onClick={handleOpenAssetData}
+            sx={fullWidthStyle}
+          >
+            Asset Data
+          </OrbitronButton>
+        )}
 
         {primaryGroup && onOpenComment && (
           <OrbitronButton
