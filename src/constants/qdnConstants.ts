@@ -3,7 +3,7 @@ import type { Service } from "qapp-core"; // or your local types
 
 export const Q_ASSETS_OWNER_ADDRESS = 'QWZDZBKafP19Hin4HivuV6WXgWaBaWUMrN'
 export const Q_ASSET_APP_PUBLISHER: string = 'Q-Assets'
-export const Q_ASSET_APP_VERSION: number = 0.41
+export const Q_ASSET_APP_VERSION: number = 0.42
 export const isBeta: boolean = true
 
 export const Q_ASSETS_VERSION: string = isBeta ? Q_ASSET_APP_VERSION + "b" : Q_ASSET_APP_VERSION.toString() 

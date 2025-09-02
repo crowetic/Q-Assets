@@ -1,4 +1,3 @@
-// src/components/AssetExplorer.tsx
 import { useEffect, useState, useMemo } from 'react';
 import { getAssetBalances } from '../utils/qortalAssetRequests';
 import {
