@@ -9,7 +9,6 @@ import { TipTapToolbar } from './TipTapToolbar';
 import { ThemedColor } from '../tiptap/marks/ThemedColor';
 import { THEME_COLOR_TOKENS, themedColorCSSFromTheme } from '../tiptap/themeColorTokens';
 import { Box, useTheme } from '@mui/material';
-// import QortalLink from '../tiptap/extensions/QortalLink';
 import { QortalAutoLink } from '../tiptap/extensions/QortalAutoLink';
 import { Link } from '@tiptap/extension-link';
 
@@ -119,10 +118,8 @@ export default function TiptapEditor({ value, onChange, onReady, full = true }: 
             ? {
                 display: 'flex',
                 flexDirection: 'column',
-                // flex: 1,
                 minHeight: 0, // allow shrinking inside overflow containers
                 width: '100%', // fill width
-                // alignSelf: 'stretch',
               }
             : {}),
           // Typography and media defaults
