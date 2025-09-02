@@ -22,6 +22,7 @@ interface TiptapEditorProps {
     setHTML: (h: string) => void;
     commit: () => void;
   }) => void;
+  full?: boolean;
 }
 
 const QORTAL_RE = /^qortal:\/\/\S+$/i;
@@ -38,7 +39,7 @@ const QortalLink = Link.configure({
   validate: (href) => QORTAL_RE.test(href) || /^(https?|mailto|tel):/i.test(href),
 });
 
-export default function TiptapEditor({ value, onChange, onReady }: TiptapEditorProps) {
+export default function TiptapEditor({ value, onChange, onReady, full = true }: TiptapEditorProps) {
   const theme = useTheme();
   const didSetInitial = useRef(false);
 
@@ -109,17 +110,31 @@ export default function TiptapEditor({ value, onChange, onReady }: TiptapEditorP
   if (!editor) return null;
 
   return (
-    <Box
-      className="tiptap"
-      sx={{
-        '& ul': { pl: '1.5rem', listStyleType: 'disc', my: 1.5 },
-        '& ol': { pl: '1.5rem', listStyleType: 'decimal', my: 1.5 },
-        '& li': { mb: 0.25 },
-        '& img': { maxWidth: '100%', height: 'auto', display: 'block', my: 2 },
-      }}
-    >
-      <TipTapToolbar editor={editor} />
+    <>
+      <Box
+        className="tiptap"
+        sx={{
+          // --- FULL WIDTH + HEIGHT BEHAVIOR ---
+          ...(full
+            ? {
+                display: 'flex',
+                flexDirection: 'column',
+                // flex: 1,
+                minHeight: 0, // allow shrinking inside overflow containers
+                width: '100%', // fill width
+                // alignSelf: 'stretch',
+              }
+            : {}),
+          // Typography and media defaults
+          '& ul': { pl: '1.5rem', listStyleType: 'disc', my: 1.5 },
+          '& ol': { pl: '1.5rem', listStyleType: 'decimal', my: 1.5 },
+          '& li': { mb: 0.25 },
+          '& img': { maxWidth: '100%', height: 'auto', display: 'block', my: 2 },
+        }}
+      >
+        <TipTapToolbar editor={editor} />
+      </Box>
       <EditorContent editor={editor} />
-    </Box>
+    </>
   );
 }

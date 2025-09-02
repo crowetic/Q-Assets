@@ -14,13 +14,16 @@ import {
   Box,
   Avatar,
   Alert,
+  Pagination,
+  useTheme,
+  useMediaQuery,
 } from '@mui/material';
 
 import { useAlert } from '../alerts';
 
 import TagChip from '../asset/TagChip';
 import { useAuth, objectToBase64, Spacer } from 'qapp-core';
-import { useTheme } from '@mui/material';
+// import { useTheme } from '@mui/material';
 import { assetCommentsPrefix, assetCommentId } from '../../constants/qdnConstants';
 import { uniqueId6 } from '../../utils/ids';
 import { base64ToObject } from '../../utils/data';
@@ -38,7 +41,7 @@ import { searchSimpleByIdentifierPrefix } from '../../utils/searchSimple';
 import { addTagsForName, tagComments } from '../../utils/roles';
 
 import type { ThreadNode } from '../../utils/thread';
-import { Pagination } from '@mui/material';
+// import { Pagination } from '@mui/material';
 import { useSearchParams } from 'react-router-dom';
 import EditToggleButton from '../buttons/EditToggleButton';
 import InfoOutlineButton from '../buttons/InfoOutlineButton';
@@ -95,6 +98,104 @@ const byCreatedAsc = (a: { ts?: number; createdTs?: number; id?: string }, b: ty
 };
 
 const byCreatedDesc = (a: any, b: any) => -byCreatedAsc(a, b);
+
+function dialogPaperSx(isXs: boolean) {
+  return {
+    width: isXs ? '100vw' : '75vw',
+    height: isXs ? '100vh' : '75vh',
+    maxWidth: '100vw',
+    maxHeight: '100vh',
+    display: 'flex',
+    flexDirection: 'column',
+  } as const;
+}
+
+function ReplyPreview({
+  reply,
+  avatarUrl,
+  defaultCollapsed = true,
+  collapsedHeight = '18vh', // compact height when collapsed
+  expandedHeight = '45vh', // max height when expanded
+}: {
+  reply: ThreadComment;
+  avatarUrl?: string | null;
+  defaultCollapsed?: boolean;
+  collapsedHeight?: string;
+  expandedHeight?: string;
+}) {
+  const [expanded, setExpanded] = useState(!defaultCollapsed);
+  const ts = reply.createdTs ?? reply.ts;
+
+  return (
+    <Paper
+      variant="outlined"
+      sx={{
+        p: 1.25,
+        bgcolor: (t) => (t.palette.mode === 'dark' ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)'),
+        borderStyle: 'dashed',
+      }}
+    >
+      <Box sx={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 1 }}>
+        <Avatar src={avatarUrl || undefined} sx={{ width: '2.5rem', height: '2.5rem' }}>
+          {!avatarUrl ? (reply.author?.[0]?.toUpperCase() ?? '?') : null}
+        </Avatar>
+
+        <Box>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+            Replying to <strong>{reply.author || 'unknown'}</strong>
+            {' — '}
+            {new Date(ts || Date.now()).toLocaleString()}
+          </Typography>
+
+          <Box
+            sx={{
+              mt: 0.75,
+              typography: 'body2',
+              borderRadius: 1,
+              p: 1,
+              bgcolor: (t) =>
+                t.palette.mode === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)',
+              maxHeight: expanded ? expandedHeight : collapsedHeight,
+              overflowY: 'auto',
+              position: 'relative',
+            }}
+          >
+            {/* Show the original HTML (you’re already rendering HTML elsewhere) */}
+            <Box dangerouslySetInnerHTML={{ __html: reply.html || '' }} />
+
+            {/* subtle fade at bottom when collapsed (purely visual) */}
+            {!expanded && (
+              <Box
+                sx={{
+                  pointerEvents: 'none',
+                  position: 'sticky',
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  height: '2rem',
+                  background: (theme) =>
+                    theme.palette.mode === 'dark'
+                      ? 'linear-gradient(180deg, rgba(18,18,18,0) 0%, rgba(18,18,18,0.9) 100%)'
+                      : 'linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.9) 100%)',
+                }}
+              />
+            )}
+          </Box>
+
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 0.5 }}>
+            <Button
+              size="small"
+              onClick={() => setExpanded((v) => !v)}
+              sx={{ textTransform: 'none' }}
+            >
+              {expanded ? 'Show less' : 'Show more'}
+            </Button>
+          </Box>
+        </Box>
+      </Box>
+    </Paper>
+  );
+}
 
 async function fetchHtmlComment(
   name: string,
@@ -212,6 +313,7 @@ export default function CommentsSection({
   const totalPages = Math.max(1, Math.ceil(totalRoots / pageSize));
 
   const theme = useTheme();
+  const isXs = useMediaQuery(theme.breakpoints.down('sm'));
 
   //Pagination State
   const [page, setPage] = useState<number>(1);
@@ -832,38 +934,66 @@ export default function CommentsSection({
           </Card>
         )}
 
-        <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="sm">
+        <Dialog
+          open={open}
+          onClose={() => setOpen(false)}
+          fullScreen={isXs} // full screen on phones
+          fullWidth // still needed for layout
+          maxWidth={false} // allow our custom width
+          slotProps={{
+            paper: { sx: dialogPaperSx(isXs) },
+          }}
+        >
           <DialogTitle>{replyTo ? 'Reply' : 'Publish Comment'}</DialogTitle>
-          <DialogContent dividers>
+
+          <DialogContent
+            dividers
+            sx={{
+              // let the content scroll within the 75vh shell
+              overflow: 'hidden',
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 1.5,
+            }}
+          >
+            {/* reply preview (context) goes here */}
+
             {replyTo && (
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ display: 'block', mb: '0.5rem' }}
-              >
-                Replying to <strong>{replyTo.author}</strong>
-              </Typography>
+              <ReplyPreview
+                reply={replyTo}
+                avatarUrl={avatars[replyTo.author || ''] ?? null}
+                defaultCollapsed
+              />
             )}
+
             <TiptapEditor value={html} onChange={setHtml} />
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ mt: '0.5rem', display: 'block' }}
-            >
+
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
               NOTE - Only MINTERS, DEVS, and Primary Asset Group Members' comments will be
-              displayed...
+              displayed…
             </Typography>
           </DialogContent>
+
           <DialogActions>
             <Button onClick={() => setOpen(false)}>Cancel</Button>
             <BusyButton variant="contained" onClick={publish} loading={publishing}>
-              Publish
+              {replyTo ? 'Reply' : 'Publish'}
             </BusyButton>
           </DialogActions>
         </Dialog>
 
         {/* Edit dialog */}
-        <Dialog open={editOpen} onClose={() => setEditOpen(false)} fullWidth maxWidth="sm">
+        <Dialog
+          open={editOpen}
+          onClose={() => setEditOpen(false)}
+          fullScreen={isXs}
+          fullWidth
+          maxWidth={false}
+          slotProps={{
+            paper: { sx: dialogPaperSx(isXs) },
+          }}
+        >
           <DialogTitle>Edit Comment</DialogTitle>
           <DialogContent dividers>
             <TiptapEditor value={editHtml} onChange={setEditHtml} />
@@ -927,7 +1057,7 @@ function ThreadNodeView({
   const depth = Number.isFinite(node.depth) ? (node.depth as number) : 0;
   const kids = Array.isArray(node.children) ? node.children : [];
   const author = typeof node.author === 'string' && node.author ? node.author : 'unknown';
-  const ts = node.ts;
+  // const ts = node.ts;
   const html = typeof node.html === 'string' ? node.html : '';
   const avatarUrl = avatars[author] ?? null;
   const isEdited =
