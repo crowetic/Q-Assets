@@ -148,6 +148,8 @@ export default function TiptapEditor({ value, onChange, onReady, full = true }: 
         '& li': { mb: 0.25 },
         '& img': { maxWidth: '100%', height: 'auto', display: 'block', my: 2 },
         WebkitTapHighlightColor: 'transparent',
+        position: 'relative',
+        zindex: 0,
       }}
     >
       {/* Toolbar: sticky & above editor content */}
@@ -175,6 +177,7 @@ export default function TiptapEditor({ value, onChange, onReady, full = true }: 
           flex: 1,
           minHeight: 0,
           display: 'flex',
+          zIndex: 1,
           overflow: 'auto',
           position: 'relative',
           bgcolor: surfaceBg,
@@ -196,9 +199,27 @@ export default function TiptapEditor({ value, onChange, onReady, full = true }: 
           editor={editor}
           // Give the content area full height + padding
           className="q-editor-content"
+          style={{ pointerEvents: 'auto' }}
           // (class duplicated via editorProps to guarantee specificity)
         />
       </Box>
+      <style>{`
+        .q-editor-surface .q-editor-content {
+          /* FILL + SCROLL, but NOT flex */
+          flex: 1 1 auto;
+          min-height: 0;
+          width: 100%;
+          height: 100%;
+          box-sizing: border-box;
+          padding: 12px;
+          outline: none;
+          overflow: auto;
+          display: block;           
+          white-space: normal;     
+        }
+        .q-editor-surface .q-editor-content p { margin: 0 0 0.75rem 0; }
+        .q-editor-surface .q-editor-content:focus { outline: none; }
+      `}</style>
     </Box>
   );
 }

@@ -257,7 +257,13 @@ export default function AssetDetail() {
         spacing={2}
         justifyContent="center"
         alignItems="stretch"
-        sx={{ maxWidth: '75%', mx: 'auto' }} // centers the pair
+        sx={{
+          // Full width on mobile; constrain on tablet/desktop
+          width: '100%',
+          mx: 'auto',
+          px: { xs: 1.5, sm: 2, md: 3 },
+          maxWidth: { xs: '100%', md: 1100, lg: 1280 }, // pick taste
+        }}
       >
         {/* Title (full width, centered) */}
         <Grid size={{ xs: 12 }}>
@@ -267,43 +273,67 @@ export default function AssetDetail() {
         </Grid>
 
         {/* Avatar + basic info */}
-        <Grid size={{ xs: 12, md: 6, lg: 6 }} sx={{ display: 'flex', justifyContent: 'center' }}>
+        <Grid size={{ xs: 12, md: 7, lg: 7 }} sx={{ display: 'flex', justifyContent: 'center' }}>
           <Card
             sx={{
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              alignContent: 'center',
-              textAlign: 'center',
-              borderRadius: '2.5rem',
-              gap: 3,
-              p: 3,
+              flexDirection: { xs: 'column', sm: 'row' }, // stack on mobile
+              alignItems: { xs: 'center', sm: 'stretch' },
+              textAlign: { xs: 'center', sm: 'left' },
+              borderRadius: 4,
+              gap: { xs: 2, sm: 3 },
+              p: { xs: 2, sm: 3 },
               width: '100%',
-              maxWidth: '80rem', // keeps a nice readable width
-              height: '100%', // matches Actions card height
+              maxWidth: 900,
             }}
           >
             {avatar && (
               <Avatar
                 src={avatar}
-                sx={{ minWidth: 120, minHeight: 120, width: 160, height: 160 }}
+                imgProps={{ loading: 'lazy' }}
+                sx={{
+                  width: { xs: 96, sm: 140 },
+                  height: { xs: 96, sm: 140 },
+                  flexShrink: 0,
+                  alignSelf: { xs: 'center', sm: 'flex-start' },
+                }}
               />
             )}
 
-            <Box flex={1}>
-              <Typography variant="h4">{asset.name}</Typography>
-              <Typography variant="subtitle1">
-                <span>{asset.description}</span>
+            <Box sx={{ flex: 1, minWidth: 0 /* allow inner text to wrap */ }}>
+              <Typography
+                variant="h4"
+                sx={{
+                  wordBreak: 'break-word',
+                  overflowWrap: 'anywhere',
+                  lineHeight: 1.2,
+                }}
+              >
+                {asset.name}
               </Typography>
 
+              {asset.description && (
+                <Typography
+                  variant="subtitle1"
+                  sx={{
+                    mt: 0.5,
+                    color: 'text.secondary',
+                    wordBreak: 'break-word',
+                    overflowWrap: 'anywhere',
+                  }}
+                >
+                  {asset.description}
+                </Typography>
+              )}
+
               <Box
-                mt={1}
-                display="flex"
-                flexWrap="wrap"
-                gap={1}
-                alignItems="center"
-                alignContent={'center'}
-                justifyContent={'center'}
+                mt={1.25}
+                sx={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 1,
+                  justifyContent: { xs: 'center', sm: 'flex-start' },
+                }}
               >
                 <Chip label={`Asset ID: ${asset.assetId}`} />
                 <Chip
@@ -311,28 +341,41 @@ export default function AssetDetail() {
                   color={assetPub?.dividends ? 'success' : 'default'}
                   variant={assetPub?.dividends ? 'filled' : 'outlined'}
                 />
-                {assetPub?.dividends && assetPub?.dividendPeriod && (
+                {!!assetPub?.dividends && !!assetPub?.dividendPeriod && (
                   <Chip label={`Period: ${assetPub.dividendPeriod}`} color="secondary" />
                 )}
               </Box>
 
-              <Box mt={1}>
-                <Typography>
-                  Divisible:{' '}
-                  <span style={{ color: theme.palette.secondary.light }}>
-                    {asset.isDivisible ? 'Yes' : 'No'}
-                  </span>
+              <Box
+                mt={1.25}
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: { xs: '1fr', sm: 'auto 1fr' },
+                  columnGap: 2,
+                  rowGap: 0.5,
+                }}
+              >
+                <Typography>Divisible:</Typography>
+                <Typography sx={{ color: 'secondary.light' }}>
+                  {asset.isDivisible ? 'Yes' : 'No'}
                 </Typography>
-                <Typography>
-                  Unspendable:{' '}
-                  <span style={{ color: theme.palette.secondary.light }}>
-                    {asset.isUnspendable ? 'Yes' : 'No'}
-                  </span>
+
+                <Typography>Unspendable:</Typography>
+                <Typography sx={{ color: 'secondary.light' }}>
+                  {asset.isUnspendable ? 'Yes' : 'No'}
                 </Typography>
               </Box>
 
               {canPublish && (
-                <Box mt={1} display="flex" justifyContent="center" gap={1} flexWrap="wrap">
+                <Box
+                  mt={1.25}
+                  sx={{
+                    display: 'flex',
+                    gap: 1,
+                    flexWrap: 'wrap',
+                    justifyContent: { xs: 'center', sm: 'flex-start' },
+                  }}
+                >
                   <InfoOutlineButton onClick={() => setOpenDivDlg(true)}>
                     Edit Dividends
                   </InfoOutlineButton>
@@ -344,6 +387,7 @@ export default function AssetDetail() {
             </Box>
           </Card>
         </Grid>
+
         <ActionsToolbar
           assetId={asset.assetId}
           assetName={asset.name}

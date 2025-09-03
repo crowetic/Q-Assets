@@ -31,8 +31,8 @@ export const UnconfirmedTxWidget: React.FC = () => {
   if (list.length === 0) return null;
 
   const container: React.CSSProperties = isMobile
-    ? { position: 'fixed', left: 0, right: 0, bottom: 0, padding: 8, zIndex: 1300 }
-    : { position: 'fixed', right: '3%', bottom: '3%', width: '20%', zIndex: 1300 };
+    ? { position: 'fixed', left: 0, right: 0, bottom: '5%', padding: 8, zIndex: 1300 }
+    : { position: 'fixed', right: '4%', bottom: '5%', width: '20%', zIndex: 1300 };
 
   return (
     <Box style={container}>

@@ -13,7 +13,7 @@ export default function SectionCard({ children, ...props }: React.PropsWithChild
         width: '100%',
         minHeight: '7rem',
         flexWrap: 'wrap',
-        borderRadius: '2.5rem',
+        borderRadius: '1rem',
       }}
       {...props}
     >
