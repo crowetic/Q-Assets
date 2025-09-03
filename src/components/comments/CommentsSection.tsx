@@ -99,7 +99,7 @@ const byCreatedAsc = (a: { ts?: number; createdTs?: number; id?: string }, b: ty
 
 const byCreatedDesc = (a: any, b: any) => -byCreatedAsc(a, b);
 
-function dialogPaperSx(isXs: boolean) {
+export function dialogPaperSx(isXs: boolean) {
   return {
     width: isXs ? '100vw' : '75vw',
     height: isXs ? '100vh' : '75vh',
@@ -995,7 +995,17 @@ export default function CommentsSection({
           }}
         >
           <DialogTitle>Edit Comment</DialogTitle>
-          <DialogContent dividers>
+          <DialogContent
+            dividers
+            sx={{
+              // let the content scroll within the 75vh shell
+              overflow: 'hidden',
+              flex: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 1.5,
+            }}
+          >
             <TiptapEditor value={editHtml} onChange={setEditHtml} />
           </DialogContent>
           <DialogActions>

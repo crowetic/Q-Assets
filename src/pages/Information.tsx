@@ -47,6 +47,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { Q_ASSETS_VERSION } from '../constants/qdnConstants';
 import { prepareHtmlForPublish } from '../utils/publicationPublisher';
 import PublishedHtmlRenderer from '../components/PublishedHtmlRenderer';
+import { useMediaQuery } from '@mui/material';
+import { dialogPaperSx } from '../components/comments/CommentsSection';
 
 // ---- Hard-coded defaults remain source of truth when no remote exists ----
 type InfoSection = {
@@ -267,6 +269,8 @@ export default function Information() {
   const { name: userName, address: userAddress } = useAuth();
   const { hash } = useLocation();
   const navigate = useNavigate();
+
+  const isXs = useMediaQuery(theme.breakpoints.down('sm'));
 
   const asMeta = (arr: { id: string; title?: string; tags?: string[] }[]) =>
     arr
@@ -507,7 +511,7 @@ export default function Information() {
       <Paper sx={{ p: '1rem' }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
           <Typography variant="h5" sx={{ flex: 1, minWidth: '12rem' }}>
-            Information
+            Information / Wiki
           </Typography>
 
           <TextField
@@ -597,55 +601,82 @@ export default function Information() {
           }}
         >
           {currentMenuItem ? (
-            <Paper id={currentMenuItem.id} sx={{ p: '1rem', scrollMarginTop: '1.5rem' }}>
-              <Box
-                sx={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap' }}
-              >
-                <Typography variant="h6">{currentMenuItem.title}</Typography>
-                {(currentMenuItem.tags || []).map((t) => (
-                  <Chip key={t} size="small" label={t} sx={{ opacity: 0.7 }} />
-                ))}
-                {currentOverride?.publisher && (
-                  <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
-                    Overridden by {currentOverride.publisher}
-                    {currentOverride.role ? ` (${currentOverride.role})` : ''}
+            <>
+              <Paper id={currentMenuItem.id} sx={{ p: '1rem', scrollMarginTop: '1.5rem' }}>
+                <Box
+                  sx={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap' }}
+                >
+                  <Typography variant="h6">{currentMenuItem.title}</Typography>
+                  {(currentMenuItem.tags || []).map((t) => (
+                    <Chip key={t} size="small" label={t} sx={{ opacity: 0.7 }} />
+                  ))}
+                  {userName && currentMenuItem.id && (
+                    <Box sx={{ mt: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
+                      <Tooltip
+                        title={
+                          isMember ? '' : 'Requires membership in Q-Assets-Management to publish'
+                        }
+                      >
+                        <span>
+                          <EditToggleButton
+                            size="small"
+                            editing={Boolean(editingId)}
+                            disabled={!isMember}
+                            onClick={() => startEdit(currentMenuItem.id!)}
+                          >
+                            {editingId ? 'Editing…' : 'Edit Section'}
+                          </EditToggleButton>
+                        </span>
+                      </Tooltip>
+                    </Box>
+                  )}
+
+                  {currentOverride?.publisher && (
+                    <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
+                      Overridden by {currentOverride.publisher}
+                      {currentOverride.role ? ` (${currentOverride.role})` : ''}
+                    </Typography>
+                  )}
+                </Box>
+
+                <Divider sx={{ my: '0.75rem' }} />
+
+                {currentOverride?.html ? (
+                  <PublishedHtmlRenderer html={currentOverride.html} />
+                ) : currentDefault ? (
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {currentDefault.body}
+                  </Box>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    No content yet. (Define locally or publish via QDN.)
                   </Typography>
                 )}
-              </Box>
 
-              <Divider sx={{ my: '0.75rem' }} />
-
-              {currentOverride?.html ? (
-                <PublishedHtmlRenderer html={currentOverride.html} />
-              ) : currentDefault ? (
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  {currentDefault.body}
-                </Box>
-              ) : (
-                <Typography variant="body2" color="text.secondary">
-                  No content yet. (Define locally or publish via QDN.)
-                </Typography>
-              )}
-
-              {userName && currentMenuItem.id && (
-                <Box sx={{ mt: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
-                  <Tooltip
-                    title={isMember ? '' : 'Requires membership in Q-Assets-Management to publish'}
-                  >
-                    <span>
-                      <EditToggleButton
-                        size="small"
-                        editing={Boolean(editingId)}
-                        disabled={!isMember}
-                        onClick={() => startEdit(currentMenuItem.id!)}
+                {userName && currentMenuItem.id && (
+                  <>
+                    <Box sx={{ mt: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
+                      <Tooltip
+                        title={
+                          isMember ? '' : 'Requires membership in Q-Assets-Management to publish'
+                        }
                       >
-                        {editingId ? 'Editing…' : 'Edit'}
-                      </EditToggleButton>
-                    </span>
-                  </Tooltip>
-                </Box>
-              )}
-            </Paper>
+                        <span>
+                          <EditToggleButton
+                            size="small"
+                            editing={Boolean(editingId)}
+                            disabled={!isMember}
+                            onClick={() => startEdit(currentMenuItem.id!)}
+                          >
+                            {editingId ? 'Editing…' : 'Edit'}
+                          </EditToggleButton>
+                        </span>
+                      </Tooltip>
+                    </Box>
+                  </>
+                )}
+              </Paper>
+            </>
           ) : (
             <Paper sx={{ p: '1.25rem' }}>
               <Typography>Select a section from the left.</Typography>
@@ -655,9 +686,29 @@ export default function Information() {
       </Box>
 
       {/* Section Editor */}
-      <Dialog open={Boolean(editingId)} onClose={() => setEditingId(null)} fullWidth maxWidth="md">
+
+      <Dialog
+        open={Boolean(editingId)}
+        onClose={() => setEditingId(null)}
+        fullScreen={isXs} // full screen on phones
+        fullWidth // still needed for layout
+        maxWidth={false} // allow our custom width
+        slotProps={{
+          paper: { sx: dialogPaperSx(isXs) },
+        }}
+      >
         <DialogTitle>Edit Section</DialogTitle>
-        <DialogContent dividers>
+        <DialogContent
+          dividers
+          sx={{
+            // let the content scroll within the 75vh shell
+            overflow: 'hidden',
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 1.5,
+          }}
+        >
           <TiptapEditor value={htmlDraft} onChange={setHtmlDraft} />
         </DialogContent>
         <DialogActions>

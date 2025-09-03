@@ -13,7 +13,7 @@ export function QortalLinkHandler({ children }: { children: React.ReactNode }) {
     const href = a.getAttribute('href') || '';
     if (!/^qortal:\/\//i.test(href)) return;
 
-    console.log('[QortalLinkHandler] intercept', { href, a });
+    // console.log('[QortalLinkHandler] intercept', { href, a });
     e.preventDefault();
     e.stopPropagation();
 

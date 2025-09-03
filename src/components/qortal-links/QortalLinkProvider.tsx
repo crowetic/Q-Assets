@@ -35,7 +35,7 @@ export function QortalLinkProvider({ children }: { children: React.ReactNode }) 
   });
   const theme = useTheme();
   const hubOrigin = useMemo(() => getHubOrigin(), []);
-  console.log('[link provider] hubOrigin', hubOrigin);
+  // console.log('[link provider] hubOrigin', hubOrigin);
 
   const themeMode: 'light' | 'dark' = useMemo(
     () =>
@@ -76,19 +76,19 @@ export function QortalLinkProvider({ children }: { children: React.ReactNode }) 
 
       try {
         if (isOurApp && internalPath) {
-          console.log('it is our app, nav internal', isOurApp);
-          console.log('[openQortalLink] navigate internal', internalPath);
+          // console.log('it is our app, nav internal', isOurApp);
+          // console.log('[openQortalLink] navigate internal', internalPath);
           navigate(internalPath);
           // setPopupSrc(internalPath);
           return;
         }
         const baseArb = await getBaseArbitraryUrl(p.service as Service, p.name, p.identifier);
-        console.log('baseArbitraryUrl', baseArb);
+        // console.log('baseArbitraryUrl', baseArb);
         // 2) build /render URL for iframe (always open in popup)
         const pathToAppend = p.service === 'APP' || p.service === 'WEBSITE' ? p.path : undefined;
         const renderUrl = arbitraryToRenderUrl(baseArb, pathToAppend);
         const fullUrl = toAbsoluteHubUrl(hubOrigin, renderUrl);
-        console.log('[openQortalLink] popup renderUrl', renderUrl);
+        // console.log('[openQortalLink] popup renderUrl', renderUrl);
 
         const clamped = clampWindowPos(wnd);
         setWnd(clamped);

@@ -11,6 +11,7 @@ import { THEME_COLOR_TOKENS, themedColorCSSFromTheme } from '../tiptap/themeColo
 import { Box, useTheme } from '@mui/material';
 import { QortalAutoLink } from '../tiptap/extensions/QortalAutoLink';
 import { Link } from '@tiptap/extension-link';
+import { alpha } from '@mui/material';
 
 interface TiptapEditorProps {
   value: string; // initial content only
@@ -56,7 +57,13 @@ export default function TiptapEditor({ value, onChange, onReady, full = true }: 
       QortalLink,
       QortalAutoLink,
     ],
-    // no onUpdate -> no per-keystroke state updates
+    editorProps: {
+      attributes: {
+        class: 'q-editor-content', // <— target this, not generic .ProseMirror
+        spellCheck: 'true',
+        'aria-label': 'Rich text editor',
+      },
+    },
   });
   const linkExt = editor?.extensionManager.extensions.find((e) => e.name === 'link');
   console.log('link ext options:', linkExt?.options);
@@ -108,30 +115,90 @@ export default function TiptapEditor({ value, onChange, onReady, full = true }: 
 
   if (!editor) return null;
 
+  // Theme-aware surface colors (TextField-like)
+  const surfaceBg =
+    theme.palette.mode === 'dark'
+      ? alpha(theme.palette.primary.light, 0.08)
+      : alpha(theme.palette.primary.light, 0.12);
+
+  const surfaceBgFocus =
+    theme.palette.mode === 'dark'
+      ? alpha(theme.palette.primary.light, 0.16)
+      : alpha(theme.palette.primary.light, 0.2);
+
+  const ring = alpha(theme.palette.primary.main, 0.28);
+  const hoverBorder = alpha(theme.palette.text.primary, 0.25);
+
   return (
-    <>
+    <Box
+      className="tiptap-root"
+      sx={{
+        // FULL WIDTH + HEIGHT in parent
+        ...(full && {
+          display: 'flex',
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0,
+          width: '100%',
+          alignSelf: 'stretch',
+        }),
+        // Typography/media defaults
+        '& ul': { pl: '1.5rem', listStyleType: 'disc', my: 1.5 },
+        '& ol': { pl: '1.5rem', listStyleType: 'decimal', my: 1.5 },
+        '& li': { mb: 0.25 },
+        '& img': { maxWidth: '100%', height: 'auto', display: 'block', my: 2 },
+        WebkitTapHighlightColor: 'transparent',
+      }}
+    >
+      {/* Toolbar: sticky & above editor content */}
       <Box
-        className="tiptap"
+        className="tiptap-toolbar"
         sx={{
-          // --- FULL WIDTH + HEIGHT BEHAVIOR ---
-          ...(full
-            ? {
-                display: 'flex',
-                flexDirection: 'column',
-                minHeight: 0, // allow shrinking inside overflow containers
-                width: '100%', // fill width
-              }
-            : {}),
-          // Typography and media defaults
-          '& ul': { pl: '1.5rem', listStyleType: 'disc', my: 1.5 },
-          '& ol': { pl: '1.5rem', listStyleType: 'decimal', my: 1.5 },
-          '& li': { mb: 0.25 },
-          '& img': { maxWidth: '100%', height: 'auto', display: 'block', my: 2 },
+          flex: '0 0 auto',
+          position: 'sticky',
+          top: 0,
+          zIndex: 2,
+          // solid background so text doesn't show "under" it while typing
+          bgcolor: theme.palette.background.paper,
+          // small shadow so it's obviously floating
+          boxShadow: 1,
         }}
       >
         <TipTapToolbar editor={editor} />
       </Box>
-      <EditorContent editor={editor} />
-    </>
+
+      {/* Scrollable editor pane */}
+      <Box
+        className="q-editor-surface"
+        // onClick={() => editor?.commands.focus('end')}
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          overflow: 'auto',
+          position: 'relative',
+          bgcolor: surfaceBg,
+          border: `1px solid ${theme.palette.divider}`,
+          borderRadius: 1.5,
+          transition: 'background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease',
+          cursor: 'text',
+          '&:hover': {
+            borderColor: hoverBorder,
+          },
+          '&:focus-within': {
+            borderColor: theme.palette.primary.main,
+            boxShadow: `0 0 0 3px ${ring}`,
+            bgcolor: surfaceBgFocus,
+          },
+        }}
+      >
+        <EditorContent
+          editor={editor}
+          // Give the content area full height + padding
+          className="q-editor-content"
+          // (class duplicated via editorProps to guarantee specificity)
+        />
+      </Box>
+    </Box>
   );
 }
