@@ -49,6 +49,7 @@ import { prepareHtmlForPublish } from '../utils/publicationPublisher';
 import PublishedHtmlRenderer from '../components/PublishedHtmlRenderer';
 import { useMediaQuery } from '@mui/material';
 import { dialogPaperSx } from '../components/comments/CommentsSection';
+import { useAlert } from '../components/alerts';
 
 // ---- Hard-coded defaults remain source of truth when no remote exists ----
 type InfoSection = {
@@ -269,6 +270,7 @@ export default function Information() {
   const { name: userName, address: userAddress } = useAuth();
   const { hash } = useLocation();
   const navigate = useNavigate();
+  const { alert } = useAlert();
 
   const isXs = useMediaQuery(theme.breakpoints.down('sm'));
 
@@ -461,9 +463,11 @@ export default function Information() {
       }));
       setEditingId(null);
       setHtmlDraft('');
-      alert('Section published to QDN.');
+      alert('Section published to QDN.', 'Section Published Successfully!', {
+        severity: 'success',
+      });
     } catch (e: any) {
-      alert(`Publish failed: ${String(e?.message || e)}`);
+      alert(`Publish failed: ${String(e?.message || e)}`, 'Publish FAILURE', { severity: 'error' });
     }
   };
 
@@ -490,9 +494,11 @@ export default function Information() {
     try {
       await saveWikiMenu(cleaned, userName);
       setOpenMenuDlg(false);
-      alert('Menu published to QDN.');
+      alert('Menu published to QDN.', 'Menu Published Successfully!', { severity: 'success' });
     } catch (e: any) {
-      alert(`Menu publish failed: ${String(e?.message || e)}`);
+      alert(`Menu publish failed: ${String(e?.message || e)}`, 'Publish FAILURE', {
+        severity: 'error',
+      });
     }
   };
 

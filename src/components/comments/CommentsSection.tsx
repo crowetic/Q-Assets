@@ -677,9 +677,14 @@ export default function CommentsSection({
   };
 
   function openEdit(n: ThreadCommentWithFlags) {
-    if (!userName) return alert('You need a Qortal name to edit.');
-    if (n.author !== userName) return alert('Only the original publisher can edit this comment.');
-    if (n.deleted) return alert('This comment is deleted.');
+    if (!userName)
+      return alert('You need a Qortal name to edit.', 'Name Required', { severity: 'warning' });
+    if (n.author !== userName)
+      return alert('Only the original publisher can edit this comment.', 'orig publisher only', {
+        severity: 'warning',
+      });
+    if (n.deleted)
+      return alert('This comment is deleted.', 'Deleted Comment', { severity: 'warning' });
     setEditTarget(n);
     setEditHtml(n.html || '');
     setEditOpen(true);
@@ -689,7 +694,7 @@ export default function CommentsSection({
     if (!userName || !editTarget) return;
     const safeHtml = prepareHtmlForPublish(editHtml, theme);
     if (!safeHtml.trim()) {
-      return alert('Comment is empty.');
+      return alert('Comment is empty.', 'Empty Comment', { severity: 'warning' });
     }
 
     try {
@@ -737,9 +742,13 @@ export default function CommentsSection({
   }
 
   function confirmDelete(n: ThreadCommentWithFlags) {
-    if (!userName) return alert('You need a Qortal name to delete.');
-    if (n.author !== userName) return alert('Only the original publisher can delete this comment.');
-    if (n.deleted) return alert('Already deleted.');
+    if (!userName)
+      return alert('You need a Qortal name to delete.', 'Name Required', { severity: 'warning' });
+    if (n.author !== userName)
+      return alert('Only the original publisher can delete this comment.', 'Only Orig. Publisher', {
+        severity: 'warning',
+      });
+    if (n.deleted) return alert('Already deleted.', 'Already Deleted!', { severity: 'warning' });
     setDeleteTarget(n);
     setDeleteOpen(true);
   }
