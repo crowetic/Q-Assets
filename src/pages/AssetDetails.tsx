@@ -273,13 +273,16 @@ export default function AssetDetail() {
         </Grid>
 
         {/* Avatar + basic info */}
-        <Grid size={{ xs: 12, md: 7, lg: 7 }} sx={{ display: 'flex', justifyContent: 'center' }}>
+        <Grid
+          size={{ xs: 12, md: 7, lg: 7 }}
+          sx={{ display: 'flex', justifyContent: 'center', textAlign: 'center' }}
+        >
           <Card
             sx={{
               display: 'flex',
-              flexDirection: { xs: 'column', sm: 'row' }, // stack on mobile
+              flexDirection: { xs: 'column', sm: 'row' },
               alignItems: { xs: 'center', sm: 'stretch' },
-              textAlign: { xs: 'center', sm: 'left' },
+              textAlign: { xs: 'center', sm: 'center' },
               borderRadius: 4,
               gap: { xs: 2, sm: 3 },
               p: { xs: 2, sm: 3 },
@@ -295,7 +298,7 @@ export default function AssetDetail() {
                   width: { xs: 96, sm: 140 },
                   height: { xs: 96, sm: 140 },
                   flexShrink: 0,
-                  alignSelf: { xs: 'center', sm: 'flex-start' },
+                  alignSelf: { xs: 'center', sm: 'center' },
                 }}
               />
             )}
@@ -332,7 +335,7 @@ export default function AssetDetail() {
                   display: 'flex',
                   flexWrap: 'wrap',
                   gap: 1,
-                  justifyContent: { xs: 'center', sm: 'flex-start' },
+                  justifyContent: { xs: 'center', sm: 'center' },
                 }}
               >
                 <Chip label={`Asset ID: ${asset.assetId}`} />
@@ -349,21 +352,27 @@ export default function AssetDetail() {
               <Box
                 mt={1.25}
                 sx={{
-                  display: 'grid',
-                  gridTemplateColumns: { xs: '1fr', sm: 'auto 1fr' },
-                  columnGap: 2,
-                  rowGap: 0.5,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 0.5,
+                  alignItems: 'center', // center horizontally
+                  justifyContent: 'center',
+                  textAlign: 'center',
                 }}
               >
-                <Typography>Divisible:</Typography>
-                <Typography sx={{ color: 'secondary.light' }}>
-                  {asset.isDivisible ? 'Yes' : 'No'}
-                </Typography>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                  <Typography>Divisible:</Typography>
+                  <Typography sx={{ color: 'secondary.light' }}>
+                    {asset.isDivisible ? 'Yes' : 'No'}
+                  </Typography>
+                </Box>
 
-                <Typography>Unspendable:</Typography>
-                <Typography sx={{ color: 'secondary.light' }}>
-                  {asset.isUnspendable ? 'Yes' : 'No'}
-                </Typography>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                  <Typography>Unspendable:</Typography>
+                  <Typography sx={{ color: 'secondary.light' }}>
+                    {asset.isUnspendable ? 'Yes' : 'No'}
+                  </Typography>
+                </Box>
               </Box>
 
               {canPublish && (
@@ -373,7 +382,8 @@ export default function AssetDetail() {
                     display: 'flex',
                     gap: 1,
                     flexWrap: 'wrap',
-                    justifyContent: { xs: 'center', sm: 'flex-start' },
+                    justifyContent: { xs: 'center', sm: 'center' },
+                    textAlign: 'center',
                   }}
                 >
                   <InfoOutlineButton onClick={() => setOpenDivDlg(true)}>
