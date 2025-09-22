@@ -407,7 +407,11 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     async (opts) => {
       if (!board) throw new Error('No board loaded');
       if (!auth.name || !identity.name) throw new Error('Authentication Failed');
-      const issuer = auth.name ? auth.name : identity.name;
+      if (board.createdBy != auth.name || board.createdBy != identity.name)
+        throw new Error(
+          'non-publisher delete feature not implemented, you must be the board creator to delete for now.'
+        );
+      const issuer = board.createdBy;
       const allCards = Object.values(cards);
       await apiDeleteBoard(issuer, board, allCards, opts);
 
