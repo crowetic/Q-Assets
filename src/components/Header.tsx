@@ -9,7 +9,7 @@ const Header = () => {
   const isMdDown = useMediaQuery(theme.breakpoints.down('md'));
   const { pathname, hash } = useLocation();
 
-  const compact = pathname.startsWith('/trade'); // compact mode on trade routes
+  const compact = pathname.startsWith('/trade') || pathname.startsWith('/qdeck/'); // compact mode on trade routes
 
   const navLinks = [
     { label: 'Home', to: '/' },
@@ -20,7 +20,8 @@ const Header = () => {
   ];
 
   const utilityButtons = [
-    { label: 'Information', to: '/info' },
+    { label: 'Q-Deck', to: '/qdeck' }, // Q-Deck Project Management
+    { label: 'Info + Wiki', to: '/info' },
     { label: 'Release Notes', to: '/info#release-notes' },
   ];
 
@@ -37,6 +38,8 @@ const Header = () => {
         return pathname.startsWith('/portfolio');
       case '/trade':
         return pathname.startsWith('/trade') || pathname.startsWith('/pair');
+      case '/qdeck': // Q-Deck
+        return pathname.startsWith('/qdeck'); // matches /qdeck and /qdeck/:issuer/:boardId
       case '/info':
         return pathname === '/info' && (!hash || hash === '' || hash === '#top');
       case '/info#release-notes':

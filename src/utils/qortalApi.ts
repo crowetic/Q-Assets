@@ -23,6 +23,85 @@ export async function signAndBroadcast(rawTx: string): Promise<object> {
 }
 
 
+// GROUP CALLS --------------------------
+
+export interface GroupSummary {
+  groupId: number;
+  owner: string;
+  groupName: string;
+  description: string;
+  created: number;
+  isOpen: boolean;
+  approvalThreshold: string;
+  minimumBlockDelay: number;
+  maximumBlockDelay: number;
+  memberCount: number;
+  isAdmin: boolean;
+}
+
+
+// Low-level call to REST endpoint
+export async function getAccountGroups(address: string, opts?: { signal?: AbortSignal }): Promise<GroupSummary[]> {
+  if (!address) throw new Error('address is required');
+  const url = `/groups/member/${encodeURIComponent(address)}`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+    signal: opts?.signal,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`GET ${url} failed: ${res.status} ${res.statusText}${text ? ` — ${text}` : ''}`);
+  }
+
+  const data = await res.json();
+  if (!Array.isArray(data)) {
+    throw new Error(`GET ${url} returned non-array payload`);
+  }
+
+  return data.map((g: any) => ({
+    groupId: Number(g.groupId),
+    owner: String(g.owner),
+    groupName: String(g.groupName ?? ''),
+    description: String(g.description ?? ''),
+    created: Number(g.created ?? 0),
+    isOpen: Boolean(g.isOpen),
+    approvalThreshold: String(g.approvalThreshold ?? ''),
+    minimumBlockDelay: Number(g.minimumBlockDelay ?? 0),
+    maximumBlockDelay: Number(g.maximumBlockDelay ?? 0),
+    memberCount: Number(g.memberCount ?? 0),
+    isAdmin: Boolean(g.isAdmin),
+  })) as GroupSummary[];
+}
+
+/* ---------- Convenience helpers for Q-Deck ACLs ---------- */
+
+// just the ids
+export async function getAccountGroupIds(address: string): Promise<number[]> {
+  const groups = await getAccountGroups(address);
+  return groups.map(g => g.groupId);
+}
+
+// groups where user is admin
+export async function getAdminGroupIds(address: string): Promise<number[]> {
+  const groups = await getAccountGroups(address);
+  return groups.filter(g => g.isAdmin).map(g => g.groupId);
+}
+
+// predicate for “can edit this board” based on groupsAllowed
+export async function userCanEditBoard(address: string, groupsAllowed: Array<string | number>): Promise<boolean> {
+  const myIds = new Set(await getAccountGroupIds(address));
+  // groupsAllowed might be strings; coerce to number where possible
+  for (const id of groupsAllowed ?? []) {
+    const n = typeof id === 'string' ? Number(id) : id;
+    if (myIds.has(n)) return true;
+  }
+  return (groupsAllowed?.length ?? 0) === 0; // if unset/open, allow
+}
+
+// END GROUPS-RELATED
+
 
 // --- helpers ---
 

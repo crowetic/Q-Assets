@@ -46,7 +46,7 @@ const DEFAULT_AVATAR_IDENTIFIERS = [
 
 // ---------------- MIME sniffing ----------------
 
-function guessImageMimeFromBase64(base64: string): string {
+export function guessImageMimeFromBase64(base64: string): string {
   if (!base64) return 'application/octet-stream';
   // read a small slice
   const sample = atob(base64.slice(0, 64));

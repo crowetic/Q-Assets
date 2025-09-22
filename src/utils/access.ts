@@ -53,7 +53,7 @@ async function fetchAllRows(onlyAdmins: boolean): Promise<GroupMemberRow[]> {
   return onlyAdmins ? rows.filter((r) => r.isAdmin === true) : rows;
 }
 
-async function fetchGroupMembers(onlyAdmins: boolean, groupId: number): Promise<GroupMemberRow[]> {
+export async function fetchGroupMembers(onlyAdmins: boolean, groupId: number): Promise<GroupMemberRow[]> {
   const rows = await fetchGroupMembersRaw(groupId);
   return onlyAdmins ? rows.filter((r) => r.isAdmin === true) : rows;
 }

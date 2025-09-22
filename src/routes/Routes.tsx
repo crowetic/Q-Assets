@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { createBrowserRouter, RouterProvider, Outlet, RouteObject } from 'react-router-dom';
 import { AppWrapper } from '../AppWrapper';
 import Home from '../pages/Home';
@@ -14,6 +15,16 @@ import { QortalLinkProvider } from '../components/qortal-links/QortalLinkProvide
 import { QortalLinkHandler } from '../components/qortal-links/QortalLinkHandler';
 import { AlertProvider } from '../components/alerts';
 import AssetDataPage from '../pages/AssetDataPage';
+import QDeckAllBoards from '../pages/QDeckAllBoards';
+import QDeckHome from '../pages/QDeckHome';
+
+// --- Q-Deck (lazy) ---
+// import QDeckAllBoards from '../pages/QDeckAllBoards';
+const QDeckIndex = React.lazy(() => import('../pages/QDeckMyBoards'));
+const QDeckPage = React.lazy(() => import('../pages/QDeckPage'));
+const QDeckProvider = React.lazy(() =>
+  import('../components/qdeck/QDeckProvider').then((m) => ({ default: m.QDeckProvider }))
+);
 
 function PortfolioProviderLayout() {
   return (
@@ -50,7 +61,9 @@ export function Routes() {
           <AlertProvider>
             <QortalLinkProvider>
               <QortalLinkHandler>
-                <AppWrapper />
+                <React.Suspense fallback={<div style={{ padding: 16 }}>Loading…</div>}>
+                  <AppWrapper />
+                </React.Suspense>
               </QortalLinkHandler>
             </QortalLinkProvider>
           </AlertProvider>
@@ -69,6 +82,21 @@ export function Routes() {
         { path: 'trade', element: <TradeMarkets /> },
         { path: 'trade/:assetId', element: <TradePair /> },
         { path: 'info', element: <Information /> },
+        {
+          path: 'qdeck',
+          element: (
+            <React.Suspense fallback={<div style={{ padding: 16 }}>Loading Q-Deck…</div>}>
+              <QDeckProvider>
+                <QDeckHome />
+              </QDeckProvider>
+            </React.Suspense>
+          ),
+          children: [
+            { index: true, element: <QDeckIndex /> },
+            { path: 'public', element: <QDeckAllBoards /> },
+            { path: ':issuer/:boardId', element: <QDeckPage /> },
+          ],
+        },
       ],
     },
   ];
