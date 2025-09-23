@@ -28,6 +28,7 @@ import TiptapEditor from '../TipTapEditor';
 import { resolvePrimaryImageDataUrl, publishPrimaryImageForCard } from '../../utils/qdeckApi';
 import { useAuth } from 'qapp-core';
 import { userCanEditBoard } from '../../utils/qortalApi';
+import QDeckCommentsSection from './QDeckCommentsSection';
 
 type Props = {
   open: boolean;
@@ -532,6 +533,13 @@ export default function CardDialog(props: Props) {
               Funds go to project treasury (MVP). Escrow AT in Phase-2.
             </Typography>
           </Stack>
+          <Divider />
+
+          <QDeckCommentsSection
+            cardId={card.cardId}
+            canComment={Boolean(userAddress)}
+            showAdminsBadge={Boolean(board.privateMeta?.isAdmins)} // not used yet; keep for future
+          />
         </Stack>
       </DialogContent>
 

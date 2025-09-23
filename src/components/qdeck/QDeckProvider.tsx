@@ -13,6 +13,8 @@ import {
   resolveBoardForRead,
   discoverCardRefsBySearch,
   resolveBoardForReadWithMeta,
+  discoverComments,
+  loadCommentsDoc,
 } from '../../utils/qdeckApi';
 import { useAuth } from 'qapp-core';
 import { deleteBoard as apiDeleteBoard } from '../../utils/qdeckApi'; // path as needed
@@ -59,6 +61,8 @@ type QDeckCtx = {
     parentId?: string,
     opts?: { isAdminsThread?: boolean }
   ) => Promise<void>;
+
+  loadCommentsForCard: (cardId: string) => Promise<void>;
 
   recordPayment: (line: Parameters<typeof appendPaymentLine>[2]) => Promise<void>;
   deleteBoard: (opts?: { cascadeCards?: boolean; cascadeComments?: boolean }) => Promise<void>;
@@ -389,9 +393,93 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         seq: thread.seq + 1,
       };
       setComments((prev) => ({ ...prev, [cardId]: next }));
-      await saveCommentsDoc(auth.name ? auth.name : identity.name, board, next);
+      await saveCommentsDoc(auth.name ? auth.name : identity.name, board, cardId, next);
     },
     [board, comments, identity.name, identity.address]
+  );
+
+  // helper: merge N per-issuer threads into one view
+  function mergeThreads(threads: CardCommentThread[]): CardCommentThread {
+    const base: CardCommentThread = {
+      _type: 'QDECK_COMMENTS',
+      version: 1,
+      cardId: threads[0]?.cardId ?? '',
+      comments: [],
+      updatedAt: 0,
+      seq: 0,
+    };
+
+    const seen = new Set<string>();
+    const all = [];
+
+    for (const t of threads) {
+      // guard tombstones/empties
+      if (!t || !Array.isArray(t.comments)) continue;
+
+      for (const c of t.comments) {
+        // Prefer stable `commentId`; fall back to composite if ever missing
+        const key = c.commentId || `${c.author}::${c.createdAt}::${(c.bodyHtml || '').length}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          all.push(c);
+        }
+      }
+      if ((t.updatedAt ?? 0) > base.updatedAt) base.updatedAt = t.updatedAt!;
+      if ((t.seq ?? 0) > base.seq) base.seq = t.seq!;
+    }
+
+    // newest-first
+    all.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    base.comments = all;
+    return base;
+  }
+
+  const loadCommentsForCard = React.useCallback(
+    async (cardId: string) => {
+      if (!board) return;
+      if (!cardId) throw new Error('cardId not passed to LoadCommentsForCard');
+      try {
+        // 1) find all issuers who published a thread for this card *with this board’s visibility/mode*
+        const refs = await discoverComments(board, cardId);
+
+        // 2) load per-issuer thread
+        const threads = (
+          await Promise.all(
+            refs.map(async (r) => {
+              try {
+                const t = await loadCommentsDoc(r.name, board, cardId);
+                return t;
+              } catch {
+                return null;
+              }
+            })
+          )
+        ).filter(Boolean) as CardCommentThread[];
+
+        // 3) merge + cache
+        const merged = mergeThreads(threads);
+        setComments((prev) => ({ ...prev, [cardId]: merged }));
+      } catch (e) {
+        console.warn('[Q-Deck] loadCommentsForCard failed', { cardId, e });
+        // best-effort empty cache so UI renders deterministically
+        setComments((prev) =>
+          prev[cardId]
+            ? prev
+            : {
+                ...prev,
+                [cardId]: {
+                  _type: 'QDECK_COMMENTS',
+                  version: 1,
+                  cardId,
+                  comments: [],
+                  updatedAt: 0,
+                  seq: 0,
+                },
+              }
+        );
+      }
+    },
+    [board]
   );
 
   const recordPayment = useCallback<QDeckCtx['recordPayment']>(
@@ -436,6 +524,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       moveCard,
       updateCard,
       addComment,
+      loadCommentsForCard,
       recordPayment,
       deleteBoard: deleteBoardImpl,
     }),
@@ -451,6 +540,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       moveCard,
       updateCard,
       addComment,
+      loadCommentsForCard,
       recordPayment,
       deleteBoardImpl,
     ]

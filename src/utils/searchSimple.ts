@@ -79,3 +79,26 @@ export async function searchSimpleNameIdPrefix(
   const data = await res.json();
   return Array.isArray(data) ? (data as SimpleHit[]) : [];
 }
+
+export async function searchSimpleByFullId(
+  identifier: string,
+  isPrivate?: boolean,
+): Promise<SimpleHit[]> {
+  const service = isPrivate ? "DOCUMENT_PRIVATE" : "DOCUMENT";
+  
+  const url = `/arbitrary/resources/searchsimple?service=${encodeURIComponent(
+    service
+  )}&identifier=${encodeURIComponent(identifier)}&limit=0`;
+
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+  });
+
+  if (!res.ok) {
+    throw new Error(`searchsimple failed: ${res.status} ${res.statusText}`);
+  }
+
+  const data = await res.json();
+  return Array.isArray(data) ? (data as SimpleHit[]) : [];
+}

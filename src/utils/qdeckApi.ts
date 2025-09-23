@@ -1,14 +1,17 @@
-import { QDeckBoard, QDeckCard, CardCommentThread, coerceVisibility, coerceService, QDeckTombstone, CardsIndexDoc, PaymentLine, BoardsIndexDoc, PaymentsDoc } from '../types/qdeck';
+import { QDeckBoard, QDeckCard, CardCommentThread, coerceVisibility, coerceService, QDeckTombstone, CardsIndexDoc, PaymentLine, BoardsIndexDoc, PaymentsDoc, CardComment } from '../types/qdeck';
 import { base64ToObject, objectToBase64 } from 'qapp-core';
 import { createBoard } from './qdeckDefaults';
 import { addPrivateMagic, getQAssetsRevenueAddress, parsePrivateBoardIdentV2, QDeckCommentsId, QDeckId, stripPrivateMagic, tempQAssetEscrowAccountAddress } from '../constants/qdeckIdentifiers';
 import { loadBoardsIndexMerged, normalizeIndexDoc, saveBoardsIndexWriteThrough } from './qdeckIndexCache';
-import { searchSimpleByIdPrefixOnly } from './searchSimple';
+import { searchSimpleByFullId, searchSimpleByIdPrefixOnly } from './searchSimple';
 import { fileToBase64 } from './data';
 import { guessImageMimeFromBase64 } from './fetchAssetAvatar';
 import { transferAsset } from './qortalApi';
 import { canUserDeleteBoard, collectRecipientPublicKeys } from './qdeckAccess';
 import { LruTtl } from './cache';
+import { uniqueId6 } from './ids';
+import { assetCommentsPrefix } from '../constants/qdnConstants';
+import { ThreadComment } from '../types/ThreadedComment';
 
 export type QUserIdentity = {
   name?: string;        // QDN name (issuer)
@@ -578,19 +581,21 @@ export async function loadCardDoc(issuerName: string, board: QDeckBoard, cardId:
 export async function saveCommentsDoc(
   issuerName: string,
   board: QDeckBoard,
-  thread: CardCommentThread
+  cardId?: string,
+  thread?: CardCommentThread,
 ) {
   const identifier =
     board.visibility === 'public'
-      ? QDeckId.commentsPublic(board.boardId, thread.cardId)
-      : QDeckId.commentsPrivate(board.boardId, thread.cardId, board.privateMeta?.mode!, board.privateMeta?.isAdmins, board.privateMeta?.groupId);
+      ? QDeckId.commentsPublic(board.boardId, cardId!)
+      : QDeckId.commentsPrivate(board.boardId, cardId!, board.privateMeta?.mode!, board.privateMeta?.isAdmins, board.privateMeta?.groupId);
+  
 
   if (board.visibility === 'public') {
-    return qdeckPublish(issuerName, identifier, thread, false);
+    return qdeckPublish(issuerName, identifier , thread!, false);
   }
 
   const mode = board.privateMeta?.mode ?? 'group';
-  const payloadBase64 = await objectToBase64(thread);
+  const payloadBase64 = await objectToBase64(thread!);
 
   if (mode === 'direct') {
     const issNameData = await qortalRequest({ action: 'GET_NAME_DATA', name: issuerName });
@@ -633,6 +638,8 @@ export async function loadCommentsDoc(
       ? QDeckId.commentsPublic(board.boardId, cardId)
       : QDeckId.commentsPrivate(board.boardId, cardId, board.privateMeta?.mode!, board.privateMeta?.isAdmins, board.privateMeta?.groupId);
 
+      console.log('identifier in loadCommentsDoc', identifier)
+
   if (board.visibility === 'public') {
     return qdeckFetch<CardCommentThread>(issuerName, identifier, false);
   }
@@ -670,12 +677,15 @@ export async function discoverComments(
           cardId,
           board.privateMeta?.groupId ? 'group' : 'direct',
           board.privateMeta?.groupId, board.privateMeta?.isAdmins 
-        );
+      );
 
-    const refs = await searchSimpleByIdPrefixOnly(
+  console.log('ident from discoverComments', ident)
+
+    const refs = await searchSimpleByFullId(
     ident,
     board.visibility === 'private' ? true : false,
-  );
+    );
+  console.log('refs from discoverComments', refs)
 
   return refs;
 }
