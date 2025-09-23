@@ -27,7 +27,7 @@ type Props = {
   showAdminsBadge?: boolean;
 };
 
-const MAX_DEPTH = 8;
+// const MAX_DEPTH = 8;
 
 type UINode = {
   id: string;

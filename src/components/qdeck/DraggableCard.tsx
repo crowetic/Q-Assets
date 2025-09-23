@@ -16,11 +16,11 @@ type DraggableProps = {
   onClick?: (cardId: string) => void;
 };
 
-function colorFor(name: string) {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
-  return `hsl(${((h % 360) + 360) % 360} 70% 45%)`;
-}
+// function colorFor(name: string) {
+//   let h = 0;
+//   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
+//   return `hsl(${((h % 360) + 360) % 360} 70% 45%)`;
+// }
 
 export const DraggableCard: React.FC<DraggableProps> = ({ cardId, listId, onClick }) => {
   const theme = useTheme();

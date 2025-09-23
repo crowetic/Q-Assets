@@ -1,4 +1,4 @@
-import { QDeckBoard, QDeckCard, CardCommentThread, coerceVisibility, coerceService, QDeckTombstone, CardsIndexDoc, PaymentLine, BoardsIndexDoc, PaymentsDoc, CardComment } from '../types/qdeck';
+import { QDeckBoard, QDeckCard, CardCommentThread, coerceVisibility, coerceService, QDeckTombstone, CardsIndexDoc, PaymentLine, BoardsIndexDoc, PaymentsDoc } from '../types/qdeck';
 import { base64ToObject, objectToBase64 } from 'qapp-core';
 import { createBoard } from './qdeckDefaults';
 import { addPrivateMagic, getQAssetsRevenueAddress, parsePrivateBoardIdentV2, QDeckCommentsId, QDeckId, stripPrivateMagic, tempQAssetEscrowAccountAddress } from '../constants/qdeckIdentifiers';
@@ -9,9 +9,9 @@ import { guessImageMimeFromBase64 } from './fetchAssetAvatar';
 import { transferAsset } from './qortalApi';
 import { canUserDeleteBoard, collectRecipientPublicKeys } from './qdeckAccess';
 import { LruTtl } from './cache';
-import { uniqueId6 } from './ids';
-import { assetCommentsPrefix } from '../constants/qdnConstants';
-import { ThreadComment } from '../types/ThreadedComment';
+// import { uniqueId6 } from './ids';
+// import { assetCommentsPrefix } from '../constants/qdnConstants';
+// import { ThreadComment } from '../types/ThreadedComment';
 
 export type QUserIdentity = {
   name?: string;        // QDN name (issuer)

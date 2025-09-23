@@ -364,7 +364,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   );
 
   const addComment = useCallback<QDeckCtx['addComment']>(
-    async (cardId, commentHtml, parentId, opts) => {
+    async (cardId, commentHtml, parentId) => {
       if (!board) throw new Error('No board loaded');
       if (!auth.name || !identity.name) throw new Error('Authentication Failed');
       const now = Date.now();

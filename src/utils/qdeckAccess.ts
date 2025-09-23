@@ -1,5 +1,5 @@
 import { QDeckBoard, QDeckCard } from '../types/qdeck';
-import { fetchGroupMembers, getGroupAddressSetsById } from './access';
+import { fetchGroupMembers } from './access';
 import { qdeckFetch } from './qdeckApi';
 import { getAccountGroupIds, getAccountGroups } from './qortalApi';
 import pLimit from 'p-limit';
