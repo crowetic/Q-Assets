@@ -41,7 +41,7 @@ import {
   tempQAssetEscrowAccountAddress,
 } from '../../constants/qdeckIdentifiers';
 import { Refresh } from '@mui/icons-material';
-import { useAlert } from '../alerts';
+// import { useAlert } from '../alerts';
 // import { canUserEditBoard } from '../../utils/qdeckAccess';
 
 type BoardViewProps = {
@@ -244,10 +244,12 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
       .map((s) => s.trim())
       .filter(Boolean);
 
+    const nextIndex = cardsByList[addingForListId]?.length ?? 0;
+
     void createCard({
       title,
       statusListId: addingForListId,
-      order: 0,
+      order: nextIndex,
       quickDescription: newQuickDesc.trim() || undefined,
       priority: newPriority,
       estimatedCompletionTimeMinutes:

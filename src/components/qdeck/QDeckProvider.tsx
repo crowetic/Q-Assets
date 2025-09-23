@@ -378,7 +378,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         comments: [
           ...thread.comments,
           {
-            commentId: crypto.randomUUID(),
+            commentId: uniqueId6(),
             parentId,
             author,
             bodyHtml: commentHtml,

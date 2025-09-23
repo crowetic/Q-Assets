@@ -1,7 +1,7 @@
 import { QDeckBoard, QDeckCard, CardCommentThread, coerceVisibility, coerceService, QDeckTombstone, CardsIndexDoc, PaymentLine, BoardsIndexDoc, PaymentsDoc } from '../types/qdeck';
 import { base64ToObject, objectToBase64 } from 'qapp-core';
 import { createBoard } from './qdeckDefaults';
-import { addPrivateMagic, getQAssetsRevenueAddress, parsePrivateBoardIdentV2, QDeckId, stripPrivateMagic, tempQAssetEscrowAccountAddress } from '../constants/qdeckIdentifiers';
+import { addPrivateMagic, getQAssetsRevenueAddress, parsePrivateBoardIdentV2, QDeckCommentsId, QDeckId, stripPrivateMagic, tempQAssetEscrowAccountAddress } from '../constants/qdeckIdentifiers';
 import { loadBoardsIndexMerged, normalizeIndexDoc, saveBoardsIndexWriteThrough } from './qdeckIndexCache';
 import { searchSimpleByIdPrefixOnly } from './searchSimple';
 import { fileToBase64 } from './data';
@@ -582,8 +582,8 @@ export async function saveCommentsDoc(
 ) {
   const identifier =
     board.visibility === 'public'
-      ? QDeckId.commentsPublic(thread.cardId)
-      : QDeckId.commentsPrivate(thread.cardId);
+      ? QDeckId.commentsPublic(board.boardId, thread.cardId)
+      : QDeckId.commentsPrivate(board.boardId, thread.cardId, board.privateMeta?.mode!, board.privateMeta?.isAdmins, board.privateMeta?.groupId);
 
   if (board.visibility === 'public') {
     return qdeckPublish(issuerName, identifier, thread, false);
@@ -630,8 +630,8 @@ export async function loadCommentsDoc(
 ) {
   const identifier =
     board.visibility === 'public'
-      ? QDeckId.commentsPublic(cardId)
-      : QDeckId.commentsPrivate(cardId);
+      ? QDeckId.commentsPublic(board.boardId, cardId)
+      : QDeckId.commentsPrivate(board.boardId, cardId, board.privateMeta?.mode!, board.privateMeta?.isAdmins, board.privateMeta?.groupId);
 
   if (board.visibility === 'public') {
     return qdeckFetch<CardCommentThread>(issuerName, identifier, false);
@@ -656,6 +656,32 @@ export function isGroupKeyMissing(e: unknown): boolean {
   const msg = (e as any)?.message || (e as any)?.error || '';
   return String(msg).toLowerCase().includes('no group key');
 }
+
+
+export async function discoverComments(
+  board: QDeckBoard,
+  cardId: string
+): Promise<Array<{ name: string }>> {
+  const ident =
+    board.visibility === 'public'
+      ? QDeckCommentsId.publicV2(board.boardId, cardId)
+      : QDeckCommentsId.privateV2(
+          board.boardId,
+          cardId,
+          board.privateMeta?.groupId ? 'group' : 'direct',
+          board.privateMeta?.groupId, board.privateMeta?.isAdmins 
+        );
+
+    const refs = await searchSimpleByIdPrefixOnly(
+    ident,
+    board.visibility === 'private' ? true : false,
+  );
+
+  return refs;
+}
+
+
+
 
 
 // qdeckApi.ts
@@ -1074,8 +1100,8 @@ export async function deleteBoard(
       if (cascadeComments) {
         const commentsIdent =
           board.visibility === 'public'
-            ? QDeckId.commentsPublic(c.cardId)
-            : QDeckId.commentsPrivate(c.cardId);
+            ? QDeckId.commentsPublic(board.boardId, c.cardId)
+            : QDeckId.commentsPrivate(board.boardId, c.cardId, board.privateMeta?.mode!, board.privateMeta?.isAdmins, board.privateMeta?.groupId);
 
         await publishTombstone(
           issuerName,
