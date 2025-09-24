@@ -1,6 +1,17 @@
 import * as React from 'react';
 import { useQDeck } from './QDeckProvider';
-import { DndContext, closestCenter, DragEndEvent } from '@dnd-kit/core';
+import {
+  DndContext,
+  closestCenter,
+  DragEndEvent,
+  useSensor,
+  PointerSensor,
+  useSensors,
+  TouchSensor,
+  useDroppable,
+  MeasuringStrategy,
+  pointerWithin,
+} from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import {
   Box,
@@ -97,6 +108,10 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
 
   const theme = useTheme();
   const isXs = useMediaQuery(theme.breakpoints.down('sm'));
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 120, tolerance: 5 } })
+  );
 
   React.useEffect(() => {
     if (editingTitle) {
@@ -124,6 +139,15 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
     cardsByList[listId].sort((a, b) => cards[a].order - cards[b].order);
     // In BoardView where you compute listCardIds:
   });
+
+  function ListDroppable({ id, children }: { id: string; children: React.ReactNode }) {
+    const { setNodeRef } = useDroppable({ id });
+    return (
+      <Box ref={setNodeRef} sx={{ minHeight: 8, position: 'relative' }}>
+        {children}
+      </Box>
+    );
+  }
 
   const onDragEnd = async (e: DragEndEvent) => {
     const { active, over } = e;
@@ -419,7 +443,14 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
       </Box>
 
       {/* ===== Board ===== */}
-      <DndContext collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+      {/* <DndContext collisionDetection={closestCenter} onDragEnd={onDragEnd}> */}
+      <DndContext
+        sensors={sensors}
+        // More forgiving than closestCenter when columns vary in width/overflow
+        collisionDetection={pointerWithin} // or rectIntersection
+        measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+        onDragEnd={onDragEnd}
+      >
         <Box
           sx={{
             display: 'flex',
@@ -428,8 +459,9 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
             gap: 'var(--gap)',
             flex: 1,
             minHeight: 0,
-            minWidth: 0,
+            minWidth: '100%',
             overflowX: 'hidden',
+            overflowY: 'auto',
           }}
         >
           {board.lists
@@ -443,16 +475,16 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
                   elevation={2}
                   sx={{
                     // 100% width on phones; multi-column only at md+
-                    flex: { xs: '1 1 100%', md: '0 1 22rem' },
+                    flex: { xs: '1 1 100%', md: '0 1 19%' },
                     // maxWidth: { xs: '100%', md: '28rem' },
                     // minWidth: { xs: '100%', md: '50%', lg: '20%' },
-                    minWidth: { xs: '100%', md: '13rem' },
-                    maxWidth: { xs: '100%', md: '40rem' },
+                    minWidth: { xs: '100%', md: '24rem' },
+                    // maxWidth: { xs: '100%', md: '28rem' },
                     display: 'flex',
                     flexDirection: 'column',
                     // maxHeight: '100%',
                     bgcolor: list.faintColor ?? 'background.paper',
-                    overflow: 'hidden',
+                    overflowY: 'hidden',
                     minInlineSize: 0,
                   }}
                 >
@@ -460,7 +492,7 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
                     {list.title}
                   </Typography>
 
-                  <SortableContext
+                  {/* <SortableContext
                     items={listCardIds.map((cid) => `${cid}::${list.listId}`)}
                     strategy={verticalListSortingStrategy}
                   >
@@ -481,8 +513,33 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
                         onCardClick={openCard}
                       />
                     </Box>
-                  </SortableContext>
+                  </SortableContext> */}
 
+                  <ListDroppable id={`list::${list.listId}`}>
+                    <SortableContext
+                      items={listCardIds.map((cid) => `${cid}::${list.listId}`)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <Box
+                        sx={{
+                          px: '0.5rem',
+                          pb: '0.5rem',
+                          flex: 1,
+                          minHeight: 0,
+                          // IMPORTANT: allow children to overflow INSIDE, but the Paper can still clip
+                          overflowY: 'auto', // was 'hidden' — let the list scroll; clipping can break hit-testing
+                          pr: '0.25rem',
+                        }}
+                      >
+                        <ListColumn
+                          issuerName={issuerName}
+                          list={list}
+                          cardIds={listCardIds}
+                          onCardClick={openCard}
+                        />
+                      </Box>
+                    </SortableContext>
+                  </ListDroppable>
                   <Box sx={{ p: '0.5rem', borderTop: (t) => `1px solid ${t.palette.divider}` }}>
                     {addingForListId === list.listId ? (
                       <Box
