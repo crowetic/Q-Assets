@@ -15,7 +15,6 @@ import {
   Alert,
   DialogActions,
   useMediaQuery,
-  useTheme,
 } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import LockIcon from '@mui/icons-material/Lock';
@@ -64,7 +63,7 @@ export default function QDeckAllBoards() {
 
   const { alert } = useAlert();
 
-  const theme = useTheme();
+  // const theme = useTheme();
   // const isXs = useMediaQuery(theme.breakpoints.down('sm'));
   const isTouch = useMediaQuery('(hover: none), (pointer: coarse)');
 

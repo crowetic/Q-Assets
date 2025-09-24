@@ -42,12 +42,7 @@ import { getAccountGroups, GroupSummary } from '../utils/qortalApi';
 import { useAlert } from '../components/alerts';
 import { collectRecipientPublicKeys } from '../utils/qdeckAccess';
 import { RowActions, RowLinkGuard } from './QDeckPage';
-import {
-  bgFromId,
-  pastelBgFromId,
-  pastelBorderFromId,
-  pastelHoverFromId,
-} from '../utils/qdeckColors';
+import { pastelBgFromId, pastelBorderFromId } from '../utils/qdeckColors';
 
 // // small helpers
 // function hueFromId(id: string): number {
