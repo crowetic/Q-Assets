@@ -124,19 +124,19 @@ export function TipTapToolbar({ editor, compact = false }: Props) {
 
   const is = (name: string, attrs?: any) => editor.isActive(name as any, attrs);
 
-  const buttonStyle = (active: boolean) => ({
-    borderRadius: '8px',
-    backgroundColor: active ? theme.palette.primary.main : 'transparent',
-    color: active ? theme.palette.primary.contrastText : theme.palette.text.primary,
-    textTransform: 'none',
-    fontWeight: 600,
-    boxShadow: 'none',
-    px: compact ? 0.5 : 1,
-    minWidth: compact ? 0 : undefined,
-    '&:hover': {
-      backgroundColor: active ? theme.palette.primary.dark : theme.palette.action.hover,
-    },
-  });
+  // const buttonStyle = (active: boolean) => ({
+  //   borderRadius: '8px',
+  //   backgroundColor: active ? theme.palette.primary.main : 'transparent',
+  //   color: active ? theme.palette.primary.contrastText : theme.palette.text.primary,
+  //   textTransform: 'none',
+  //   fontWeight: 600,
+  //   boxShadow: 'none',
+  //   px: compact ? 0.5 : 1,
+  //   minWidth: compact ? 0 : undefined,
+  //   '&:hover': {
+  //     backgroundColor: active ? theme.palette.primary.dark : theme.palette.action.hover,
+  //   },
+  // });
 
   const triggerColorPicker = () => colorInputRef.current?.click();
   const onPickColor: React.ChangeEventHandler<HTMLInputElement> = (e) => {
