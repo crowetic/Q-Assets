@@ -2,7 +2,6 @@ import * as React from 'react';
 import { useQDeck } from './QDeckProvider';
 import {
   DndContext,
-  closestCenter,
   DragEndEvent,
   useSensor,
   PointerSensor,
