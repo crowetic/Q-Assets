@@ -19,6 +19,7 @@ import {
   useTheme,
   Chip,
   Alert,
+  useMediaQuery,
 } from '@mui/material';
 import PublicIcon from '@mui/icons-material/Public';
 import LockIcon from '@mui/icons-material/Lock';
@@ -41,19 +42,25 @@ import { getAccountGroups, GroupSummary } from '../utils/qortalApi';
 import { useAlert } from '../components/alerts';
 import { collectRecipientPublicKeys } from '../utils/qdeckAccess';
 import { RowActions, RowLinkGuard } from './QDeckPage';
+import {
+  bgFromId,
+  pastelBgFromId,
+  pastelBorderFromId,
+  pastelHoverFromId,
+} from '../utils/qdeckColors';
 
-// small helpers
-function hueFromId(id: string): number {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
-  return h;
-}
-function bgFromId(id: string, mode: 'light' | 'dark') {
-  const h = hueFromId(id);
-  const s = mode === 'dark' ? 45 : 55;
-  const l = mode === 'dark' ? 16 : 92;
-  return `hsl(${h} ${s}% ${l}%)`;
-}
+// // small helpers
+// function hueFromId(id: string): number {
+//   let h = 0;
+//   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
+//   return h;
+// }
+// function bgFromId(id: string, mode: 'light' | 'dark') {
+//   const h = hueFromId(id);
+//   const s = mode === 'dark' ? 45 : 55;
+//   const l = mode === 'dark' ? 16 : 92;
+//   return `hsl(${h} ${s}% ${l}%)`;
+// }
 
 export default function MyBoards() {
   const [doc, setDoc] = React.useState<BoardsIndexDoc | null>(null);
@@ -80,6 +87,8 @@ export default function MyBoards() {
   const theme = useTheme();
   const { alert } = useAlert();
   const { name: userName, address: myAddress, authenticateUser } = useAuth();
+  const isXs = useMediaQuery(theme.breakpoints.down('sm'));
+  const isTouch = useMediaQuery('(hover: none), (pointer: coarse)');
 
   let issuer = userName;
   if (!issuer) authenticateUser();
@@ -355,19 +364,54 @@ export default function MyBoards() {
   const publisher = doc?.issuerName?.trim() ? doc.issuerName : issuer;
 
   return (
-    <Box sx={{ p: 2 }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
-        <Typography variant="h4">Q-Deck Boards</Typography>
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Typography variant="h5">{issuer}</Typography>
-          <Button variant="contained" onClick={() => setOpen(true)}>
+    <Box sx={{ p: { xs: 1.5, sm: 2 }, mx: 'auto' }}>
+      {/* Responsive header: column on mobile, wraps actions, full-width buttons on xs */}
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        justifyContent="space-between"
+        alignItems={{ xs: 'stretch', sm: 'center' }}
+        spacing={{ xs: 1, sm: 2 }}
+        sx={{ mb: { xs: 1.25, sm: 2 } }}
+      >
+        <Typography variant="h5" sx={{ lineHeight: 1.2 }}>
+          Q-Deck Boards
+        </Typography>
+
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          useFlexGap
+          flexWrap="wrap"
+          sx={{
+            '& > *': {
+              // make buttons full-width on phones, auto on larger screens
+              width: { xs: '100%', sm: 'auto' },
+            },
+          }}
+        >
+          <Typography
+            variant="subtitle1"
+            sx={{ opacity: 0.8, order: { xs: 3, sm: 0 }, width: { xs: '100%', sm: 'auto' } }}
+          >
+            {issuer}
+          </Typography>
+
+          <Button
+            variant="contained"
+            onClick={() => setOpen(true)}
+            sx={{ order: { xs: 1, sm: 0 } }}
+          >
             Create Board
           </Button>
-          <Button onClick={() => runRepair()}>Run Index Repair</Button>
+
+          <Button onClick={() => runRepair()} sx={{ order: { xs: 2, sm: 0 } }}>
+            Run Index Repair
+          </Button>
         </Stack>
       </Stack>
 
-      <Stack spacing={2}>
+      <Stack spacing={{ xs: 1.25, sm: 2 }}>
         {(doc?.boards ?? []).length === 0 && (
           <Typography sx={{ opacity: 0.7 }}>
             No boards yet for <b>{publisher}</b>.
@@ -387,28 +431,47 @@ export default function MyBoards() {
               role="link"
               tabIndex={0}
               sx={{
-                p: 2,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
+                p: { xs: 1.25, sm: 2 },
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', sm: '1fr auto' },
+                rowGap: { xs: 0.75, sm: 0 },
+                alignItems: { xs: 'stretch', sm: 'center' },
                 textDecoration: 'none',
-                bgcolor: bgFromId(b.boardId, theme.palette.mode),
-                border: (t) => `1px solid ${t.palette.divider}`,
+                bgcolor: pastelBgFromId(b.boardId, theme.palette.mode),
+                border: `1px solid ${pastelBorderFromId(b.boardId, theme.palette.mode)}`,
                 borderRadius: 1.5,
                 transition: 'transform 120ms ease, box-shadow 120ms ease',
                 cursor: 'pointer',
-                '&:hover': { transform: 'translateY(-1px)', boxShadow: 2 },
+                // On touch, skip hover lift to avoid “sticky hover” feel
+                ...(isTouch ? {} : { '&:hover': { transform: 'translateY(-1px)', boxShadow: 2 } }),
                 '&:focus-visible': {
-                  outline: (t) => `2px solid ${t.palette.primary.main}`,
+                  // outline: (t) => `2px solid ${t.palette.primary.main}`,
                   outlineOffset: 2,
                 },
               }}
             >
-              <div>
-                <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.25 }}>
-                  <Typography variant="h6" sx={{ lineHeight: 1.2 }}>
+              {/* Left block */}
+              <Box sx={{ minWidth: 0 }}>
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  alignItems="center"
+                  sx={{ mb: 0.25, minWidth: 0, flexWrap: 'wrap', rowGap: 0.5 }}
+                >
+                  <Typography
+                    variant="subtitle1"
+                    sx={{
+                      lineHeight: 1.2,
+                      // truncate very long titles on small screens
+                      maxWidth: { xs: '100%', sm: '40vw' },
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
                     {b.title}
                   </Typography>
+
                   {isPrivate ? (
                     <Chip
                       size="small"
@@ -427,13 +490,31 @@ export default function MyBoards() {
                     />
                   )}
                 </Stack>
-                <Typography variant="caption" sx={{ opacity: 0.7 }}>
+
+                <Typography
+                  variant="caption"
+                  sx={{
+                    opacity: 0.7,
+                    display: 'block',
+                    // allow wrap to avoid overflow
+                    wordBreak: 'break-all',
+                  }}
+                >
                   Board ID: {b.boardId}
                 </Typography>
-              </div>
+              </Box>
 
-              <Stack direction="row" alignItems="center" spacing={1}>
-                <Typography variant="button" sx={{ opacity: 0.7, pr: 0.5 }}>
+              {/* Right block (actions) */}
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={1}
+                justifyContent={{ xs: 'flex-start', sm: 'flex-end' }}
+              >
+                <Typography
+                  variant="button"
+                  sx={{ opacity: 0.7, pr: 0.5, display: { xs: 'none', sm: 'inline' } }}
+                >
                   Open →
                 </Typography>
                 <RowLinkGuard>
@@ -453,8 +534,8 @@ export default function MyBoards() {
         })}
       </Stack>
 
-      {/* Create dialog */}
-      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
+      {/* Create dialog: full-screen on phones */}
+      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth fullScreen={isXs}>
         <DialogTitle>Create Board</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 1 }}>
@@ -463,6 +544,7 @@ export default function MyBoards() {
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               fullWidth
+              size="small"
             />
 
             <FormControl size="small" fullWidth>
@@ -482,16 +564,22 @@ export default function MyBoards() {
                     .map((g) => `${g.groupName} (#${g.groupId})`);
                   return names.length ? names.join(', ') : 'None (open board)';
                 }}
+                MenuProps={{
+                  PaperProps: { sx: { maxHeight: 320 } },
+                }}
               >
                 {groupOptions.map((g) => (
                   <MenuItem key={g.groupId} value={g.groupId}>
                     <Checkbox checked={groupsAllowedIds.includes(g.groupId)} />
-                    {g.groupName} (#{g.groupId})
+                    <Box sx={{ whiteSpace: 'normal', lineHeight: 1.2 }}>
+                      {g.groupName} (#{g.groupId}){g.isOpen ? '' : ' — PRIVATE'}
+                    </Box>
                   </MenuItem>
                 ))}
               </Select>
             </FormControl>
 
+            {/* Private mode controls – unchanged logic, just smaller spacing */}
             <FormControl size="small" fullWidth disabled={!canUseGroupEncryption}>
               <InputLabel id="priv-board-group">Private board group</InputLabel>
               <Select
@@ -500,6 +588,7 @@ export default function MyBoards() {
                 value={privateGroupId ?? ''}
                 displayEmpty
                 onChange={(e) => setPrivateGroupId(e.target.value ? Number(e.target.value) : null)}
+                MenuProps={{ PaperProps: { sx: { maxHeight: 320 } } }}
               >
                 <MenuItem value="">
                   <em>{canUseGroupEncryption ? 'Select one private group' : 'Not applicable'}</em>
@@ -514,6 +603,7 @@ export default function MyBoards() {
               </Select>
             </FormControl>
 
+            {/* Checkboxes – make them tap-friendly */}
             {privateGroupId != null && (
               <Box display="flex" alignItems="center" gap={1}>
                 <Checkbox
@@ -571,12 +661,21 @@ export default function MyBoards() {
               size="small"
               fullWidth
               helperText="Names will be verified now; invalid entries are ignored."
+              multiline
+              minRows={2}
             />
           </Stack>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={createBoard} disabled={!title.trim()}>
+        <DialogActions sx={{ p: { xs: 1, sm: 2 } }}>
+          <Button onClick={() => setOpen(false)} fullWidth={isXs}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={createBoard}
+            disabled={!title.trim()}
+            fullWidth={isXs}
+          >
             Create
           </Button>
         </DialogActions>

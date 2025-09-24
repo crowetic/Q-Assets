@@ -26,6 +26,7 @@ import {
   cardAuthHeaderMatchesPublisher,
 } from '../../utils/qdeckAccess';
 import { QDeckId } from '../../constants/qdeckIdentifiers';
+import { useFetchTracker } from '../../state/global/fetchTracker';
 
 // ---- Types ----
 type LoadOpts = {
@@ -92,6 +93,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const lastLoadKey = useRef<string>('');
+  const { track } = useFetchTracker();
 
   const loadCardsForBoard = React.useCallback(
     async (_issuerIgnored: string, b: QDeckBoard) => {
@@ -208,7 +210,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setBoard(probe.doc);
         setCards({});
         setComments({});
-        void loadCardsForBoard(issuer, probe.doc);
+        void track(loadCardsForBoard(issuer, probe.doc), `${probe.doc}`);
         console.log('[Q-Deck] loadBoardById success (ident)', {
           issuer,
           id: raw,
@@ -224,10 +226,13 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ((await findBoardVisibilityHeads(issuer, shortId).catch(() => null)) || undefined);
 
       // Use the meta-aware resolver (it handles public first, then private probe)
-      const resolved = await resolveBoardForRead(issuer, shortId, hint).catch((e) => {
-        console.error('[Q-Deck] resolveBoardForRead error', e);
-        return null;
-      });
+      const resolved = await track(
+        resolveBoardForRead(issuer, shortId, hint).catch((e) => {
+          console.error('[Q-Deck] resolveBoardForRead error', e);
+          return null;
+        }),
+        `qdeck:cards:${shortId}`
+      );
 
       if (lastLoadKey.current !== cacheKey) return; // race guard
       if (!resolved) {
@@ -238,7 +243,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setBoard(resolved);
       setCards({});
       setComments({});
-      void loadCardsForBoard(issuer, resolved);
+      void track(loadCardsForBoard(issuer, resolved), `${resolved}`);
 
       console.debug('[Q-Deck] loadBoardById success', { issuer, shortId, title: resolved.title });
     },
@@ -262,11 +267,14 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // issuer namespace: prefer override (e.g., prop from route), else board.createdBy
       const ns = (issuerOverride && issuerOverride.trim()) || board.createdBy;
 
-      await loadBoardById(ns, board.boardId, board.visibility, {
-        visibility: board.visibility,
-        groupId: board.privateMeta?.groupId,
-        isAdmins: board.privateMeta?.isAdmins,
-      });
+      await track(
+        loadBoardById(ns, board.boardId, board.visibility, {
+          visibility: board.visibility,
+          groupId: board.privateMeta?.groupId,
+          isAdmins: board.privateMeta?.isAdmins,
+        }),
+        `qdeck:board:${board.boardId}`
+      );
     },
     [board, loadBoardById]
   );

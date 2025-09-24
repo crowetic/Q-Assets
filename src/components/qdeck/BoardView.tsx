@@ -24,6 +24,8 @@ import {
   InputLabel,
   Select,
   Stack,
+  useTheme,
+  useMediaQuery,
 } from '@mui/material';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import EditIcon from '@mui/icons-material/Edit';
@@ -92,6 +94,9 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
   // tags and estimates
   const [newEstimatedMinutes, setNewEstimatedMinutes] = React.useState<number | ''>('');
   const [newTagsCsv, setNewTagsCsv] = React.useState('');
+
+  const theme = useTheme();
+  const isXs = useMediaQuery(theme.breakpoints.down('sm'));
 
   React.useEffect(() => {
     if (editingTitle) {
@@ -299,7 +304,7 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
           flex: 1,
           minHeight: 0,
           minWidth: 0,
-          p: '1rem',
+          p: { xs: '1rem', md: '1.25rem' },
           '--gap': `${gapRem}rem`,
           '--col-basis': colBasis,
         } as React.CSSProperties
@@ -316,7 +321,15 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
         }}
       >
         {/* Title (inline rename) */}
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: '1 1 auto' }}>
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            flex: '1 1 auto',
+            minWidth: 0,
+          }}
+        >
           {editingTitle ? (
             <>
               <TextField
@@ -342,9 +355,13 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
               <Typography variant="h5" sx={{ lineHeight: 1.2 }}>
                 {board.title}
               </Typography>
-              <Tooltip title="Rename board">
-                <IconButton size="small" onClick={() => setEditingTitle(true)} aria-label="rename">
-                  <EditIcon fontSize="small" />
+              <Tooltip title="Board actions">
+                <IconButton
+                  onClick={handleOpenMenu}
+                  aria-label="board actions"
+                  sx={{ ml: { xs: 0, sm: '0.25rem' } }}
+                >
+                  <MoreVertIcon />
                 </IconButton>
               </Tooltip>
             </>
@@ -360,6 +377,7 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
           variant="contained"
           startIcon={<Refresh />}
           onClick={() => refreshBoard()}
+          sx={{ width: { xs: '100%', sm: 'auto' } }}
         >
           Refresh
         </Button>
@@ -405,7 +423,8 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
         <Box
           sx={{
             display: 'flex',
-            flexWrap: 'wrap',
+            flexDirection: { xs: 'column', md: 'row' }, // <- key change
+            flexWrap: { xs: 'nowrap', md: 'wrap' }, // <- no wrapping on xs
             gap: 'var(--gap)',
             flex: 1,
             minHeight: 0,
@@ -423,15 +442,18 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
                   key={list.listId}
                   elevation={2}
                   sx={{
-                    flex: '1 1 var(--col-basis)',
-                    minWidth: '12rem',
-                    maxWidth: '28rem',
+                    // 100% width on phones; multi-column only at md+
+                    flex: { xs: '1 1 100%', md: '0 1 22rem' },
+                    // maxWidth: { xs: '100%', md: '28rem' },
+                    // minWidth: { xs: '100%', md: '50%', lg: '20%' },
+                    minWidth: { xs: '100%', md: '13rem' },
+                    maxWidth: { xs: '100%', md: '40rem' },
                     display: 'flex',
                     flexDirection: 'column',
-                    maxHeight: '100%',
+                    // maxHeight: '100%',
                     bgcolor: list.faintColor ?? 'background.paper',
-                    overflow: 'hidden', // <- contain children
-                    minInlineSize: 0, // Allow shrink inside flex line
+                    overflow: 'hidden',
+                    minInlineSize: 0,
                   }}
                 >
                   <Typography variant="h6" sx={{ px: '0.75rem', py: '0.5rem' }}>
@@ -601,6 +623,7 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
         onClose={() => setManageListsOpen(false)}
         fullWidth
         maxWidth="sm"
+        fullScreen={isXs}
       >
         <DialogTitle>Manage lists</DialogTitle>
         <DialogContent dividers>
@@ -638,7 +661,13 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
       </Dialog>
 
       {/* ===== Clone Board Dialog ===== */}
-      <Dialog open={cloneOpen} onClose={() => setCloneOpen(false)} fullWidth maxWidth="sm">
+      <Dialog
+        open={cloneOpen}
+        onClose={() => setCloneOpen(false)}
+        fullWidth
+        maxWidth="sm"
+        fullScreen={isXs}
+      >
         <DialogTitle>Clone board</DialogTitle>
         <DialogContent dividers>
           <TextField
@@ -667,6 +696,7 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
         onClose={() => setConfirmDeleteOpen(false)}
         fullWidth
         maxWidth="xs"
+        fullScreen={isXs}
       >
         <DialogTitle>Delete this board?</DialogTitle>
         <DialogContent dividers>

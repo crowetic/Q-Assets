@@ -18,6 +18,7 @@ import {
   IconButton,
   Tooltip,
   CircularProgress,
+  useMediaQuery,
 } from '@mui/material';
 import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
 import { useTheme } from '@mui/material';
@@ -98,6 +99,9 @@ export default function CardDialog(props: Props) {
   // --- primary image ---
   const [imgDataUrl, setImgDataUrl] = React.useState<string | undefined>(undefined);
   const [uploading, setUploading] = React.useState(false);
+
+  const isXs = useMediaQuery(theme.breakpoints.down('sm'));
+  const isMdUp = useMediaQuery(theme.breakpoints.up('md'));
 
   React.useEffect(() => {
     let alive = true;
@@ -267,8 +271,13 @@ export default function CardDialog(props: Props) {
       open={open}
       onClose={onClose}
       fullWidth
+      fullScreen={isXs}
       maxWidth="lg"
-      PaperProps={{ sx: { width: '75vw', height: '75vh', display: 'flex' } }}
+      PaperProps={{
+        sx: isXs
+          ? { width: '100%', height: '100%', m: 0 }
+          : { width: '90vw', height: '90vh', display: 'flex' },
+      }}
     >
       <DialogTitle>{canEdit ? 'Edit Card' : 'Card Details'}</DialogTitle>
 
@@ -276,13 +285,15 @@ export default function CardDialog(props: Props) {
         dividers
         sx={{
           display: 'grid',
-          gridTemplateColumns: { xs: '1fr' },
+          gridTemplateColumns: { xs: '1fr', md: '1fr' },
+          alignItems: 'start',
           gap: '1rem',
           overflow: 'auto',
+          minHeight: 0,
         }}
       >
         {/* LEFT: meta & content */}
-        <Stack spacing={2}>
+        <Stack spacing={2} sx={{ minWidth: 0 }}>
           <TextField
             label="Title"
             value={title}
@@ -418,7 +429,14 @@ export default function CardDialog(props: Props) {
           <Typography variant="subtitle2" sx={{ opacity: 0.8 }}>
             Description
           </Typography>
-          <Box sx={{ border: `1px solid ${theme.palette.divider}`, borderRadius: 2, p: 1 }}>
+          <Box
+            sx={{
+              border: `1px solid ${theme.palette.divider}`,
+              borderRadius: 2,
+              p: 1,
+              minHeight: '8rem',
+            }}
+          >
             <TiptapEditor value={html} onChange={setHtml} />
           </Box>
         </Stack>
@@ -459,7 +477,12 @@ export default function CardDialog(props: Props) {
                 component="img"
                 src={imgDataUrl}
                 alt=""
-                sx={{ width: '100%', borderRadius: 2, objectFit: 'cover', maxHeight: '50vh' }}
+                sx={{
+                  width: '100%',
+                  borderRadius: 2,
+                  objectFit: 'cover',
+                  maxHeight: isMdUp ? '50vh' : '35vh',
+                }}
               />
             ) : (
               <Typography variant="body2" sx={{ opacity: 0.7 }}>
@@ -498,7 +521,9 @@ export default function CardDialog(props: Props) {
               </Button>
             </Stack>
             <Typography variant="caption" sx={{ opacity: 0.7 }}>
-              Split 50/50: Owner + Q-Assets Revenue. Appends receipt to payments ledger.
+              Initially split 10% fee then 66/33% Q-Assets/BoardOnwer. Percentages will be able to
+              be modified in the future based on QARS Ratings, etc. See more details on Information
+              Page under Q-Deck Initial Version Functionality.
             </Typography>
           </Stack>
 
@@ -530,7 +555,7 @@ export default function CardDialog(props: Props) {
               </Button>
             </Stack>
             <Typography variant="caption" sx={{ opacity: 0.7 }}>
-              Funds go to project treasury (MVP). Escrow AT in Phase-2.
+              Funds go to Q-Assets Escrow account now... Escrow AT in Phase-2.
             </Typography>
           </Stack>
           <Divider />
@@ -543,7 +568,7 @@ export default function CardDialog(props: Props) {
         </Stack>
       </DialogContent>
 
-      <DialogActions>
+      <DialogActions sx={{ px: { xs: 1, sm: 2 }, py: { xs: 1, sm: 1.5 } }}>
         <Button onClick={onClose}>Close</Button>
         {canEdit && (
           <Button variant="contained" onClick={handleSave}>

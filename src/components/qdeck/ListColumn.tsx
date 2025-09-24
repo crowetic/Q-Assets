@@ -19,9 +19,15 @@ export function ListColumn({
     <Box
       ref={setNodeRef}
       sx={{
+        // make the column itself shrinkable & full width
+        width: '100%',
+        maxWidth: '100%',
+        minWidth: 0, // <-- important for flex/grid children
+        flex: 1,
+        display: 'block',
+
         px: '0.5rem',
         pb: '0.5rem',
-        flex: 1,
         minHeight: 0,
         overflowY: 'auto',
         outline: isOver ? '2px dashed rgba(128,128,128,0.6)' : 'none',

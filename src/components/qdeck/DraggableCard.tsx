@@ -95,13 +95,18 @@ export const DraggableCard: React.FC<DraggableProps> = ({ cardId, listId, onClic
       ref={setNodeRef}
       elevation={1}
       sx={{
+        // 🔽 make the card shrink with the column
+        width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
+
         p: '0.4rem',
         mb: '0.6rem',
         position: 'relative',
         minHeight: '5.75rem',
         height: '100%',
         borderLeft: `0.42rem solid ${pMeta.border}`,
-        bgColor: `${pMeta.bg}`,
+        bgColor: pMeta.bg,
         '&:hover': { boxShadow: 4, border: '0.1rem', borderColor: 'primary.main.contrastText' },
         cursor: 'pointer',
       }}
@@ -119,7 +124,10 @@ export const DraggableCard: React.FC<DraggableProps> = ({ cardId, listId, onClic
       </IconButton>
 
       {/* click surface */}
-      <Box onClick={() => onClick?.(cardId)} sx={{ pl: '2rem', pr: '2.75rem' }}>
+      <Box
+        onClick={() => onClick?.(cardId)}
+        sx={{ pl: '2rem', pr: '2.75rem', width: '100%', maxWidth: '100%', minWidth: 0 }}
+      >
         <Box
           sx={{
             position: 'absolute',
@@ -200,14 +208,29 @@ export const DraggableCard: React.FC<DraggableProps> = ({ cardId, listId, onClic
           )}
         </Box>
 
-        <Typography variant="subtitle1" sx={{ mb: '0.25rem', fontWeight: 600 }}>
+        <Typography
+          variant="subtitle1"
+          sx={{
+            mb: '0.25rem',
+            fontWeight: 600,
+            // 🔽 stop long words/URLs from forcing width
+            overflowWrap: 'anywhere',
+            wordBreak: 'break-word',
+          }}
+        >
           {card.title}
         </Typography>
 
         {card.quickDescription && (
           <Typography
             variant="body2"
-            sx={{ whiteSpace: 'pre-wrap', mb: primaryImg ? '0.4rem' : '0.25rem', opacity: 0.9 }}
+            sx={{
+              whiteSpace: 'pre-wrap',
+              mb: primaryImg ? '0.4rem' : '0.25rem',
+              opacity: 0.9,
+              overflowWrap: 'anywhere',
+              wordBreak: 'break-word',
+            }}
           >
             {card.quickDescription}
           </Typography>

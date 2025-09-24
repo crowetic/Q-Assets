@@ -61,6 +61,59 @@ const MAX_DEPTH = 8; // safety cap for replies
 const AVATAR_SIZE = '3rem';
 const INDENT_STEP = '1.25rem';
 
+// Prevent content (images/code/long URLs/tables) from stretching the layout
+const CONTENT_SX = {
+  // Never let any child exceed the container width
+  maxWidth: '100%',
+
+  // General text wrapping help for very long words/URLs
+  overflowWrap: 'anywhere',
+
+  // Media should scale down responsively
+  '& img, & video, & canvas, & iframe': {
+    maxWidth: '100%',
+    height: 'auto',
+    display: 'block',
+  },
+
+  // Code blocks: keep pre formatting but allow horizontal scroll instead of layout overflow
+  '& pre': {
+    maxWidth: '100%',
+    overflowX: 'auto',
+    // keep monospace preformatting
+    whiteSpace: 'pre',
+    // nice readability
+    padding: '0.5rem',
+    borderRadius: '0.375rem',
+    backgroundColor: (t: any) =>
+      t.palette.mode === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+  },
+
+  // Inline code: allow wrapping so a single token doesn't stretch the box
+  '& :not(pre) > code': {
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+    padding: '0.1rem 0.25rem',
+    borderRadius: '0.25rem',
+    backgroundColor: (t: any) =>
+      t.palette.mode === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+  },
+
+  // Tables: let them scroll horizontally if too wide
+  '& table': {
+    maxWidth: '100%',
+    display: 'block', // enables overflow on table
+    overflowX: 'auto',
+    borderCollapse: 'collapse',
+  },
+  '& th, & td': {
+    padding: '0.25rem 0.5rem',
+    border: (t: any) => `1px solid ${t.palette.divider}`,
+    whiteSpace: 'normal',
+    wordBreak: 'break-word',
+  },
+} as const;
+
 export interface CommentsSectionProps {
   assetId: number;
   primaryGroupId: number;
@@ -158,6 +211,7 @@ function ReplyPreview({
               maxHeight: expanded ? expandedHeight : collapsedHeight,
               overflowY: 'auto',
               position: 'relative',
+              ...CONTENT_SX,
             }}
           >
             {/* Show the original HTML (you’re already rendering HTML elsewhere) */}
@@ -836,8 +890,8 @@ export default function CommentsSection({
         }}
       >
         {!collapsed && (
-          <Card ref={hostRef} sx={{ mt: '0.5rem' }}>
-            <CardContent>
+          <Card ref={hostRef} sx={{ mt: '0.5rem', width: '100%', maxWidth: '100%' }}>
+            <CardContent sx={{ overflowX: 'hidden' }}>
               <>
                 {loading && (
                   <Stack spacing={1}>
@@ -1123,7 +1177,7 @@ function ThreadNodeView({
 
         {!isDeleted && html ? (
           <Box
-            sx={{ mt: '0.5rem', typography: 'body2', '& p': { mt: '0.5rem' } }}
+            sx={{ mt: '0.5rem', typography: 'body2', '& p': { mt: '0.5rem' }, ...CONTENT_SX }}
             dangerouslySetInnerHTML={{ __html: html }}
           />
         ) : isDeleted ? (

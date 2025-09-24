@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { TextStyle } from '@tiptap/extension-text-style';
@@ -8,10 +8,12 @@ import Image from '@tiptap/extension-image';
 import { TipTapToolbar } from './TipTapToolbar';
 import { ThemedColor } from '../tiptap/marks/ThemedColor';
 import { THEME_COLOR_TOKENS, themedColorCSSFromTheme } from '../tiptap/themeColorTokens';
-import { Box, useTheme } from '@mui/material';
+import { Box, IconButton, Tooltip, useMediaQuery, useTheme } from '@mui/material';
 import { QortalAutoLink } from '../tiptap/extensions/QortalAutoLink';
 import { Link } from '@tiptap/extension-link';
 import { alpha } from '@mui/material';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 interface TiptapEditorProps {
   value: string; // initial content only
@@ -23,6 +25,7 @@ interface TiptapEditorProps {
     commit: () => void;
   }) => void;
   full?: boolean;
+  compact?: boolean;
 }
 
 const QORTAL_RE = /^qortal:\/\/\S+$/i;
@@ -39,9 +42,18 @@ const QortalLink = Link.configure({
   validate: (href) => QORTAL_RE.test(href) || /^(https?|mailto|tel):/i.test(href),
 });
 
-export default function TiptapEditor({ value, onChange, onReady, full = true }: TiptapEditorProps) {
+export default function TiptapEditor({
+  value,
+  onChange,
+  onReady,
+  full = true,
+  compact: compactProp,
+}: TiptapEditorProps) {
   const theme = useTheme();
+  const isXs = useMediaQuery(theme.breakpoints.down('sm')); // phones
+  const compact = Boolean(compactProp ?? isXs); // auto-compact on xs
   const didSetInitial = useRef(false);
+  const [toolbarCollapsed, setToolbarCollapsed] = useState(compact);
 
   const editor = useEditor({
     extensions: [
@@ -153,7 +165,7 @@ export default function TiptapEditor({ value, onChange, onReady, full = true }: 
       }}
     >
       {/* Toolbar: sticky & above editor content */}
-      <Box
+      {/* <Box
         className="tiptap-toolbar"
         sx={{
           flex: '0 0 auto',
@@ -167,8 +179,38 @@ export default function TiptapEditor({ value, onChange, onReady, full = true }: 
         }}
       >
         <TipTapToolbar editor={editor} />
-      </Box>
+      </Box> */}
 
+      <Box
+        className="tiptap-toolbar"
+        sx={{
+          flex: '0 0 auto',
+          position: 'sticky',
+          top: 0,
+          zIndex: 2,
+          bgcolor: theme.palette.background.paper,
+          boxShadow: 1,
+          borderBottom: `1px solid ${theme.palette.divider}`,
+          px: 1,
+          py: compact ? 0.5 : 1,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.5,
+        }}
+      >
+        {/* collapse/expand on mobile */}
+        <Tooltip title={toolbarCollapsed ? 'Show formatting' : 'Hide formatting'}>
+          <IconButton size="small" onClick={() => setToolbarCollapsed((v) => !v)} sx={{ mr: 0.5 }}>
+            {toolbarCollapsed ? (
+              <ExpandMoreIcon fontSize="small" />
+            ) : (
+              <ExpandLessIcon fontSize="small" />
+            )}
+          </IconButton>
+        </Tooltip>
+
+        {!toolbarCollapsed && <TipTapToolbar editor={editor} compact={compact} />}
+      </Box>
       {/* Scrollable editor pane */}
       <Box
         className="q-editor-surface"

@@ -18,6 +18,7 @@ import {
   DialogActions,
   Stack,
   IconButton,
+  Skeleton,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -50,6 +51,7 @@ import PublishedHtmlRenderer from '../components/PublishedHtmlRenderer';
 import { useMediaQuery } from '@mui/material';
 import { dialogPaperSx } from '../components/comments/CommentsSection';
 import { useAlert } from '../components/alerts';
+import { useFetchTracker } from '../state/global/fetchTracker';
 
 // ---- Hard-coded defaults remain source of truth when no remote exists ----
 type InfoSection = {
@@ -293,6 +295,8 @@ export default function Information() {
   const [role, setRole] = useState<'admin' | 'editor' | null>(null);
   const [isMember, setIsMember] = useState(false);
 
+  const { track, isLoadingPrefix } = useFetchTracker();
+
   useEffect(() => {
     let cancel = false;
     (async () => {
@@ -340,7 +344,7 @@ export default function Information() {
     let cancel = false;
     (async () => {
       try {
-        const rmenu = await loadWikiMenu();
+        const rmenu = await track(loadWikiMenu(), 'wiki:menu');
         if (!cancel && rmenu?.items?.length) {
           setMenu(rmenu.items.map((m) => ({ ...m, id: normId(m.id) })));
         }
@@ -362,7 +366,8 @@ export default function Information() {
         // If we already have a menu from QDN, use it; otherwise fall back to defaults
         const meta = asMeta(menu.length ? menu : DEFAULT_SECTIONS);
 
-        const rows = await loadAllWikiSections(meta);
+        const rows = await track(loadAllWikiSections(meta), 'wiki:sections');
+
         if (cancel) return;
 
         const folded: Record<string, RemoteRow> = {};
@@ -391,6 +396,8 @@ export default function Information() {
       cancel = true;
     };
   }, [menu, DEFAULT_SECTIONS]);
+
+  const wikiLoading = isLoadingPrefix('wiki:');
 
   /* ----------------------------- Search / TOC ---------------------------- */
   const [q, setQ] = useState('');
@@ -580,19 +587,25 @@ export default function Information() {
           }}
         >
           <List dense disablePadding>
-            {filteredMenu.map((m) => (
-              <ListItemButton
-                key={m.id || Math.random()}
-                selected={normId(m.id) === currentId}
-                onClick={() => m.id && goto(m.id)}
-                sx={{ borderRadius: '0.5rem', mb: '0.25rem' }}
-              >
-                <ListItemText
-                  primary={m.title || '(untitled)'}
-                  primaryTypographyProps={{ noWrap: true }}
-                />
-              </ListItemButton>
-            ))}
+            {wikiLoading && menu.length === 0
+              ? Array.from({ length: 6 }).map((_, i) => (
+                  <Box key={i} sx={{ py: 0.5 }}>
+                    <Skeleton variant="rounded" height={28} />
+                  </Box>
+                ))
+              : filteredMenu.map((m) => (
+                  <ListItemButton
+                    key={m.id || Math.random()}
+                    selected={normId(m.id) === currentId}
+                    onClick={() => m.id && goto(m.id)}
+                    sx={{ borderRadius: '0.5rem', mb: '0.25rem' }}
+                  >
+                    <ListItemText
+                      primary={m.title || '(untitled)'}
+                      primaryTypographyProps={{ noWrap: true }}
+                    />
+                  </ListItemButton>
+                ))}
           </List>
         </Paper>
 
@@ -647,7 +660,13 @@ export default function Information() {
 
                 <Divider sx={{ my: '0.75rem' }} />
 
-                {currentOverride?.html ? (
+                {isLoadingPrefix('wiki:sections') && !currentOverride?.html ? (
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    <Skeleton variant="text" height={36} />
+                    <Skeleton variant="text" height={24} />
+                    <Skeleton variant="rounded" height={160} />
+                  </Box>
+                ) : currentOverride?.html ? (
                   <PublishedHtmlRenderer html={currentOverride.html} />
                 ) : currentDefault ? (
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>

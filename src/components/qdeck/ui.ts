@@ -11,7 +11,7 @@ export function priorityMeta(theme: Theme, p: Priority) {
     case 'CRITICAL':
       return {
         icon: ReportProblemIcon,
-        bg: theme.palette.error.main,
+        bg: theme.palette.error.dark,
         fg: theme.palette.error.contrastText,
         border: theme.palette.error.main,
         label: 'crit',
@@ -19,7 +19,7 @@ export function priorityMeta(theme: Theme, p: Priority) {
     case 'HIGH':
       return {
         icon: PriorityHighIcon,
-        bg: theme.palette.warning.main,
+        bg: theme.palette.warning.dark,
         fg: theme.palette.warning.contrastText,
         border: theme.palette.warning.main,
         label: 'high',
@@ -27,7 +27,7 @@ export function priorityMeta(theme: Theme, p: Priority) {
     case 'NORMAL':
       return {
         icon: TripOriginRounded,
-        bg: theme.palette.info.main,
+        bg: theme.palette.info.dark,
         fg: theme.palette.info.contrastText,
         border: theme.palette.info.main,
         label: 'norm',
@@ -36,7 +36,7 @@ export function priorityMeta(theme: Theme, p: Priority) {
     default:
       return {
         icon: LowPriorityIcon,
-        bg: theme.palette.success.main,
+        bg: theme.palette.success.dark,
         fg: theme.palette.success.contrastText,
         border: theme.palette.success.main,
         label: 'low',
