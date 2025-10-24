@@ -15,6 +15,13 @@ export type LoadedSection = {
   timestamp?: number;
 };
 
+export type WikiOverrides = {
+  version: 1;
+  updatedAt: number;
+  overrides: Record<string, { mode: 'latest' } | { mode: 'preferred'; preferred: { publisher: string } }>;
+};
+
+
 type GroupMemberRow = { address?: string; member?: string; isAdmin?: boolean };
 type Role = 'admin' | 'member';
 export type WikiMenuItem = { id: string; title: string; tags?: string[] };
@@ -412,6 +419,41 @@ export async function loadAllWikiSections(
     )
   );
 }
+
+/*-------------------------------Admin Overrides-------------------------------*/
+
+export async function loadWikiOverrides(): Promise<WikiOverrides | null> {
+  try {
+    // Adjust issuer/name/bucket as you use in your project
+    const res = await qortalRequest({
+      action: 'FETCH_QDN_RESOURCE',
+      service: 'DOCUMENT',
+      identifier: 'wiki_overrides',   // you can also use 'Q-Assets/wiki_overrides'
+      name: 'Q-Assets',
+      encoding: 'base64',
+    });
+    const json = base64ToObject(res);
+    if (json && typeof json === 'object' && json.version === 1) return json as WikiOverrides;
+  } catch {
+    // no manifest yet
+  }
+  return { version: 1, updatedAt: 0, overrides: {} };
+}
+
+// save (admins only)
+export async function saveWikiOverrides(doc: WikiOverrides, publisherName: string) {
+  const payload = await objectToBase64(doc);
+  // publish under JSON/Q-Assets/wiki_overrides (adjust to your scheme)
+  return qortalRequest({
+    action: 'PUBLISH_QDN_RESOURCE',
+    service: 'DOCUMENT',
+    name: 'Q-Assets',
+    identifier: 'wiki_overrides',
+    data64: payload,
+    // plus any metadata you already attach (e.g., title, category)
+  });
+}
+
 
 /* ----------------------------- Menu (TOC) ------------------------------- */
 const WIKI_MENU_IDENTIFIER = `${WIKI_IDENTIFIER_PREFIX}__menu`;

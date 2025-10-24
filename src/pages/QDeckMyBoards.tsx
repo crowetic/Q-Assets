@@ -43,19 +43,7 @@ import { useAlert } from '../components/alerts';
 import { collectRecipientPublicKeys } from '../utils/qdeckAccess';
 import { RowActions, RowLinkGuard } from './QDeckPage';
 import { pastelBgFromId, pastelBorderFromId } from '../utils/qdeckColors';
-
-// // small helpers
-// function hueFromId(id: string): number {
-//   let h = 0;
-//   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
-//   return h;
-// }
-// function bgFromId(id: string, mode: 'light' | 'dark') {
-//   const h = hueFromId(id);
-//   const s = mode === 'dark' ? 45 : 55;
-//   const l = mode === 'dark' ? 16 : 92;
-//   return `hsl(${h} ${s}% ${l}%)`;
-// }
+import { useFetchTracker } from '../state/global/fetchTracker';
 
 export default function MyBoards() {
   const [doc, setDoc] = React.useState<BoardsIndexDoc | null>(null);
@@ -84,6 +72,12 @@ export default function MyBoards() {
   const { name: userName, address: myAddress, authenticateUser } = useAuth();
   const isXs = useMediaQuery(theme.breakpoints.down('sm'));
   const isTouch = useMediaQuery('(hover: none), (pointer: coarse)');
+
+  const { track, isLoadingPrefix } = useFetchTracker();
+  const busyWhile = React.useCallback(
+    async <T,>(fn: () => Promise<T> | T, label: string) => track(Promise.resolve().then(fn), label),
+    [track]
+  );
 
   let issuer = userName;
   if (!issuer) authenticateUser();
@@ -123,8 +117,10 @@ export default function MyBoards() {
     if (repairTimer.current) window.clearTimeout(repairTimer.current);
     repairTimer.current = window.setTimeout(async () => {
       try {
-        await repairOwnerIndex(issuer);
-        await load();
+        await busyWhile(async () => {
+          await repairOwnerIndex(issuer);
+          await load();
+        }, 'blocking:qdeck:repair');
         alert('Index repair finished.', 'success', { severity: 'success' });
       } catch (e: any) {
         alert(`Index repair failed: ${e?.message || e}`, 'error', { severity: 'error' });
@@ -136,93 +132,95 @@ export default function MyBoards() {
   const load = React.useCallback(async () => {
     if (!issuer) return;
 
-    // 1) Fast path: merged owner index (already visibility-aware)
-    const merged = await loadBoardsIndexMerged(issuer).catch(() => null);
-    if (merged) {
-      setDoc(merged);
-      return;
-    }
+    await busyWhile(async () => {
+      // 1) Fast path: merged owner index (already visibility-aware)
+      const merged = await loadBoardsIndexMerged(issuer).catch(() => null);
+      if (merged) {
+        setDoc(merged);
+        return;
+      }
 
-    // 2) Fallback: discover by heads
+      // 2) Fallback: discover by heads
 
-    // Public heads under this issuer
-    const pubHeads = await searchSimpleByIdPrefixOnly(QDeckId.prefixPublicBoards, false);
-    const myPub = pubHeads.filter((h) => h.name === issuer);
+      // Public heads under this issuer
+      const pubHeads = await searchSimpleByIdPrefixOnly(QDeckId.prefixPublicBoards, false);
+      const myPub = pubHeads.filter((h) => h.name === issuer);
 
-    // Private heads under this issuer (v2 identifiers)
-    const privHeads = await searchSimpleByIdPrefixOnly(QDeckId.prefixPrivateBoards, true);
-    const myPriv = privHeads.filter((h) => h.name === issuer);
+      // Private heads under this issuer (v2 identifiers)
+      const privHeads = await searchSimpleByIdPrefixOnly(QDeckId.prefixPrivateBoards, true);
+      const myPriv = privHeads.filter((h) => h.name === issuer);
 
-    // --- Hydrate PUBLIC
-    const pubBoards = await Promise.all(
-      myPub.map(async (h) => {
-        const shortId = h.identifier.replace(QDeckId.prefixPublicBoards, '');
-        const bd = await qdeckFetch<QDeckBoard>(h.name, h.identifier, false).catch(() => null);
-        if (!bd || (bd as any)?._type === 'QDECK_TOMBSTONE') return null;
-        return {
-          boardId: shortId,
-          title: bd.title,
-          createdAt: bd.createdAt,
-          updatedAt: bd.updatedAt,
-          visibility: coerceVisibility(bd.visibility ?? 'public'),
-          service: coerceService(bd.service ?? 'DOCUMENT'),
-        };
-      })
-    );
-
-    // --- Hydrate PRIVATE using v2 ident (mode & admins are in the ident)
-    const privBoards = await Promise.all(
-      myPriv.map(async (h) => {
-        const parsed = parsePrivateBoardIdentV2(h.identifier);
-        if (!parsed) return null; // non-v2; you said first release -> v2 only
-
-        const shortId = parsed.boardId;
-
-        const bd = await qdeckFetch<QDeckBoard>(
-          h.name,
-          h.identifier,
-          /* isPrivate */ true,
-          parsed.mode === 'group' ? parsed.groupId : undefined,
-          parsed.mode === 'group' ? !!parsed.isAdmins : undefined,
-          parsed.mode
-        ).catch(() => null);
-
-        // If decrypt fails, still list it as a private board with placeholder
-        if (!bd || (bd as any)?._type === 'QDECK_TOMBSTONE') {
+      // --- Hydrate PUBLIC
+      const pubBoards = await Promise.all(
+        myPub.map(async (h) => {
+          const shortId = h.identifier.replace(QDeckId.prefixPublicBoards, '');
+          const bd = await qdeckFetch<QDeckBoard>(h.name, h.identifier, false).catch(() => null);
+          if (!bd || (bd as any)?._type === 'QDECK_TOMBSTONE') return null;
           return {
             boardId: shortId,
-            title: '(Private board)',
-            createdAt: undefined,
-            updatedAt: undefined,
-            visibility: 'private' as const,
-            service: 'DOCUMENT_PRIVATE' as const,
+            title: bd.title,
+            createdAt: bd.createdAt,
+            updatedAt: bd.updatedAt,
+            visibility: coerceVisibility(bd.visibility ?? 'public'),
+            service: coerceService(bd.service ?? 'DOCUMENT'),
           };
-        }
+        })
+      );
 
-        return {
-          boardId: shortId,
-          title: bd.title,
-          createdAt: bd.createdAt,
-          updatedAt: bd.updatedAt,
-          visibility: coerceVisibility(bd.visibility ?? 'private'),
-          service: coerceService(bd.service ?? 'DOCUMENT_PRIVATE'),
-        };
-      })
-    );
+      // --- Hydrate PRIVATE using v2 ident (mode & admins are in the ident)
+      const privBoards = await Promise.all(
+        myPriv.map(async (h) => {
+          const parsed = parsePrivateBoardIdentV2(h.identifier);
+          if (!parsed) return null; // v2 only
 
-    const compact = [...pubBoards, ...privBoards].filter(Boolean) as NonNullable<
-      (typeof pubBoards)[number]
-    >[];
+          const shortId = parsed.boardId;
 
-    setDoc({
-      _type: 'QDECK_BOARDS_INDEX',
-      version: 1,
-      issuerName: issuer,
-      boards: compact,
-      updatedAt: Date.now(),
-      seq: 0,
-    });
-  }, [issuer]);
+          const bd = await qdeckFetch<QDeckBoard>(
+            h.name,
+            h.identifier,
+            /* isPrivate */ true,
+            parsed.mode === 'group' ? parsed.groupId : undefined,
+            parsed.mode === 'group' ? !!parsed.isAdmins : undefined,
+            parsed.mode
+          ).catch(() => null);
+
+          // If decrypt fails, still list it as a private board with placeholder
+          if (!bd || (bd as any)?._type === 'QDECK_TOMBSTONE') {
+            return {
+              boardId: shortId,
+              title: '(Private board)',
+              createdAt: undefined,
+              updatedAt: undefined,
+              visibility: 'private' as const,
+              service: 'DOCUMENT_PRIVATE' as const,
+            };
+          }
+
+          return {
+            boardId: shortId,
+            title: bd.title,
+            createdAt: bd.createdAt,
+            updatedAt: bd.updatedAt,
+            visibility: coerceVisibility(bd.visibility ?? 'private'),
+            service: coerceService(bd.service ?? 'DOCUMENT_PRIVATE'),
+          };
+        })
+      );
+
+      const compact = [...pubBoards, ...privBoards].filter(Boolean) as NonNullable<
+        (typeof pubBoards)[number]
+      >[];
+
+      setDoc({
+        _type: 'QDECK_BOARDS_INDEX',
+        version: 1,
+        issuerName: issuer,
+        boards: compact,
+        updatedAt: Date.now(),
+        seq: 0,
+      });
+    }, 'blocking:qdeck:boards');
+  }, [issuer, busyWhile]);
 
   React.useEffect(() => {
     load().catch(console.error);
@@ -259,7 +257,10 @@ export default function MyBoards() {
     const nm = name.trim();
     if (!nm) return false;
     try {
-      const data = await qortalRequest?.({ action: 'GET_NAME_DATA', name: nm });
+      const data = await (globalThis as any)?.qortalRequest?.({
+        action: 'GET_NAME_DATA',
+        name: nm,
+      });
       if (data && (data.name === nm || data?.owner)) return true;
     } catch {
       /* ignore */
@@ -321,23 +322,25 @@ export default function MyBoards() {
         }
       }
 
-      await createBoardAndIndex({
-        issuerName: issuer,
-        title: title.trim(),
-        groupsAllowed: groupsAllowedIds,
-        usersAllowed: valid.length ? valid : undefined,
-        visibility,
-        privateOpts:
-          visibility === 'private'
-            ? {
-                groupId: privateGroupId ?? undefined,
-                isAdmins: isAdminsOnly,
-                mode: needsDirect ? 'direct' : 'group',
-                recipients,
-              }
-            : undefined,
-        adminOverride: allowOverride,
-      });
+      await busyWhile(async () => {
+        await createBoardAndIndex({
+          issuerName: issuer,
+          title: title.trim(),
+          groupsAllowed: groupsAllowedIds,
+          usersAllowed: valid.length ? valid : undefined,
+          visibility,
+          privateOpts:
+            visibility === 'private'
+              ? {
+                  groupId: privateGroupId ?? undefined,
+                  isAdmins: isAdminsOnly,
+                  mode: needsDirect ? 'direct' : 'group',
+                  recipients,
+                }
+              : undefined,
+          adminOverride: allowOverride,
+        });
+      }, 'blocking:qdeck:create');
     } catch (e) {
       if (isGroupKeyMissing(e)) {
         alert(`Group encryption failed: no ${isAdminsOnly ? 'admin ' : ''}group key found.`);
@@ -360,7 +363,14 @@ export default function MyBoards() {
 
   return (
     <Box sx={{ p: { xs: 1.5, sm: 2 }, mx: 'auto' }}>
-      {/* Responsive header: column on mobile, wraps actions, full-width buttons on xs */}
+      {/* Optional contextual hint while decrypting/collecting boards */}
+      {isLoadingPrefix('blocking:qdeck:boards') && (
+        <Alert severity="info" sx={{ mb: 1 }}>
+          Loading boards… decrypting private boards can take a moment on first load.
+        </Alert>
+      )}
+
+      {/* Responsive header */}
       <Stack
         direction={{ xs: 'column', sm: 'row' }}
         justifyContent="space-between"
@@ -380,7 +390,6 @@ export default function MyBoards() {
           flexWrap="wrap"
           sx={{
             '& > *': {
-              // make buttons full-width on phones, auto on larger screens
               width: { xs: '100%', sm: 'auto' },
             },
           }}
@@ -437,15 +446,11 @@ export default function MyBoards() {
                 borderRadius: 1.5,
                 transition: 'transform 120ms ease, box-shadow 120ms ease',
                 cursor: 'pointer',
-                // On touch, skip hover lift to avoid “sticky hover” feel
                 ...(isTouch ? {} : { '&:hover': { transform: 'translateY(-1px)', boxShadow: 2 } }),
-                '&:focus-visible': {
-                  // outline: (t) => `2px solid ${t.palette.primary.main}`,
-                  outlineOffset: 2,
-                },
+                '&:focus-visible': { outlineOffset: 2 },
               }}
             >
-              {/* Left block */}
+              {/* Left */}
               <Box sx={{ minWidth: 0 }}>
                 <Stack
                   direction="row"
@@ -457,7 +462,6 @@ export default function MyBoards() {
                     variant="subtitle1"
                     sx={{
                       lineHeight: 1.2,
-                      // truncate very long titles on small screens
                       maxWidth: { xs: '100%', sm: '40vw' },
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
@@ -491,7 +495,6 @@ export default function MyBoards() {
                   sx={{
                     opacity: 0.7,
                     display: 'block',
-                    // allow wrap to avoid overflow
                     wordBreak: 'break-all',
                   }}
                 >
@@ -499,7 +502,7 @@ export default function MyBoards() {
                 </Typography>
               </Box>
 
-              {/* Right block (actions) */}
+              {/* Right actions */}
               <Stack
                 direction="row"
                 alignItems="center"
@@ -529,7 +532,7 @@ export default function MyBoards() {
         })}
       </Stack>
 
-      {/* Create dialog: full-screen on phones */}
+      {/* Create dialog */}
       <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth fullScreen={isXs}>
         <DialogTitle>Create Board</DialogTitle>
         <DialogContent dividers>
@@ -559,9 +562,7 @@ export default function MyBoards() {
                     .map((g) => `${g.groupName} (#${g.groupId})`);
                   return names.length ? names.join(', ') : 'None (open board)';
                 }}
-                MenuProps={{
-                  PaperProps: { sx: { maxHeight: 320 } },
-                }}
+                MenuProps={{ PaperProps: { sx: { maxHeight: 320 } } }}
               >
                 {groupOptions.map((g) => (
                   <MenuItem key={g.groupId} value={g.groupId}>
@@ -574,7 +575,7 @@ export default function MyBoards() {
               </Select>
             </FormControl>
 
-            {/* Private mode controls – unchanged logic, just smaller spacing */}
+            {/* Private mode controls */}
             <FormControl size="small" fullWidth disabled={!canUseGroupEncryption}>
               <InputLabel id="priv-board-group">Private board group</InputLabel>
               <Select
@@ -598,7 +599,6 @@ export default function MyBoards() {
               </Select>
             </FormControl>
 
-            {/* Checkboxes – make them tap-friendly */}
             {privateGroupId != null && (
               <Box display="flex" alignItems="center" gap={1}>
                 <Checkbox
@@ -715,10 +715,12 @@ export default function MyBoards() {
               if (!confirmDel) return;
               setBusyDel(true);
               try {
-                await deleteBoardById(issuer, confirmDel.boardId, {
-                  cascadeCards,
-                  cascadeComments,
-                });
+                await busyWhile(async () => {
+                  await deleteBoardById(issuer, confirmDel.boardId, {
+                    cascadeCards,
+                    cascadeComments,
+                  });
+                }, 'blocking:qdeck:delete');
                 setDoc((prev) =>
                   prev
                     ? {

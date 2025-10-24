@@ -22,6 +22,7 @@ type Props = {
   minCandles?: number; // default 15
   /** If price range is below this fraction (e.g. 0.001 = 0.1%), use line. */
   flatThresholdFrac?: number; // default 0.001
+  scaleSide?: 'left' | 'right';
 };
 
 const toUtcSec = (t: number): UTCTimestamp =>
@@ -77,12 +78,166 @@ function asCandleUniqueSeconds(asc: OhlcPoint[]): CandlestickData<UTCTimestamp>[
   return Array.from(bySec.values()).sort((a, b) => (a.time as number) - (b.time as number));
 }
 
+// const SmartPriceChart: React.FC<Props> = ({
+//   data,
+//   height = 280,
+//   className,
+//   minCandles = 15,
+//   flatThresholdFrac = 0.001,
+// }) => {
+//   const theme = useTheme();
+//   const hostRef = useRef<HTMLDivElement | null>(null);
+//   const chartRef = useRef<IChartApi | null>(null);
+//   const seriesRef = useRef<ISeriesApi<'Candlestick' | 'Line'> | null>(null);
+//   const seriesKindRef = useRef<'candle' | 'line' | null>(null);
+//   const roRef = useRef<ResizeObserver | null>(null);
+
+//   // Decide series type up front based on stats
+//   const mode: 'none' | 'line' | 'candle' = useMemo(() => {
+//     const stats = computeStats(data ?? []);
+//     if (stats.count === 0) return 'none';
+//     if (stats.count < minCandles) return 'line';
+//     if (stats.uniqueCloses <= 1) return 'line';
+//     if (stats.flatFrac <= flatThresholdFrac) return 'line';
+//     return 'candle';
+//   }, [data, minCandles, flatThresholdFrac]);
+
+//   // mount & (re)build chart when theme changes
+//   useEffect(() => {
+//     const el = hostRef.current;
+//     if (!el) return;
+
+//     // destroy existing chart on theme swap
+//     if (chartRef.current) {
+//       chartRef.current.remove();
+//       chartRef.current = null;
+//       seriesRef.current = null;
+//       seriesKindRef.current = null;
+//       if (roRef.current) {
+//         roRef.current.disconnect();
+//         roRef.current = null;
+//       }
+//     }
+
+//     const chart = createChart(el, {
+//       height,
+//       layout: {
+//         background: { type: ColorType.Solid, color: 'transparent' },
+//         textColor: theme.palette.text.secondary,
+//       },
+//       rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
+//       timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
+//       grid: {
+//         vertLines: { color: theme.palette.text.secondary, visible: true, style: 1 },
+//         horzLines: { color: theme.palette.text.secondary, visible: true, style: 1 },
+//       },
+//       crosshair: { mode: CrosshairMode.Normal },
+//     });
+
+//     // Choose series type (line/candle) based on mode
+//     let series: ISeriesApi<'Candlestick' | 'Line'>;
+//     if (mode === 'line') {
+//       series = chart.addSeries(LineSeries, {
+//         color: theme.palette.text.secondary, // neutral line for sparse/flat markets
+//         lineWidth: 2,
+//         priceLineVisible: true,
+//       });
+//       seriesKindRef.current = 'line';
+//     } else {
+//       series = chart.addSeries(CandlestickSeries, {
+//         upColor: theme.palette.success.main,
+//         downColor: theme.palette.error.main,
+//         wickUpColor: theme.palette.success.main,
+//         wickDownColor: theme.palette.error.main,
+//         borderUpColor: theme.palette.success.main,
+//         borderDownColor: theme.palette.error.main,
+//         priceFormat: { type: 'price', precision: 8, minMove: 1e-8 },
+//       });
+//       seriesKindRef.current = 'candle';
+//     }
+
+//     chartRef.current = chart;
+//     seriesRef.current = series;
+
+//     const applySize = () => {
+//       chart.applyOptions({ width: el.clientWidth || 0, height });
+//       chart.timeScale().fitContent();
+//     };
+//     applySize();
+//     const ro = new ResizeObserver(applySize);
+//     ro.observe(el);
+//     roRef.current = ro;
+
+//     return () => {
+//       ro.disconnect();
+//       chart.remove();
+//       chartRef.current = null;
+//       seriesRef.current = null;
+//       seriesKindRef.current = null;
+//       roRef.current = null;
+//     };
+//     // re-create when theme or initial mode changes
+//   }, [height, theme, mode]);
+
+//   // push data
+//   useEffect(() => {
+//     const series = seriesRef.current;
+//     const kind = seriesKindRef.current;
+//     if (!series) return;
+
+//     if (!data || data.length === 0) {
+//       if (kind === 'line') (series as ISeriesApi<'Line'>).setData([]);
+//       else if (kind === 'candle') (series as ISeriesApi<'Candlestick'>).setData([]);
+//       return;
+//     }
+
+//     // Always sort ASC by your native timestamp first
+//     const asc = [...data].sort((a, b) => a.t - b.t);
+
+//     if (kind === 'line') {
+//       const line = asLineUniqueSeconds(asc);
+//       (series as ISeriesApi<'Line'>).setData(line);
+//     } else {
+//       const candles = asCandleUniqueSeconds(asc);
+//       (series as ISeriesApi<'Candlestick'>).setData(candles);
+//     }
+
+//     // Optional: refit after data change
+//     chartRef.current?.timeScale().fitContent();
+//   }, [data]);
+
+//   // Optional overlay: show a subtle “No data” message when mode === 'none'
+//   if (mode === 'none') {
+//     return (
+//       <div
+//         className={className}
+//         style={{
+//           width: '100%',
+//           height,
+//           display: 'grid',
+//           placeItems: 'center',
+//           color: theme.palette.text.secondary,
+//           opacity: 0.6,
+//           borderRadius: 8,
+//           border: `1px dashed ${theme.palette.text.secondary}40`,
+//         }}
+//       >
+//         No market data for selected range
+//       </div>
+//     );
+//   }
+
+//   return <div ref={hostRef} className={className} style={{ width: '100%', height }} />;
+// };
+
+// export default SmartPriceChart;
 const SmartPriceChart: React.FC<Props> = ({
   data,
   height = 280,
   className,
   minCandles = 15,
   flatThresholdFrac = 0.001,
+  scaleSide = 'left', // <--- default: left side
 }) => {
   const theme = useTheme();
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -91,7 +246,6 @@ const SmartPriceChart: React.FC<Props> = ({
   const seriesKindRef = useRef<'candle' | 'line' | null>(null);
   const roRef = useRef<ResizeObserver | null>(null);
 
-  // Decide series type up front based on stats
   const mode: 'none' | 'line' | 'candle' = useMemo(() => {
     const stats = computeStats(data ?? []);
     if (stats.count === 0) return 'none';
@@ -101,12 +255,11 @@ const SmartPriceChart: React.FC<Props> = ({
     return 'candle';
   }, [data, minCandles, flatThresholdFrac]);
 
-  // mount & (re)build chart when theme changes
   useEffect(() => {
     const el = hostRef.current;
     if (!el) return;
 
-    // destroy existing chart on theme swap
+    // teardown
     if (chartRef.current) {
       chartRef.current.remove();
       chartRef.current = null;
@@ -118,32 +271,51 @@ const SmartPriceChart: React.FC<Props> = ({
       }
     }
 
+    // inside the createChart(...) options block
+
+    const useLeft = scaleSide === 'left';
+
+    const leftScale = useLeft
+      ? { visible: true, borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } }
+      : { visible: false };
+
+    const rightScale = useLeft
+      ? { visible: false }
+      : { visible: true, borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } };
+
     const chart = createChart(el, {
       height,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
         textColor: theme.palette.text.secondary,
       },
-      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.1 } },
+      leftPriceScale: leftScale, // <-- explicitly visible: true on chosen side
+      rightPriceScale: rightScale, // <-- explicitly visible: false on the other
       timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
       grid: {
-        vertLines: { color: theme.palette.text.secondary, visible: true, style: 1 },
-        horzLines: { color: theme.palette.text.secondary, visible: true, style: 1 },
+        vertLines: { color: theme.palette.divider, visible: true, style: 1 },
+        horzLines: { color: theme.palette.divider, visible: true, style: 1 },
       },
       crosshair: { mode: CrosshairMode.Normal },
     });
 
-    // Choose series type (line/candle) based on mode
+    // Pick the matching price scale id
+    const priceScaleId = useLeft ? 'left' : ('right' as const);
+
     let series: ISeriesApi<'Candlestick' | 'Line'>;
     if (mode === 'line') {
       series = chart.addSeries(LineSeries, {
-        color: theme.palette.text.secondary, // neutral line for sparse/flat markets
+        priceScaleId, // <--- attach to chosen side
+        color: theme.palette.text.secondary,
         lineWidth: 2,
         priceLineVisible: true,
+        lastValueVisible: true,
+        priceFormat: { type: 'price', precision: 8, minMove: 1e-8 },
       });
       seriesKindRef.current = 'line';
     } else {
       series = chart.addSeries(CandlestickSeries, {
+        priceScaleId, // <--- attach to chosen side
         upColor: theme.palette.success.main,
         downColor: theme.palette.error.main,
         wickUpColor: theme.palette.success.main,
@@ -151,6 +323,7 @@ const SmartPriceChart: React.FC<Props> = ({
         borderUpColor: theme.palette.success.main,
         borderDownColor: theme.palette.error.main,
         priceFormat: { type: 'price', precision: 8, minMove: 1e-8 },
+        lastValueVisible: true,
       });
       seriesKindRef.current = 'candle';
     }
@@ -175,10 +348,8 @@ const SmartPriceChart: React.FC<Props> = ({
       seriesKindRef.current = null;
       roRef.current = null;
     };
-    // re-create when theme or initial mode changes
-  }, [height, theme, mode]);
+  }, [height, theme, mode, scaleSide]); // <--- re-create if side changes
 
-  // push data
   useEffect(() => {
     const series = seriesRef.current;
     const kind = seriesKindRef.current;
@@ -190,22 +361,17 @@ const SmartPriceChart: React.FC<Props> = ({
       return;
     }
 
-    // Always sort ASC by your native timestamp first
     const asc = [...data].sort((a, b) => a.t - b.t);
 
     if (kind === 'line') {
-      const line = asLineUniqueSeconds(asc);
-      (series as ISeriesApi<'Line'>).setData(line);
+      (series as ISeriesApi<'Line'>).setData(asLineUniqueSeconds(asc));
     } else {
-      const candles = asCandleUniqueSeconds(asc);
-      (series as ISeriesApi<'Candlestick'>).setData(candles);
+      (series as ISeriesApi<'Candlestick'>).setData(asCandleUniqueSeconds(asc));
     }
 
-    // Optional: refit after data change
     chartRef.current?.timeScale().fitContent();
   }, [data]);
 
-  // Optional overlay: show a subtle “No data” message when mode === 'none'
   if (mode === 'none') {
     return (
       <div

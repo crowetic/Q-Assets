@@ -9,7 +9,8 @@ const Header = () => {
   const isMdDown = useMediaQuery(theme.breakpoints.down('md'));
   const { pathname, hash } = useLocation();
 
-  const compact = pathname.startsWith('/trade') || pathname.startsWith('/qdeck/'); // compact mode on trade routes
+  // compact mode on trade & qdeck routes
+  const compact = pathname.startsWith('/trade') || pathname.startsWith('/qdeck/');
 
   const navLinks = [
     { label: 'Home', to: '/' },
@@ -38,6 +39,8 @@ const Header = () => {
         return pathname.startsWith('/portfolio');
       case '/trade':
         return pathname.startsWith('/trade') || pathname.startsWith('/pair');
+      case '/manage':
+        return pathname.startsWith('/manage');
       case '/qdeck': // Q-Deck
         return pathname.startsWith('/qdeck'); // matches /qdeck and /qdeck/:issuer/:boardId
       case '/info':
@@ -66,6 +69,51 @@ const Header = () => {
     </Link>
   );
 
+  const buttonStyles = (active: boolean) => ({
+    flex: '0 1 auto',
+    whiteSpace: 'nowrap',
+    lineHeight: 1.2,
+    px: '0.9em',
+    py: '0.55em',
+    fontSize: { xs: '0.95rem', md: '1.05rem' },
+    fontWeight: 700,
+    fontFamily: 'Orbitron',
+    textTransform: 'none' as const,
+    color: active ? theme.palette.primary.contrastText : theme.palette.text.primary,
+    borderColor: theme.palette.text.secondary,
+    backgroundColor: active ? theme.palette.primary.main : 'transparent',
+    '&:hover': { backgroundColor: theme.palette.action.hover },
+  });
+
+  const smallButtonStyles = (active: boolean) => ({
+    flex: '0 1 auto',
+    whiteSpace: 'nowrap',
+    lineHeight: 1.2,
+    px: '0.85em',
+    py: '0.45em',
+    fontSize: { xs: '0.9rem', md: '0.95rem' },
+    textTransform: 'none' as const,
+    color: active ? theme.palette.primary.contrastText : theme.palette.text.primary,
+    borderColor: theme.palette.text.secondary,
+    backgroundColor: active ? theme.palette.primary.main : 'transparent',
+    '&:hover': { backgroundColor: theme.palette.action.hover },
+  });
+
+  const ManageButton = ({ size = 'medium' as 'small' | 'medium' }) => {
+    const active = isActiveLink('/manage');
+    return (
+      <Button
+        component={Link}
+        to="/manage"
+        variant={active ? 'contained' : 'outlined'}
+        size={size}
+        sx={size === 'small' ? smallButtonStyles(active) : buttonStyles(active)}
+      >
+        Manage
+      </Button>
+    );
+  };
+
   const Nav = (
     <Box
       sx={{
@@ -86,21 +134,7 @@ const Header = () => {
             to={to}
             variant={active ? 'contained' : 'outlined'}
             size={isMdDown ? 'small' : 'medium'}
-            sx={{
-              flex: '0 1 auto',
-              whiteSpace: 'nowrap',
-              lineHeight: 1.2,
-              px: '0.9em',
-              py: '0.55em',
-              fontSize: { xs: '0.95rem', md: '1.05rem' },
-              fontWeight: 700,
-              fontFamily: 'Orbitron',
-              textTransform: 'none',
-              color: active ? theme.palette.primary.contrastText : theme.palette.text.primary,
-              borderColor: theme.palette.text.secondary,
-              backgroundColor: active ? theme.palette.primary.main : 'transparent',
-              '&:hover': { backgroundColor: theme.palette.action.hover },
-            }}
+            sx={buttonStyles(active)}
           >
             {label}
           </Button>
@@ -129,19 +163,7 @@ const Header = () => {
             to={to}
             variant={active ? 'contained' : 'outlined'}
             size="small"
-            sx={{
-              flex: '0 1 auto',
-              whiteSpace: 'nowrap',
-              lineHeight: 1.2,
-              px: '0.85em',
-              py: '0.45em',
-              fontSize: { xs: '0.9rem', md: '0.95rem' },
-              textTransform: 'none',
-              color: active ? theme.palette.primary.contrastText : theme.palette.text.primary,
-              borderColor: theme.palette.text.secondary,
-              backgroundColor: active ? theme.palette.primary.main : 'transparent',
-              '&:hover': { backgroundColor: theme.palette.action.hover },
-            }}
+            sx={smallButtonStyles(active)}
           >
             {label}
           </Button>
@@ -175,7 +197,7 @@ const Header = () => {
         minWidth: 0,
       }}
     >
-      {/** COMPACT MODE (trade pages) */}
+      {/* COMPACT MODE (trade/qdeck pages) */}
       {compact ? (
         <Box
           sx={{
@@ -185,7 +207,7 @@ const Header = () => {
             minWidth: 0,
           }}
         >
-          {/* Row 1: Logo + Utilities (wrap-able) */}
+          {/* Row 1: Logo + Manage (right of logo) + Utilities (far right) */}
           <Box
             sx={{
               display: 'flex',
@@ -197,6 +219,10 @@ const Header = () => {
             <Box sx={{ flex: '0 0 auto' }}>
               <Logo mode="compact" />
             </Box>
+            {/* Manage sits to the right of the logo in compact mode */}
+            <Box sx={{ flex: '0 0 auto' }}>
+              <ManageButton size="small" />
+            </Box>
             <Box sx={{ ml: 'auto' }}>{Utilities}</Box>
           </Box>
 
@@ -204,7 +230,7 @@ const Header = () => {
           <Box sx={{ display: 'flex', justifyContent: 'center', minWidth: 0 }}>{Nav}</Box>
         </Box>
       ) : (
-        /** NORMAL MODE */
+        /* NORMAL MODE */
         <Box
           sx={{
             display: 'flex',
@@ -213,8 +239,20 @@ const Header = () => {
             minWidth: 0,
           }}
         >
-          {/* Utilities top-right (wrap-able) */}
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end', minWidth: 0 }}>{Utilities}</Box>
+          {/* Row 1: Manage top-left, Utilities top-right */}
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              minWidth: 0,
+              gap: 1,
+            }}
+          >
+            <Box sx={{ flex: '0 0 auto' }}>
+              <ManageButton />
+            </Box>
+            <Box sx={{ ml: 'auto' }}>{Utilities}</Box>
+          </Box>
 
           {/* Centered logo */}
           <Box sx={{ display: 'flex', justifyContent: 'center', minWidth: 0 }}>

@@ -1,4 +1,4 @@
-import { JSX, useEffect, useMemo, useState } from 'react';
+import { JSX, memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Typography,
@@ -19,6 +19,8 @@ import {
   Stack,
   IconButton,
   Skeleton,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -32,26 +34,24 @@ import {
   publishWikiSection,
   isUserInManagementGroup,
   isAddressAdminInManagementGroup,
-  // type LoadedSection,
   type WikiMenuItem,
+  loadWikiOverrides,
+  saveWikiOverrides,
+  WikiOverrides,
 } from '../utils/access';
 import { useAuth } from 'qapp-core';
 import TiptapEditor from '../components/TipTapEditor';
-// import { themeAtom } from '../state/global/system';
-// import useTheme from '@mui/material';
-import { useTheme } from '@mui/material';
-import { Theme } from '@mui/material';
-// import EditIcon from '@mui/icons-material/Edit';
 import EditToggleButton from '../components/buttons/EditToggleButton';
-// import { Edit } from '@mui/icons-material';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Q_ASSETS_VERSION } from '../constants/qdnConstants';
 import { prepareHtmlForPublish } from '../utils/publicationPublisher';
 import PublishedHtmlRenderer from '../components/PublishedHtmlRenderer';
-import { useMediaQuery } from '@mui/material';
 import { dialogPaperSx } from '../components/comments/CommentsSection';
 import { useAlert } from '../components/alerts';
 import { useFetchTracker } from '../state/global/fetchTracker';
+import type { Theme } from '@mui/material';
+import SectionEditorDialog from '../components/infowiki/SectionEditorDialog';
+import ManageSectionsDialog from '../components/infowiki/ManageSectionsDialog';
 
 // ---- Hard-coded defaults remain source of truth when no remote exists ----
 type InfoSection = {
@@ -60,6 +60,16 @@ type InfoSection = {
   tags?: string[];
   body: JSX.Element;
 };
+
+const normId = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
+
+// be nice to anchors on QDN / browser
+const slug = (s: string) =>
+  s
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\- _]/g, '')
+    .replace(/\s+/g, '-');
 
 const makeDefaultSections = (theme: Theme): InfoSection[] => [
   {
@@ -81,7 +91,7 @@ const makeDefaultSections = (theme: Theme): InfoSection[] => [
     ),
   },
   {
-    id: 'what-are-assets', // ❗ make id unique (was 'about')
+    id: 'what-are-assets',
     title: 'What are Assets on Qortal?',
     tags: ['overview', 'qortal', 'assets'],
     body: (
@@ -98,21 +108,17 @@ const makeDefaultSections = (theme: Theme): InfoSection[] => [
           What are the Differences from QORT
         </Typography>
         <Typography>
-          There is one primary difference between an asset created with the Qortal asset system here
-          on Q-Assets, and QORT. That is that QORT is created by CONSENSUS, the minters. QORT was
-          issued at block 0 with 0 coins on the chain, and MINTED INTO EXISTENCE BY THE QORTAL
-          MINTERS. Assets, on the other hand, are CREATED BY USERS ISSUING THEM, and therefore the
-          ISSUANCE IS CENTRALIZED.
+          QORT is created by CONSENSUS (minters). QORT began at block 0 with 0 coins and is MINTED
+          INTO EXISTENCE BY QORTAL MINTERS. Assets are CREATED BY USERS ISSUING THEM—so ISSUANCE IS
+          CENTRALIZED in the issuer’s hands.
         </Typography>
         <Typography variant="h3" sx={{ color: theme.palette.primary.light }}>
           Q-Asset Use Cases
         </Typography>
         <Typography>
-          The original intent behind ANY blockchain-based asset system (which EVM chains do NOT
-          have...) was to be utilized to replace things like STOCKS in companies, or DISTRIBUTED
-          OWNERSHIP PROOF. However, there are MANY use cases possible for Q-Assets. Group ownership,
-          Stocks, proof of holdings, etc. The main thing that must be remembered, is that THE
-          ISSUANCE OF ANY Q-ASSET, IS CENTRALIZED IN THE HANDS OF THE ASSET ISSUER.
+          Replace STOCKS/ownership proofs, group ownership, distributions, etc. Remember: issuance
+          of any Q-Asset is centralized by design, while validation and trading are on-chain and
+          decentralized via Qortal.
         </Typography>
       </>
     ),
@@ -157,7 +163,7 @@ const makeDefaultSections = (theme: Theme): InfoSection[] => [
           views can include <code>includeClosed</code>/<code>includeFulfilled</code>.
         </Typography>
         <Typography paragraph>
-          Status: <code>OPEN</code>, <code>FILLED</code>, <code>CANCELLED</code>. Remaining qty is
+          Status: <code>OPEN</code>, <code>FILLED</code>, <code>CANCELLED</code>. Remaining qty is{' '}
           <code>amount − fulfilled</code> in <code>amountAssetId</code> units.
         </Typography>
       </>
@@ -214,8 +220,8 @@ const makeDefaultSections = (theme: Theme): InfoSection[] => [
     body: (
       <>
         <Typography>
-          Q-Assets are on-chain assets. They are treated exactly the same as QORT by the Qortal
-          Core. <code>qortalRequest</code>. Publications are signed and stored on QDN distributedly.
+          Q-Assets are on-chain assets, validated by Qortal Core just like QORT. Publications are
+          signed and distributed on QDN.
         </Typography>
       </>
     ),
@@ -245,41 +251,115 @@ const makeDefaultSections = (theme: Theme): InfoSection[] => [
           Release Notes
         </Typography>
         <Typography>
-          Just as the other secions of the wiki, the release notes section is able to be edited by
-          the application publisher, and will be updated as the versions of the app are updated.
+          Release notes are publisher-editable like other wiki sections, and will update alongside
+          app versions.
         </Typography>
         <Typography variant="h3" sx={{ color: theme.palette.secondary.light }}>
           Version {Q_ASSETS_VERSION}
         </Typography>
         <Typography variant="body1">
-          Version {Q_ASSETS_VERSION} is the initial release of Q-Assets. - Asset Explorer. - Asset
-          Issuance with default asset Genesis publications. - Asset Details with display of the
-          default information published in the Asset Details Object. - Asset Trading with many
-          features, leveraging the built-in API-based Asset/QORT trade options of Qortal. - Fully
-          featured Wiki with user-published updates for the Information page. - Much more.
+          Version {Q_ASSETS_VERSION} is the initial release of Q-Assets. – Asset Explorer – Asset
+          Issuance with default Genesis publications – Asset Details with issuer metadata – Trading
+          UI leveraging Qortal’s native DEX – Wiki backed by QDN – and more.
         </Typography>
       </>
     ),
   },
 ];
 
-const normId = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
+type MenuRowProps = {
+  index: number;
+  item: WikiMenuItem;
+  onChange: (index: number, patch: Partial<WikiMenuItem>) => void;
+  onMove: (index: number, dir: -1 | 1) => void;
+  onRemove: (index: number) => void;
+};
 
-type RemoteRow = { html: string; publisher?: string; role?: 'admin' | 'member'; ts?: number };
+export const MenuRow = memo(function MenuRow({
+  index,
+  item,
+  onChange,
+  onMove,
+  onRemove,
+}: MenuRowProps) {
+  const [tagsInput, setTagsInput] = useState<string>(() => (item.tags || []).join(', '));
+
+  // keep local draft in sync if parent changes (e.g., load)
+  useEffect(() => {
+    setTagsInput((item.tags || []).join(', '));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Array.isArray(item.tags) ? item.tags.join('|') : '']);
+
+  const commitTags = useCallback(() => {
+    const tags = tagsInput
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    onChange(index, { tags });
+  }, [index, tagsInput, onChange]);
+
+  return (
+    <Box sx={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+      <TextField
+        label="Section ID"
+        value={item.id}
+        onChange={(e) => onChange(index, { id: e.target.value })}
+        size="small"
+        sx={{ flex: '1 1 12rem' }}
+      />
+      <TextField
+        label="Title"
+        value={item.title}
+        onChange={(e) => onChange(index, { title: e.target.value })}
+        size="small"
+        sx={{ flex: '1 1 12rem' }}
+      />
+      <TextField
+        label="Tags (comma sep)"
+        type="text"
+        value={tagsInput}
+        onChange={(e) => setTagsInput(e.target.value)}
+        onBlur={commitTags}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
+        }}
+        size="small"
+        sx={{ flex: '2 1 16rem' }}
+        slotProps={{ htmlInput: { inputMode: 'text', spellCheck: false } }}
+      />
+      <Box sx={{ display: 'flex', gap: '0.5rem', marginLeft: 'auto' }}>
+        <IconButton size="small" onClick={() => onMove(index, -1)}>
+          <ArrowUpwardIcon fontSize="small" />
+        </IconButton>
+        <IconButton size="small" onClick={() => onMove(index, +1)}>
+          <ArrowDownwardIcon fontSize="small" />
+        </IconButton>
+        <IconButton size="small" color="error" onClick={() => onRemove(index)}>
+          <DeleteIcon fontSize="small" />
+        </IconButton>
+      </Box>
+    </Box>
+  );
+});
+
+type RemoteRow = { html: string; publisher?: string; role?: 'admin' | 'editor'; ts?: number };
 
 export default function Information() {
   const theme = useTheme();
+  const isXs = useMediaQuery(theme.breakpoints.down('sm'));
   const { name: userName, address: userAddress } = useAuth();
   const { hash } = useLocation();
   const navigate = useNavigate();
   const { alert } = useAlert();
+  const { track, isLoadingPrefix } = useFetchTracker();
 
-  const isXs = useMediaQuery(theme.breakpoints.down('sm'));
-
-  const asMeta = (arr: { id: string; title?: string; tags?: string[] }[]) =>
-    arr
-      .map((m) => ({ id: normId(m.id), title: m.title || '', tags: m.tags || [] }))
-      .filter((m) => m.id);
+  const asMeta = useCallback(
+    (arr: { id: string; title?: string; tags?: string[] }[]) =>
+      arr
+        .map((m) => ({ id: normId(m.id), title: m.title || '', tags: m.tags || [] }))
+        .filter((m) => m.id),
+    []
+  );
 
   /* ---------- Defaults (normalized IDs for consistent lookups) ---------- */
   const DEFAULT_SECTIONS = useMemo(
@@ -294,8 +374,6 @@ export default function Information() {
   /* ------------------------------ Membership ----------------------------- */
   const [role, setRole] = useState<'admin' | 'editor' | null>(null);
   const [isMember, setIsMember] = useState(false);
-
-  const { track, isLoadingPrefix } = useFetchTracker();
 
   useEffect(() => {
     let cancel = false;
@@ -329,8 +407,27 @@ export default function Information() {
   }, [userAddress, userName]);
 
   /* --------------------------- Menu & Remote Rows ------------------------ */
+  type OverrideRule = { mode: 'latest' } | { mode: 'preferred'; preferred: { publisher: string } };
+
   const [menu, setMenu] = useState<WikiMenuItem[]>([]);
-  const [remote, setRemote] = useState<Record<string, RemoteRow>>({});
+  const [variants, setVariants] = useState<Record<string, RemoteRow[]>>({});
+  const [overrides, setOverrides] = useState<Record<string, OverrideRule>>({});
+
+  function chooseActiveRow(
+    rows: RemoteRow[] | undefined,
+    rule?: OverrideRule
+  ): RemoteRow | undefined {
+    if (!rows || rows.length === 0) return undefined;
+    if (!rule || rule.mode === 'latest') {
+      return rows.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0))[0];
+    }
+    if (rule.mode === 'preferred') {
+      const p = rule.preferred?.publisher?.toLowerCase();
+      const hit = rows.find((r) => (r.publisher || '').toLowerCase() === p);
+      return hit || rows.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0))[0];
+    }
+    return rows[0];
+  }
 
   // seed menu with defaults first (so page renders instantly)
   useEffect(() => {
@@ -339,7 +436,7 @@ export default function Information() {
     }
   }, [DEFAULT_SECTIONS, menu.length]);
 
-  // fetch remote sections + (optional) remote menu
+  // fetch remote menu
   useEffect(() => {
     let cancel = false;
     (async () => {
@@ -355,38 +452,49 @@ export default function Information() {
     return () => {
       cancel = true;
     };
-  }, []);
+  }, [track]);
 
-  // Load sections for whatever list we currently have
+  // fetch overrides
   useEffect(() => {
     let cancel = false;
+    (async () => {
+      try {
+        const o = await track(loadWikiOverrides(), 'wiki:overrides');
+        if (!cancel && o && typeof o === 'object') {
+          setOverrides(o.overrides || {});
+        }
+      } catch {
+        /* no manifest is fine */
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [track]);
+
+  // Load sections for current menu (pause while menu dialog is open)
+  const [openMenuDlg, setOpenMenuDlg] = useState(false);
+  useEffect(() => {
+    let cancel = false;
+    if (openMenuDlg) return; // pause fetch storm during edits
 
     (async () => {
       try {
-        // If we already have a menu from QDN, use it; otherwise fall back to defaults
         const meta = asMeta(menu.length ? menu : DEFAULT_SECTIONS);
-
         const rows = await track(loadAllWikiSections(meta), 'wiki:sections');
-
         if (cancel) return;
 
-        const folded: Record<string, RemoteRow> = {};
+        const grouped: Record<string, RemoteRow[]> = {};
         for (const r of rows || []) {
           const id = normId((r as any).id);
           const html = (r as any).html ?? (r as any).content ?? '';
           if (!id || !html) continue;
           const ts = Number((r as any).timestamp) || 0;
-          const prev = folded[id];
-          if (!prev || ts > (prev.ts || 0)) {
-            folded[id] = {
-              html,
-              publisher: (r as any).publisher,
-              role: (r as any).publisherRole,
-              ts,
-            };
-          }
+          const publisher = (r as any).publisher;
+          const role = (r as any).publisherRole as 'admin' | 'editor' | undefined;
+          (grouped[id] ||= []).push({ html, publisher, role, ts });
         }
-        setRemote(folded);
+        setVariants(grouped);
       } catch (e) {
         console.error('Info load sections error:', e);
       }
@@ -395,28 +503,50 @@ export default function Information() {
     return () => {
       cancel = true;
     };
-  }, [menu, DEFAULT_SECTIONS]);
+  }, [menu, DEFAULT_SECTIONS, openMenuDlg, asMeta, track]);
 
   const wikiLoading = isLoadingPrefix('wiki:');
 
   /* ----------------------------- Search / TOC ---------------------------- */
+  const latestRowFor = useCallback(
+    (sid: string) => {
+      const rows = variants[sid] || [];
+      if (!rows.length) return undefined;
+      return rows.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0))[0];
+    },
+    [variants]
+  );
+
+  const activeRowFor = useCallback(
+    (sid: string) => chooseActiveRow(variants[sid], overrides[sid]),
+    [variants, overrides]
+  );
+
+  const textForSearch = useCallback(
+    (sid: string) => {
+      const row = activeRowFor(sid) || latestRowFor(sid);
+      if (row?.html) return row.html.toLowerCase();
+      const d = DEFAULT_BY_ID[sid];
+      return d ? String((d.body as any)?.props?.children ?? '').toLowerCase() : '';
+    },
+    [activeRowFor, latestRowFor, DEFAULT_BY_ID]
+  );
+
   const [q, setQ] = useState('');
   const qnorm = q.trim().toLowerCase();
 
   const filteredMenu = useMemo(() => {
     if (!qnorm) return menu;
     return menu.filter((m) => {
-      const d = DEFAULT_BY_ID[normId(m.id)];
-      const defaultText = d ? String((d.body as any)?.props?.children ?? '').toLowerCase() : '';
-      const overrideHtml = remote[normId(m.id)]?.html?.toLowerCase() ?? '';
+      const sid = normId(m.id);
+      const pageText = textForSearch(sid);
       return (
         (m.title || '').toLowerCase().includes(qnorm) ||
         (m.tags || []).some((t) => t.toLowerCase().includes(qnorm)) ||
-        defaultText.includes(qnorm) ||
-        overrideHtml.includes(qnorm)
+        pageText.includes(qnorm)
       );
     });
-  }, [menu, qnorm, remote, DEFAULT_BY_ID]);
+  }, [menu, qnorm, textForSearch]);
 
   const goto = (id: string) => navigate(`#${normId(id)}`, { replace: false });
 
@@ -429,47 +559,43 @@ export default function Information() {
 
   const currentMenuItem = menu.find((m) => normId(m.id) === currentId);
   const nid = normId(currentMenuItem?.id);
-  const currentOverride = nid ? remote[nid] : undefined;
   const currentDefault = nid ? DEFAULT_BY_ID[nid] : undefined;
+  const currentRows = nid ? variants[nid] : undefined;
+  const activeRow = chooseActiveRow(currentRows, nid ? overrides[nid] : undefined);
 
   /* ------------------------------ Editor state --------------------------- */
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [htmlDraft, setHtmlDraft] = useState<string>('');
+  // const [htmlDraft, setHtmlDraft] = useState<string>('');
 
   const startEdit = (id: string) => {
-    const n = normId(id);
-    setEditingId(n);
-    setHtmlDraft(
-      remote[n]?.html ?? (currentDefault ? renderToStaticMarkup(currentDefault.body) : '')
-    );
+    setEditingId(normId(id));
   };
 
-  useEffect(() => {
-    if (!editingId) return;
-    let html = remote[editingId]?.html ?? '';
-    if (!html) {
-      const def = DEFAULT_BY_ID[editingId];
-      if (def) html = renderToStaticMarkup(def.body);
-    }
-    setHtmlDraft(html);
-  }, [editingId, remote, DEFAULT_BY_ID]);
+  const initialHtmlFor = (sid: string): string => {
+    const row = activeRowFor(sid) || latestRowFor(sid);
+    if (row?.html) return row.html;
+    const d = DEFAULT_BY_ID[sid];
+    return d ? renderToStaticMarkup(d.body) : '';
+  };
 
-  const saveEdit = async () => {
+  const handlePublish = async (html: string) => {
     if (!editingId || !userName) return;
     try {
-      const prepared = prepareHtmlForPublish(htmlDraft, theme);
+      const prepared = prepareHtmlForPublish(html, theme);
       await publishWikiSection(editingId, prepared, userName, userAddress);
-      setRemote((m) => ({
-        ...m,
-        [editingId]: {
-          ...(m[editingId] || {}),
+      setVariants((prev) => {
+        const next = { ...(prev || {}) };
+        const arr = (next[editingId] || []).slice();
+        arr.push({
           html: prepared,
           publisher: userName,
+          role: isMember ? role || undefined : undefined,
           ts: Date.now(),
-        },
-      }));
+        });
+        next[editingId] = arr;
+        return next;
+      });
       setEditingId(null);
-      setHtmlDraft('');
       alert('Section published to QDN.', 'Section Published Successfully!', {
         severity: 'success',
       });
@@ -478,38 +604,100 @@ export default function Information() {
     }
   };
 
-  /* ---------------------------- Menu editing UI -------------------------- */
-  const [openMenuDlg, setOpenMenuDlg] = useState(false);
+  // const startEdit = (id: string) => {
+  //   const n = normId(id);
+  //   setEditingId(n);
+  //   const row = activeRowFor(n) || latestRowFor(n);
+  //   const fallback = DEFAULT_BY_ID[n] ? renderToStaticMarkup(DEFAULT_BY_ID[n].body) : '';
+  //   setHtmlDraft(row?.html || fallback);
+  // };
 
-  const moveItem = (idx: number, dir: -1 | 1) =>
-    setMenu((list) => {
-      const a = [...list];
-      const j = idx + dir;
-      if (j < 0 || j >= a.length) return a;
-      [a[idx], a[j]] = [a[j], a[idx]];
-      return a;
-    });
+  // useEffect(() => {
+  //   if (!editingId) return;
+  //   const row = activeRowFor(editingId) || latestRowFor(editingId);
+  //   const html =
+  //     row?.html ||
+  //     (DEFAULT_BY_ID[editingId] ? renderToStaticMarkup(DEFAULT_BY_ID[editingId].body) : '');
+  //   setHtmlDraft(html);
+  // }, [editingId, activeRowFor, latestRowFor, DEFAULT_BY_ID]);
 
-  const removeItem = (idx: number) => setMenu((list) => list.filter((_, i) => i !== idx));
-  const addItem = () => setMenu((list) => [...list, { id: '', title: '', tags: [] }]);
-
-  const saveMenu = async () => {
-    if (!userName) return;
-    const cleaned = menu
-      .map((m) => ({ ...m, id: normId(m.id), title: (m.title || '').trim() }))
-      .filter((m) => m.id && m.title);
-    try {
-      await saveWikiMenu(cleaned, userName);
-      setOpenMenuDlg(false);
-      alert('Menu published to QDN.', 'Menu Published Successfully!', { severity: 'success' });
-    } catch (e: any) {
-      alert(`Menu publish failed: ${String(e?.message || e)}`, 'Publish FAILURE', {
-        severity: 'error',
-      });
-    }
-  };
+  // const saveEdit = async () => {
+  //   if (!editingId || !userName) return;
+  //   try {
+  //     const prepared = prepareHtmlForPublish(htmlDraft, theme);
+  //     await publishWikiSection(editingId, prepared, userName, userAddress);
+  //     setVariants((prev) => {
+  //       const next = { ...(prev || {}) };
+  //       const arr = (next[editingId] || []).slice();
+  //       arr.push({
+  //         html: prepared,
+  //         publisher: userName,
+  //         role: isMember ? role || undefined : undefined,
+  //         ts: Date.now(),
+  //       });
+  //       next[editingId] = arr;
+  //       return next;
+  //     });
+  //     setEditingId(null);
+  //     setHtmlDraft('');
+  //     alert('Section published to QDN.', 'Section Published Successfully!', {
+  //       severity: 'success',
+  //     });
+  //   } catch (e: any) {
+  //     alert(`Publish failed: ${String(e?.message || e)}`, 'Publish FAILURE', { severity: 'error' });
+  //   }
+  // };
 
   /* -------------------------------- Render -------------------------------- */
+
+  const [openOverridesDlg, setOpenOverridesDlg] = useState(false);
+  const [draftOverrides, setDraftOverrides] = useState<Record<string, OverrideRule>>({});
+
+  useEffect(() => {
+    if (openOverridesDlg) setDraftOverrides(overrides);
+  }, [openOverridesDlg, overrides]);
+
+  const publishersFor = useCallback(
+    (sid: string) => {
+      const rows = variants[sid] || [];
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const r of rows) {
+        const p = (r.publisher || '').trim();
+        if (!p) continue;
+        const k = p.toLowerCase();
+        if (!seen.has(k)) {
+          seen.add(k);
+          out.push(p);
+        }
+      }
+      return out;
+    },
+    [variants]
+  );
+
+  const saveOverridesDlg = async () => {
+    if (role !== 'admin' || !userName) return;
+    const payload: WikiOverrides = {
+      version: 1,
+      updatedAt: Date.now(),
+      overrides: draftOverrides,
+    };
+    await track(saveWikiOverrides(payload, userName), 'wiki:overrides:save');
+    setOverrides(draftOverrides);
+    setOpenOverridesDlg(false);
+    alert('Overrides updated.', 'Wiki Overrides Saved', { severity: 'success' });
+  };
+
+  const invalidPreferred = Object.values(draftOverrides).some(
+    (r) => r.mode === 'preferred' && !r.preferred?.publisher
+  );
+
+  // local draft for menu dialog
+  const [draftMenu, setDraftMenu] = useState<WikiMenuItem[]>([]);
+  useEffect(() => {
+    if (openMenuDlg) setDraftMenu(menu.map((m) => ({ ...m })));
+  }, [openMenuDlg, menu]);
 
   return (
     <Box
@@ -558,6 +746,11 @@ export default function Information() {
               Manage Sections
             </EditToggleButton>
           )}
+          {role === 'admin' && (
+            <EditToggleButton variant="outlined" onClick={() => setOpenOverridesDlg(true)}>
+              Manage Versions
+            </EditToggleButton>
+          )}
         </Box>
       </Paper>
 
@@ -574,13 +767,10 @@ export default function Information() {
         <Paper
           sx={{
             p: '0.75rem',
-            // column on xs, fixed-ish sidebar on md+
             flex: { xs: '0 0 auto', md: '0 0 16rem' },
             width: { xs: '100%', md: '16rem' },
-            // sticky only on md+
             position: { xs: 'static', md: 'sticky' },
             top: { md: '1rem' },
-            // scrolling only on md+
             maxHeight: { xs: 'none', md: 'calc(100dvh - 2rem)' },
             overflow: { xs: 'visible', md: 'auto' },
             display: 'block',
@@ -593,16 +783,16 @@ export default function Information() {
                     <Skeleton variant="rounded" height={28} />
                   </Box>
                 ))
-              : filteredMenu.map((m) => (
+              : filteredMenu.map((m, i) => (
                   <ListItemButton
-                    key={m.id || Math.random()}
+                    key={normId(m.id) || `toc-${i}`}
                     selected={normId(m.id) === currentId}
                     onClick={() => m.id && goto(m.id)}
                     sx={{ borderRadius: '0.5rem', mb: '0.25rem' }}
                   >
                     <ListItemText
                       primary={m.title || '(untitled)'}
-                      primaryTypographyProps={{ noWrap: true }}
+                      slotProps={{ primary: { noWrap: true } }}
                     />
                   </ListItemButton>
                 ))}
@@ -620,88 +810,63 @@ export default function Information() {
           }}
         >
           {currentMenuItem ? (
-            <>
-              <Paper id={currentMenuItem.id} sx={{ p: '1rem', scrollMarginTop: '1.5rem' }}>
-                <Box
-                  sx={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap' }}
-                >
-                  <Typography variant="h6">{currentMenuItem.title}</Typography>
-                  {(currentMenuItem.tags || []).map((t) => (
-                    <Chip key={t} size="small" label={t} sx={{ opacity: 0.7 }} />
-                  ))}
-                  {userName && currentMenuItem.id && (
-                    <Box sx={{ mt: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
-                      <Tooltip
-                        title={
-                          isMember ? '' : 'Requires membership in Q-Assets-Management to publish'
-                        }
-                      >
-                        <span>
-                          <EditToggleButton
-                            size="small"
-                            editing={Boolean(editingId)}
-                            disabled={!isMember}
-                            onClick={() => startEdit(currentMenuItem.id!)}
-                          >
-                            {editingId ? 'Editing…' : 'Edit Section'}
-                          </EditToggleButton>
-                        </span>
-                      </Tooltip>
-                    </Box>
-                  )}
-
-                  {currentOverride?.publisher && (
-                    <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
-                      Overridden by {currentOverride.publisher}
-                      {currentOverride.role ? ` (${currentOverride.role})` : ''}
-                    </Typography>
-                  )}
-                </Box>
-
-                <Divider sx={{ my: '0.75rem' }} />
-
-                {isLoadingPrefix('wiki:sections') && !currentOverride?.html ? (
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                    <Skeleton variant="text" height={36} />
-                    <Skeleton variant="text" height={24} />
-                    <Skeleton variant="rounded" height={160} />
-                  </Box>
-                ) : currentOverride?.html ? (
-                  <PublishedHtmlRenderer html={currentOverride.html} />
-                ) : currentDefault ? (
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                    {currentDefault.body}
-                  </Box>
-                ) : (
-                  <Typography variant="body2" color="text.secondary">
-                    No content yet. (Define locally or publish via QDN.)
-                  </Typography>
-                )}
-
+            <Paper id={currentMenuItem.id} sx={{ p: '1rem', scrollMarginTop: '1.5rem' }}>
+              <Box
+                sx={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap' }}
+              >
+                <Typography variant="h6">{currentMenuItem.title}</Typography>
+                {(currentMenuItem.tags || []).filter(Boolean).map((t, idx) => (
+                  <Chip key={`${t}-${idx}`} size="small" label={t} sx={{ opacity: 0.7 }} />
+                ))}
                 {userName && currentMenuItem.id && (
-                  <>
-                    <Box sx={{ mt: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
-                      <Tooltip
-                        title={
-                          isMember ? '' : 'Requires membership in Q-Assets-Management to publish'
-                        }
-                      >
-                        <span>
-                          <EditToggleButton
-                            size="small"
-                            editing={Boolean(editingId)}
-                            disabled={!isMember}
-                            onClick={() => startEdit(currentMenuItem.id!)}
-                          >
-                            {editingId ? 'Editing…' : 'Edit'}
-                          </EditToggleButton>
-                        </span>
-                      </Tooltip>
-                    </Box>
-                  </>
+                  <Box sx={{ mt: '1rem', ml: 'auto' }}>
+                    <Tooltip
+                      title={
+                        isMember ? '' : 'Requires membership in Q-Assets-Management to publish'
+                      }
+                    >
+                      <span>
+                        <EditToggleButton
+                          size="small"
+                          editing={Boolean(editingId)}
+                          disabled={!isMember}
+                          onClick={() => startEdit(currentMenuItem.id!)}
+                        >
+                          {editingId ? 'Editing…' : 'Edit Section'}
+                        </EditToggleButton>
+                      </span>
+                    </Tooltip>
+                  </Box>
                 )}
-              </Paper>
-            </>
+              </Box>
+
+              <Divider sx={{ my: '0.75rem' }} />
+
+              {isLoadingPrefix('wiki:sections') && !activeRow?.html ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <Skeleton variant="text" height={36} />
+                  <Skeleton variant="text" height={24} />
+                  <Skeleton variant="rounded" height={160} />
+                </Box>
+              ) : activeRow?.html ? (
+                <PublishedHtmlRenderer html={activeRow.html} />
+              ) : currentDefault ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {currentDefault.body}
+                </Box>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  No content yet. (Define locally or publish via QDN.)
+                </Typography>
+              )}
+
+              {activeRow?.publisher && (
+                <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
+                  Active by {activeRow.publisher}
+                  {activeRow.role ? ` (${activeRow.role})` : ''}
+                </Typography>
+              )}
+            </Paper>
           ) : (
             <Paper sx={{ p: '1.25rem' }}>
               <Typography>Select a section from the left.</Typography>
@@ -711,28 +876,18 @@ export default function Information() {
       </Box>
 
       {/* Section Editor */}
-
-      <Dialog
+      {/* <Dialog
         open={Boolean(editingId)}
         onClose={() => setEditingId(null)}
-        fullScreen={isXs} // full screen on phones
-        fullWidth // still needed for layout
-        maxWidth={false} // allow our custom width
-        slotProps={{
-          paper: { sx: dialogPaperSx(isXs) },
-        }}
+        fullScreen={isXs}
+        fullWidth
+        maxWidth={false}
+        slotProps={{ paper: { sx: dialogPaperSx(isXs) } }}
       >
         <DialogTitle>Edit Section</DialogTitle>
         <DialogContent
           dividers
-          sx={{
-            // let the content scroll within the 75vh shell
-            overflow: 'hidden',
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 1.5,
-          }}
+          sx={{ overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column', gap: 1.5 }}
         >
           <TiptapEditor value={htmlDraft} onChange={setHtmlDraft} />
         </DialogContent>
@@ -742,88 +897,188 @@ export default function Information() {
             Publish
           </Button>
         </DialogActions>
-      </Dialog>
+      </Dialog> */}
+      <SectionEditorDialog
+        open={Boolean(editingId)}
+        initialHtml={editingId ? initialHtmlFor(editingId) : ''}
+        onClose={() => setEditingId(null)}
+        onPublish={handlePublish}
+        disabled={!editingId || !isMember}
+      />
 
       {/* Manage Sections (Menu) */}
-      <Dialog open={openMenuDlg} onClose={() => setOpenMenuDlg(false)} fullWidth maxWidth="md">
+      <ManageSectionsDialog
+        open={openMenuDlg}
+        initialMenu={menu}
+        onClose={() => setOpenMenuDlg(false)}
+        onPublish={async (cleaned) => {
+          if (!userName) return;
+          try {
+            await saveWikiMenu(cleaned, userName);
+            // one state update → one sections reload
+            setMenu(cleaned);
+            setOpenMenuDlg(false);
+            alert('Menu published to QDN.', 'Menu Published Successfully!', {
+              severity: 'success',
+            });
+          } catch (e: any) {
+            alert(`Menu publish failed: ${String(e?.message || e)}`, 'Publish FAILURE', {
+              severity: 'error',
+            });
+          }
+        }}
+        canPublish={isMember}
+      />
+      {/* <Dialog open={openMenuDlg} onClose={() => setOpenMenuDlg(false)} fullWidth maxWidth="md">
         <DialogTitle>Manage Sections (Menu)</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={1.5}>
-            {menu.map((m, i) => (
-              <Box
-                key={i}
-                sx={{
-                  display: 'flex',
-                  gap: '1rem',
-                  alignItems: 'center',
-                  flexWrap: 'wrap',
+            {draftMenu.map((m, i) => (
+              <MenuRow
+                key={i} // stable key avoids remount-on-typing
+                index={i}
+                item={m}
+                onChange={(idx, patch) => {
+                  setDraftMenu((list) => {
+                    const a = [...list];
+                    a[idx] = { ...a[idx], ...patch };
+                    return a;
+                  });
                 }}
-              >
-                <TextField
-                  label="Section ID"
-                  value={m.id}
-                  onChange={(e) =>
-                    setMenu((list) =>
-                      list.map((x, idx) => (idx === i ? { ...x, id: e.target.value } : x))
-                    )
-                  }
-                  size="small"
-                  sx={{ flex: '1 1 12rem' }}
-                />
-                <TextField
-                  label="Title"
-                  value={m.title}
-                  onChange={(e) =>
-                    setMenu((list) =>
-                      list.map((x, idx) => (idx === i ? { ...x, title: e.target.value } : x))
-                    )
-                  }
-                  size="small"
-                  sx={{ flex: '1 1 12rem' }}
-                />
-                <TextField
-                  label="Tags (comma sep)"
-                  value={(m.tags || []).join(', ')}
-                  onChange={(e) =>
-                    setMenu((list) =>
-                      list.map((x, idx) =>
-                        idx === i
-                          ? {
-                              ...x,
-                              tags: e.target.value
-                                .split(',')
-                                .map((s) => s.trim())
-                                .filter(Boolean),
-                            }
-                          : x
-                      )
-                    )
-                  }
-                  size="small"
-                  sx={{ flex: '2 1 16rem' }}
-                />
-                <Box sx={{ display: 'flex', gap: '0.5rem', marginLeft: 'auto' }}>
-                  <IconButton size="small" onClick={() => moveItem(i, -1)}>
-                    <ArrowUpwardIcon fontSize="small" />
-                  </IconButton>
-                  <IconButton size="small" onClick={() => moveItem(i, +1)}>
-                    <ArrowDownwardIcon fontSize="small" />
-                  </IconButton>
-                  <IconButton size="small" color="error" onClick={() => removeItem(i)}>
-                    <DeleteIcon fontSize="small" />
-                  </IconButton>
-                </Box>
-              </Box>
+                onMove={(idx, dir) => {
+                  setDraftMenu((list) => {
+                    const a = [...list];
+                    const j = idx + dir;
+                    if (j < 0 || j >= a.length) return a;
+                    [a[idx], a[j]] = [a[j], a[idx]];
+                    return a;
+                  });
+                }}
+                onRemove={(idx) => {
+                  setDraftMenu((list) => list.filter((_, ii) => ii !== idx));
+                }}
+              />
             ))}
             <Box>
-              <Button onClick={addItem}>Add Section</Button>
+              <Button
+                onClick={() => setDraftMenu((list) => [...list, { id: '', title: '', tags: [] }])}
+              >
+                Add Section
+              </Button>
             </Box>
           </Stack>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpenMenuDlg(false)}>Close</Button>
-          <Button variant="contained" onClick={saveMenu} disabled={!isMember}>
+          <Button
+            variant="contained"
+            onClick={async () => {
+              if (!userName) return;
+              const cleaned = draftMenu
+                .map((m) => ({
+                  ...m,
+                  id: slug(normId(m.id)),
+                  title: (m.title || '').trim(),
+                  tags: (m.tags || []).map((t) => t.trim()).filter(Boolean),
+                }))
+                .filter((m) => m.id && m.title);
+
+              try {
+                await saveWikiMenu(cleaned, userName);
+                setMenu(cleaned); // only now update live menu → triggers a single reload
+                setOpenMenuDlg(false);
+                alert('Menu published to QDN.', 'Menu Published Successfully!', {
+                  severity: 'success',
+                });
+              } catch (e: any) {
+                alert(`Menu publish failed: ${String(e?.message || e)}`, 'Publish FAILURE', {
+                  severity: 'error',
+                });
+              }
+            }}
+            disabled={!isMember}
+          >
             Publish Menu
+          </Button>
+        </DialogActions>
+      </Dialog> */}
+
+      {/* Manage Active Versions */}
+      <Dialog
+        open={openOverridesDlg}
+        onClose={() => setOpenOverridesDlg(false)}
+        fullWidth
+        maxWidth="md"
+      >
+        <DialogTitle>Manage Active Versions</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={1.5}>
+            {menu.map((m) => {
+              const sid = normId(m.id);
+              const rule = draftOverrides[sid] || { mode: 'latest' as const };
+              const pubs = publishersFor(sid);
+              return (
+                <Paper key={sid} sx={{ p: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+                    <Typography sx={{ minWidth: 200 }}>{m.title}</Typography>
+
+                    <Button
+                      size="small"
+                      variant={rule.mode === 'latest' ? 'contained' : 'outlined'}
+                      onClick={() =>
+                        setDraftOverrides((d) => ({ ...d, [sid]: { mode: 'latest' } }))
+                      }
+                    >
+                      Latest
+                    </Button>
+                    <Button
+                      size="small"
+                      variant={rule.mode === 'preferred' ? 'contained' : 'outlined'}
+                      onClick={() =>
+                        setDraftOverrides((d) => ({
+                          ...d,
+                          [sid]: { mode: 'preferred', preferred: { publisher: pubs[0] || '' } },
+                        }))
+                      }
+                    >
+                      Preferred
+                    </Button>
+
+                    {rule.mode === 'preferred' && (
+                      <TextField
+                        select
+                        label="Publisher"
+                        size="small"
+                        value={rule.preferred?.publisher || ''}
+                        onChange={(e) =>
+                          setDraftOverrides((d) => ({
+                            ...d,
+                            [sid]: { mode: 'preferred', preferred: { publisher: e.target.value } },
+                          }))
+                        }
+                        sx={{ minWidth: 220 }}
+                        slotProps={{ select: { native: true } }}
+                      >
+                        <option value="" disabled>
+                          Choose publisher…
+                        </option>
+                        {pubs.map((p) => (
+                          <option key={p} value={p}>
+                            {p}
+                          </option>
+                        ))}
+                      </TextField>
+                    )}
+                  </Box>
+                </Paper>
+              );
+            })}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenOverridesDlg(false)}>Close</Button>
+          <Button variant="contained" onClick={saveOverridesDlg} disabled={invalidPreferred}>
+            Save Overrides
           </Button>
         </DialogActions>
       </Dialog>

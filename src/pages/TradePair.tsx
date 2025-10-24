@@ -28,6 +28,7 @@ import {
   type BookOrder,
   type UiMyOrder,
   getMyOrdersForAssetUi,
+  decodePairTradeEnvelope,
 } from '../utils/markets';
 import { VolumeBars, DepthChart } from '../components/trade/PairCharts';
 import { buildDepth } from '../utils/chartTransforms';
@@ -326,23 +327,41 @@ export default function TradePair() {
       const fromWide = now - oneYearMs; // tune this
       const envAll = await fetchQortToAssetTrades(id, fromWide, 5000, 20000);
 
+      // const rows = (envAll ?? [])
+      //   .map((env: any) => {
+      //     const io = env.initiatingOrder;
+      //     const t = env.trade;
+      //     const to = env.targetOrder;
+      //     const qtyAsset = Number(t?.targetAmount ?? io?.amount ?? 0);
+      //     const price = Number(to.price);
+      //     const ts = Number(t?.timestamp ?? io?.timestamp ?? 0);
+      //     const side =
+      //       io && typeof io.haveAssetId === 'number'
+      //         ? io.haveAssetId === 0
+      //           ? 'buy'
+      //           : 'sell'
+      //         : 'buy';
+      //     return Number.isFinite(price) && qtyAsset > 0 && ts > 0
+      //       ? ({ price, quantity: qtyAsset, side, ts } as Trade)
+      //       : null;
+      //   })
+      //   .filter(Boolean) as Trade[];
       const rows = (envAll ?? [])
         .map((env: any) => {
-          const io = env.initiatingOrder;
-          const t = env.trade;
-          const to = env.targetOrder;
-          const qtyAsset = Number(t?.targetAmount ?? io?.amount ?? 0);
-          const price = Number(to.price);
-          const ts = Number(t?.timestamp ?? io?.timestamp ?? 0);
-          const side =
-            io && typeof io.haveAssetId === 'number'
-              ? io.haveAssetId === 0
-                ? 'buy'
-                : 'sell'
-              : 'buy';
-          return Number.isFinite(price) && qtyAsset > 0 && ts > 0
-            ? ({ price, quantity: qtyAsset, side, ts } as Trade)
-            : null;
+          const base = decodePairTradeEnvelope(env, id);
+          if (!base) return null;
+
+          // side for chart coloring = taker side (initiating order):
+          const io = env?.initiatingOrder;
+          const takerIsBuyer = Number(io?.haveAssetId) === 0; // have QORT => buying asset
+          const side: 'buy' | 'sell' = takerIsBuyer ? 'buy' : 'sell';
+
+          return {
+            price: base.price, // QORT / asset (maker price)
+            quantity: base.assetAmt, // asset units
+            side,
+            ts: base.ts, // ms
+          } as Trade;
         })
         .filter(Boolean) as Trade[];
 
@@ -664,9 +683,9 @@ export default function TradePair() {
               Price Chart
             </Typography>
             {candleDataTOHLCV.length === 0 ? (
-              <SmartPriceChart data={[]} height={300} />
+              <SmartPriceChart data={[]} height={300} scaleSide="left" />
             ) : (
-              <SmartPriceChart data={candleDataTOHLCV} height={300} />
+              <SmartPriceChart data={candleDataTOHLCV} height={300} scaleSide="left" />
             )}
             <Typography variant="subtitle2" color="text.secondary">
               Volume
@@ -686,7 +705,7 @@ export default function TradePair() {
       <Box
         sx={{
           display: 'grid',
-          gridTemplateColumns: { xs: '1fr', md: '1.2fr 1fr' },
+          gridTemplateColumns: { xs: '1fr', md: '1.4fr 1fr' },
           gap: 2,
           '& > *': { minWidth: 0 },
         }}
@@ -697,12 +716,14 @@ export default function TradePair() {
             <Typography variant="subtitle1" sx={{ mb: 1 }}>
               Order Book
             </Typography>
-            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+            <Box
+              sx={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 2 }}
+            >
               <Box>
                 <Box
                   sx={{
                     display: 'grid',
-                    gridTemplateColumns: 'minmax(0,1fr) auto',
+                    gridTemplateColumns: 'minmax(0,1fr) auto auto',
                     columnGap: 1,
                     alignItems: 'baseline',
                     px: 1,
@@ -712,95 +733,122 @@ export default function TradePair() {
                   <Typography variant="caption" color="text.secondary">
                     Price
                   </Typography>
-                  <Typography variant="caption" color="text.secondary" sx={{ justifySelf: 'end' }}>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ justifySelf: 'stretch' }}
+                  >
                     Qty
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ justifySelf: 'end' }}>
+                    Total
                   </Typography>
                 </Box>
                 <Box sx={{ mt: 0.5, display: 'grid', gap: 0.25 }}>
                   {bids.map((b, i) => {
                     const creator = getOrderCreator(b);
                     const byIssuer = isIssuerAddress(creator);
+                    const pref = bidPrefix[i] || { qty: 0, proceeds: 0 };
+                    const avg = pref.qty > 0 ? pref.proceeds / pref.qty : 0;
                     return (
-                      <Box
+                      <Tooltip
                         key={i}
-                        sx={{
-                          display: 'grid',
-                          gridTemplateColumns: 'minmax(0,1fr) auto',
-                          alignItems: 'center',
-                          columnGap: '1',
-                          fontValueNumeric: 'tabular-nums',
-                          fontSize: { xs: 12, sm: 14 },
-                          minWidth: 0,
-                          justifyContent: 'space-between',
-                          bgcolor: 'success.main',
-                          color: 'success.contrastText',
-                          px: 1,
-                          py: 0.25,
-                          borderRadius: 0.5,
-                          opacity: 0.9,
-                          cursor: 'pointer',
-                          userSelect: 'none',
-                          '&:hover': { opacity: 1 },
-                        }}
-                        title="Click to sell at this bid"
-                        onClick={(e) => {
-                          setSide('sell');
-                          // clicked price (human string, fixed to 8dp)
-                          const pHuman = toFixedDp(quantPrice(b.priceQortPerAsset), DP);
-                          if (e.ctrlKey || e.metaKey) {
-                            setPrice(pHuman);
-                            setSweptTotalQort(null);
-                            setSweptAvgPrice(null);
-                            return;
-                          }
-                          // cumulative qty you can sell through this bid index
-                          const { qty } = sweepBidsThrough(i);
-                          // quantity in human string (respect divisibility)
-                          const qtyHuman = divisible ? toFixedDp(qty, DP) : String(Math.floor(qty));
-                          // math in atomics
-                          const qtyAtoms = decimalToAtomics(qtyHuman, DP); // asset atoms
-                          const priceAtoms = decimalToAtomics(pHuman, DP); // QORT atoms per asset
-                          const proceedsAtoms = (qtyAtoms * priceAtoms) / TEN_DP; // QORT atoms
-                          const avgAtoms = qtyAtoms > 0n ? (proceedsAtoms * TEN_DP) / qtyAtoms : 0n; // price atoms
-                          // update UI (inputs remain human)
-                          setPrice(pHuman);
-                          setQty(qtyHuman);
-                          setSweptTotalQort(parseFloat(atomicsToDecimalString(proceedsAtoms, DP))); // number for display
-                          setSweptAvgPrice(parseFloat(atomicsToDecimalString(avgAtoms, DP))); // blended avg price
-                        }}
+                        arrow
+                        title={
+                          <span>
+                            Cumulative qty: {formatQty(pref.qty, divisible)} {name}
+                            <br />
+                            Proceeds: {formatPrice(pref.proceeds)} QORT
+                            <br />
+                            Avg: {formatPrice(avg)} QORT / {name}
+                            <br />
+                            Click to SELL at this bid.
+                          </span>
+                        }
                       >
-                        <span
-                          style={{
-                            overflow: 'hidden',
-                            textOverflow: 'elipsis',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {formatPrice(b.priceQortPerAsset)}
-                        </span>
                         <Box
                           sx={{
-                            display: 'flex',
+                            display: 'grid',
+                            gridTemplateColumns: 'minmax(0,1fr) auto auto',
                             alignItems: 'center',
-                            gap: 0.5,
-                            justifySelf: 'end',
+                            columnGap: 1,
+                            fontVariantNumeric: 'tabular-nums',
+                            fontSize: { xs: 12, sm: 14 },
+                            minWidth: 0,
+                            bgcolor: 'success.main',
+                            color: 'success.contrastText',
+                            px: 1,
+                            py: 0.25,
+                            borderRadius: 0.5,
+                            opacity: 0.9,
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                            '&:hover': { opacity: 1 },
+                          }}
+                          onClick={(e) => {
+                            setSide('sell');
+                            const pHuman = toFixedDp(quantPrice(b.priceQortPerAsset), DP);
+                            if (e.ctrlKey || e.metaKey) {
+                              setPrice(pHuman);
+                              setSweptTotalQort(null);
+                              setSweptAvgPrice(null);
+                              return;
+                            }
+                            const { qty } = sweepBidsThrough(i);
+                            const qtyHuman = divisible
+                              ? toFixedDp(qty, DP)
+                              : String(Math.floor(qty));
+                            const qtyAtoms = decimalToAtomics(qtyHuman, DP);
+                            const priceAtoms = decimalToAtomics(pHuman, DP);
+                            const proceedsAtoms = (qtyAtoms * priceAtoms) / TEN_DP;
+                            const avgAtoms =
+                              qtyAtoms > 0n ? (proceedsAtoms * TEN_DP) / qtyAtoms : 0n;
+
+                            setPrice(pHuman);
+                            setQty(qtyHuman);
+                            setSweptTotalQort(
+                              parseFloat(atomicsToDecimalString(proceedsAtoms, DP))
+                            );
+                            setSweptAvgPrice(parseFloat(atomicsToDecimalString(avgAtoms, DP)));
                           }}
                         >
-                          {byIssuer && <IssuerTag />}
+                          {/* Price */}
                           <span
-                            style={
-                              {
-                                // display: 'flex',
-                                // alignItems: 'center',
-                                // gap: '0.5',
-                                // justifySelf: 'end',
-                              }
-                            }
+                            style={{
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
                           >
-                            {formatQty(b.qtyAsset, divisible)}
+                            {formatPrice(b.priceQortPerAsset)}
                           </span>
+
+                          {/* Row Qty */}
+                          <Box
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 0.5,
+                              justifySelf: 'end',
+                            }}
+                          >
+                            {byIssuer && <IssuerTag />}
+                            <span
+                              style={{
+                                fontWeight: 600,
+                                color: theme.palette.success.dark, // dark/bold text
+                              }}
+                            >
+                              {formatQty(b.qtyAsset, divisible)}
+                            </span>
+                          </Box>
+
+                          {/* Cumulative Total Qty */}
+                          <Box sx={{ justifySelf: 'end', opacity: 0.9 }}>
+                            {formatQty(pref.qty, divisible)}
+                          </Box>
                         </Box>
-                      </Box>
+                      </Tooltip>
                     );
                   })}
 
@@ -819,7 +867,7 @@ export default function TradePair() {
                 <Box
                   sx={{
                     display: 'grid',
-                    gridTemplateColumns: 'minmax(0,1fr) auto',
+                    gridTemplateColumns: 'minmax(0,1fr) auto auto',
                     columnGap: 1,
                     alignItems: 'baseline',
                     px: 1,
@@ -832,92 +880,113 @@ export default function TradePair() {
                   <Typography variant="caption" color="text.secondary" sx={{ justifySelf: 'end' }}>
                     Qty
                   </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ justifySelf: 'end' }}>
+                    Total
+                  </Typography>
                 </Box>
                 <Box sx={{ mt: 0.5, display: 'grid', gap: 0.25 }}>
                   {asks.map((a, i) => {
                     const creator = getOrderCreator(a);
                     const byIssuer = isIssuerAddress(creator);
+                    const pref = askPrefix[i] || { qty: 0, cost: 0 };
+                    const avg = pref.qty > 0 ? pref.cost / pref.qty : 0;
+
                     return (
-                      <Box
+                      <Tooltip
                         key={i}
-                        sx={{
-                          display: 'grid',
-                          gridTemplateColumns: 'minmax(0,1fr) auto',
-                          alignItems: 'center',
-                          columnGap: '1',
-                          fontValueNumeric: 'tabular-nums',
-                          fontSize: { xs: 12, sm: 14 },
-                          minWidth: 0,
-                          justifyContent: 'space-between',
-                          bgcolor: 'error.main',
-                          color: 'error.contrastText',
-                          px: 1,
-                          py: 0.25,
-                          borderRadius: 0.5,
-                          opacity: 0.9,
-                          cursor: 'pointer',
-                          userSelect: 'none',
-                          '&:hover': { opacity: 1 },
-                        }}
-                        title="Click to buy at this ask"
-                        onClick={(e) => {
-                          setSide('buy');
-                          // 1) clicked price in human string (fixed to 8dp)
-                          const pHuman = toFixedDp(quantPrice(a.priceQortPerAsset), DP);
-                          if (e.ctrlKey || e.metaKey) {
-                            // set only price field, leave totals alone
-                            setPrice(pHuman);
-                            setSweptTotalQort(null);
-                            setSweptAvgPrice(null);
-                            return;
-                          }
-                          // 2) cumulative qty through this row (human)
-                          const { qty } = sweepAsksThrough(i);
-                          const qtyHuman = divisible ? toFixedDp(qty, DP) : String(Math.floor(qty));
-                          // 3) math in atomics
-                          const qtyAtoms = decimalToAtomics(qtyHuman, DP);
-                          const priceAtoms = decimalToAtomics(pHuman, DP);
-                          const costAtoms = (qtyAtoms * priceAtoms) / TEN_DP; // QORT atoms
-                          const avgAtoms = qtyAtoms > 0n ? (costAtoms * TEN_DP) / qtyAtoms : 0n; // price atoms
-                          // 4) update UI with human strings, keep swept totals as numbers
-                          setPrice(pHuman);
-                          setQty(qtyHuman);
-                          setSweptTotalQort(parseFloat(atomicsToDecimalString(costAtoms, DP)));
-                          setSweptAvgPrice(parseFloat(atomicsToDecimalString(avgAtoms, DP)));
-                        }}
+                        arrow
+                        title={
+                          <span>
+                            Cumulative qty: {formatQty(pref.qty, divisible)} {name}
+                            <br />
+                            Cost: {formatPrice(pref.cost)} QORT
+                            <br />
+                            Avg: {formatPrice(avg)} QORT / {name}
+                            <br />
+                            Click to BUY to this ask.
+                          </span>
+                        }
                       >
-                        <span
-                          style={{
-                            overflow: 'hidden',
-                            textOverflow: 'elipsis',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {formatPrice(a.priceQortPerAsset)}
-                        </span>
                         <Box
                           sx={{
-                            display: 'flex',
+                            display: 'grid',
+                            gridTemplateColumns: 'minmax(0,1fr) auto auto',
                             alignItems: 'center',
-                            gap: 0.5,
-                            justifySelf: 'end',
+                            columnGap: 1,
+                            fontVariantNumeric: 'tabular-nums',
+                            fontSize: { xs: 12, sm: 14 },
+                            minWidth: 0,
+                            bgcolor: 'error.main',
+                            color: 'error.contrastText',
+                            px: 1,
+                            py: 0.25,
+                            borderRadius: 0.5,
+                            opacity: 0.9,
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                            '&:hover': { opacity: 1 },
+                          }}
+                          onClick={(e) => {
+                            setSide('buy');
+                            const pHuman = toFixedDp(quantPrice(a.priceQortPerAsset), DP);
+                            if (e.ctrlKey || e.metaKey) {
+                              setPrice(pHuman);
+                              setSweptTotalQort(null);
+                              setSweptAvgPrice(null);
+                              return;
+                            }
+                            const { qty } = sweepAsksThrough(i);
+                            const qtyHuman = divisible
+                              ? toFixedDp(qty, DP)
+                              : String(Math.floor(qty));
+                            const qtyAtoms = decimalToAtomics(qtyHuman, DP);
+                            const priceAtoms = decimalToAtomics(pHuman, DP);
+                            const costAtoms = (qtyAtoms * priceAtoms) / TEN_DP;
+                            const avgAtoms = qtyAtoms > 0n ? (costAtoms * TEN_DP) / qtyAtoms : 0n;
+
+                            setPrice(pHuman);
+                            setQty(qtyHuman);
+                            setSweptTotalQort(parseFloat(atomicsToDecimalString(costAtoms, DP)));
+                            setSweptAvgPrice(parseFloat(atomicsToDecimalString(avgAtoms, DP)));
                           }}
                         >
-                          {byIssuer && <IssuerTag />}
+                          {/* Price */}
                           <span
-                            style={
-                              {
-                                // display: 'flex',
-                                // alignItems: 'center',
-                                // gap: '0.5',
-                                // justifySelf: 'end',
-                              }
-                            }
+                            style={{
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
                           >
-                            {formatQty(a.qtyAsset, divisible)}
+                            {formatPrice(a.priceQortPerAsset)}
                           </span>
+
+                          {/* Row Qty */}
+                          <Box
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 0.5,
+                              justifySelf: 'end',
+                            }}
+                          >
+                            {byIssuer && <IssuerTag />}
+                            <span
+                              style={{
+                                fontWeight: 600,
+                                color: theme.palette.error.dark, // dark/bold text
+                              }}
+                            >
+                              {formatQty(a.qtyAsset, divisible)}
+                            </span>
+                          </Box>
+
+                          {/* Cumulative Total Qty */}
+                          <Box sx={{ justifySelf: 'end', opacity: 0.9 }}>
+                            {formatQty(pref.qty, divisible)}
+                          </Box>
                         </Box>
-                      </Box>
+                      </Tooltip>
                     );
                   })}
 

@@ -234,6 +234,41 @@ export async function getAllAccountNames(address: string): Promise<string[]> {
   return [];
 }
 
+export interface SignatureResponse {
+  type: string;
+  timestamp: number;
+  reference?: string;
+  fee?: string;
+  signature: string;
+  txGroupId?: number;
+  recipient: string;
+  blockHeight?: number;
+  approvalStatus?: string;
+  creatorAddress: string;
+  senderPublicKey: string;
+  amount: string;
+  assetId?: number;
+  assetName?: string;
+}
+
+export const getTransactionInfoBySignature = async (txSig: string): Promise<SignatureResponse> => {
+  // Call fetch and parse JSON
+  const res = await fetch(`/names/transactions/signature/${txSig}`, {
+    headers: { accept: 'application/json' },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch transaction: ${res.statusText}`);
+  }
+
+  // Now parse the body as JSON
+  const data = (await res.json()) as SignatureResponse;
+
+  // Return data directly, since it's already typed
+  return data;
+};
+
+
 
 
 async function isValidQortalTx(base58Tx: string, txType: string): Promise<boolean> {

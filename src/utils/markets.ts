@@ -176,19 +176,38 @@ export async function getDecimals(assetId: number): Promise<number> {
     Order book
    ========================= */
 
+// function openQtyInAssetUnits(
+//   row: { amount: any; fulfilled: any; amountAssetId: number | string; price: any },
+//   pairAssetId: number // the non-QORT id on this screen
+// ): number {
+//   const amt  = toNum(row.amount);
+//   const ful  = toNum(row.fulfilled);
+//   const open = Math.max(0, amt - ful);            // units of amountAssetId
+//   const aId  = Number(row.amountAssetId);
+//   // const px   = toNum(row.price);                   // QORT per 1 asset
+
+//   if (aId === pairAssetId) return open;            // already in asset units
+//   return open;// unexpected: best effort
+// }
+
 function openQtyInAssetUnits(
   row: { amount: any; fulfilled: any; amountAssetId: number | string; price: any },
   pairAssetId: number // the non-QORT id on this screen
 ): number {
   const amt  = toNum(row.amount);
   const ful  = toNum(row.fulfilled);
-  const open = Math.max(0, amt - ful);            // units of amountAssetId
+  const open = Math.max(0, amt - ful);             // units of amountAssetId
   const aId  = Number(row.amountAssetId);
-  // const px   = toNum(row.price);                   // QORT per 1 asset
+  const px   = toNum(row.price);                    // QORT per 1 asset
 
-  if (aId === pairAssetId) return open;            // already in asset units
-  return open;// unexpected: best effort
+  if (aId === pairAssetId) return open;             // already in asset units
+  if (aId === QORT_ID) {                            // in QORT -> convert to asset
+    return px > 0 ? open / px : 0;
+  }
+  // Unknown denomination: best effort (don’t lie)
+  return 0;
 }
+
 
 export async function fetchAsks(assetId: number, opts?: {limit?: number; offset?: number; reverse?: boolean }): Promise<BookOrder[]> {
   const qs = new URLSearchParams();
@@ -297,7 +316,7 @@ export async function createOrderAndBroadcast(params: {
   const haveAssetId = side === 'sell' ? assetId : 0; // QORT=0
   const wantAssetId = side === 'sell' ? 0 : assetId;
 
-  // amount is in units of wantAssetId
+  // amount is in units of wantAssetId - have changed the below and it seems to be working, I'm not going to mess with it. 
   // const amount = side === 'sell' ? qAsset(qty) : q8(price * qty);
   const amount = qAsset(qty)
   if (!(amount > 0)) throw new Error('Invalid amount (rounded to zero)');
@@ -605,21 +624,41 @@ export async function fetchTradesPaged(a: number, b: number, windowStartMs: numb
   return all;
 }
 
-/** Pull /assets/trades/0/{assetId} until we cross `untilMs` or hard cap. */
-export async function fetchQortToAssetTrades(
-  assetId: number,
+// Helper: get timestamp (ms) from trade envelope
+function tradeTs(row: any): number {
+  const t = row?.trade;
+  const raw = Number(t?.timestamp ?? row?.timestamp ?? 0);
+  return raw && raw < 2e10 ? raw : raw; // your node already ms; keep simple
+}
+
+// Helper: stable de-dupe key across both directions
+function tradeKey(row: any): string {
+  const t = row?.trade ?? {};
+  const ts = tradeTs(row);
+  const io = t.initiatingOrderId ?? row?.initiatingOrder?.orderId ?? '';
+  const to = t.targetOrderId ?? row?.targetOrder?.orderId ?? '';
+  // include amounts to be extra safe across nodes
+  const ia = t.initiatorAmount ?? '';
+  const ta = t.targetAmount ?? '';
+  return `${io}|${to}|${ts}|${ia}|${ta}`;
+}
+
+// Page one direction newest->older until untilMs or caps
+async function fetchTradesOneDirection(
+  a: number,
+  b: number,
   untilMs: number,
-  pageSize = 500,
-  hardCap = 20000
-) {
+  pageSize: number,
+  hardCap: number
+): Promise<any[]> {
   const pages = Math.ceil(hardCap / pageSize);
   const out: any[] = [];
 
   for (let page = 0; page < pages; page++) {
-    const batch = await getTrades(0, assetId, {
+    const batch = await getTrades(a, b, {
       limit: pageSize,
       offset: page * pageSize,
-      reverse: true,
+      reverse: true, // newest first
     });
 
     if (!Array.isArray(batch) || batch.length === 0) break;
@@ -627,12 +666,45 @@ export async function fetchQortToAssetTrades(
     out.push(...batch);
 
     const last = batch[batch.length - 1];
-    const lastTs = Number(last?.trade?.timestamp ?? last?.timestamp ?? 0); // already ms in your sample
-    if (lastTs && lastTs < untilMs) break;
+    const lastTs = tradeTs(last);
+    if (lastTs && untilMs && lastTs < untilMs) break;
+    if (out.length >= hardCap) break;
     if (batch.length < pageSize) break;
   }
   return out;
 }
+
+/**
+ * Pull /assets/trades/0/{assetId} AND /assets/trades/{assetId}/0,
+ * merge, de-dupe, and return newest-first.
+ */
+export async function fetchQortToAssetTrades(
+  assetId: number,
+  untilMs: number,
+  pageSize = 500,
+  hardCap = 20000
+) {
+  const [qortToAsset, assetToQort] = await Promise.all([
+    fetchTradesOneDirection(0, assetId, untilMs, pageSize, hardCap),
+    fetchTradesOneDirection(assetId, 0, untilMs, pageSize, hardCap),
+  ]);
+
+  // Merge + de-dupe
+  const seen = new Map<string, any>();
+  for (const row of qortToAsset) seen.set(tradeKey(row), row);
+  for (const row of assetToQort) seen.set(tradeKey(row), row);
+
+  const merged = Array.from(seen.values());
+
+  // Newest-first
+  merged.sort((a, b) => tradeTs(b) - tradeTs(a));
+
+  // Enforce overall cap (optional)
+  if (merged.length > hardCap) merged.length = hardCap;
+
+  return merged;
+}
+
 
 export async function getRecentTrades(
   assetIds?: number[],
@@ -658,6 +730,40 @@ export async function getRecentTrades(
    ========================= */
 
 /** Decode a row from /assets/trades/<assetId>/<otherAssetId> envelope. */
+// export function decodePairTradeEnvelope(
+//   row: any,
+//   pairAssetId: number
+// ): { assetAmt: number; qortAmt: number; price: number; ts: number } | null {
+//   const t = row?.trade;
+//   if (!t) return null;
+
+//   const iaId = Number(t.initiatorAmountAssetId);
+//   const taId = Number(t.targetAmountAssetId);
+//   const ia   = toNum(t.initiatorAmount);
+//   const ta = toNum(t.targetAmount);
+
+//   let assetAmt = 0;
+//   let qortAmt  = 0;
+
+//   if (taId === pairAssetId) {      // initiator=QORT -> BUY asset
+//     qortAmt = ia; assetAmt = ta;
+//   } else if (iaId === pairAssetId) { // initiator=ASSET -> SELL
+//     assetAmt = ia; qortAmt = ta;
+//   } else {
+//     assetAmt = ta > 0 ? ta : ia;
+//   }
+
+//   const o1p = toNum(row?.initiatingOrder?.price);
+//   const o2p = toNum(row?.targetOrder?.price);
+//   const price = o2p > 0 ? o2p : (o1p > 0 ? o1p : (assetAmt > 0 ? qortAmt / assetAmt : 0));
+
+//   const ts = toNum(t.timestamp);
+
+//   if (!(assetAmt > 0) || !(qortAmt > 0) || !(price > 0) || !(ts > 0)) return null;
+//   return { assetAmt, qortAmt, price, ts };
+// }
+
+/** Decode a row from /assets/trades/<assetId>/<otherAssetId> envelope. */
 export function decodePairTradeEnvelope(
   row: any,
   pairAssetId: number
@@ -665,37 +771,66 @@ export function decodePairTradeEnvelope(
   const t = row?.trade;
   if (!t) return null;
 
-  const iaId = Number(t.initiatorAmountAssetId);
-  const taId = Number(t.targetAmountAssetId);
-  const ia   = toNum(t.initiatorAmount);
-  const ta = toNum(t.targetAmount);
+  const tsRaw = toNum(t.timestamp);
+  const ts    = tsRaw > 0 && tsRaw < 2e10 ? tsRaw * 1000 : tsRaw;
+  if (!(ts > 0)) return null;
 
+  const iOrd = row?.initiatingOrder ?? {};
+  const tOrd = row?.targetOrder ?? {};
+
+  // 1) Maker is the older order (resting on book)
+  const ti = toNum(iOrd.timestamp);
+  const tt = toNum(tOrd.timestamp);
+  const maker = (tt && ti) ? (tt <= ti ? tOrd : iOrd) : (tOrd || iOrd);
+  const makerPrice = toNum(maker?.price);
+
+  // 2) Prefer the order that expresses amount in *pair asset* units
+  const iAmt = toNum(iOrd.amount);
+  const tAmt = toNum(tOrd.amount);
+
+  const iAmtIsPair = Number(iOrd.amountAssetId) === pairAssetId;
+  const tAmtIsPair = Number(tOrd.amountAssetId) === pairAssetId;
+
+  // Prefer the one that’s marked fulfilled (common for the smaller/resting side when it completes)
   let assetAmt = 0;
-  let qortAmt  = 0;
+  if (iAmtIsPair && iOrd.isFulfilled === true) assetAmt = iAmt;
+  else if (tAmtIsPair && tOrd.isFulfilled === true) assetAmt = tAmt;
 
-  if (taId === pairAssetId) {      // initiator=QORT -> BUY asset
-    qortAmt = ia; assetAmt = ta;
-  } else if (iaId === pairAssetId) { // initiator=ASSET -> SELL
-    assetAmt = ia; qortAmt = ta;
-  } else {
-    assetAmt = ta > 0 ? ta : ia;
+  // If neither is flagged fulfilled here, pick the pair-denominated one, and if both are, take the smaller
+  if (!(assetAmt > 0)) {
+    const candidates: number[] = [];
+    if (iAmtIsPair && iAmt > 0) candidates.push(iAmt);
+    if (tAmtIsPair && tAmt > 0) candidates.push(tAmt);
+    if (candidates.length) assetAmt = Math.min(...candidates);
   }
 
-  const o1p = toNum(row?.initiatingOrder?.price);
-  const o2p = toNum(row?.targetOrder?.price);
-  const price = o2p > 0 ? o2p : (o1p > 0 ? o1p : (assetAmt > 0 ? qortAmt / assetAmt : 0));
+  // As an absolute last resort, fall back to trade fields *only* if they match the pair asset id
+  if (!(assetAmt > 0)) {
+    const iaId = Number(iOrd.haveAssetId);
+    const taId = Number(tOrd.haveAssetId);
+    const ia   = toNum(t.initiatorAmount);
+    const ta   = toNum(t.targetAmount);
+    if (iaId === pairAssetId) assetAmt = ia;
+    else if (taId === pairAssetId) assetAmt = ta;
+  }
 
-  const ts = toNum(t.timestamp);
+  // 3) Price = maker price (maker-price execution)
+  const price = makerPrice > 0 ? makerPrice : 0;
 
-  if (!(assetAmt > 0) || !(qortAmt > 0) || !(price > 0) || !(ts > 0)) return null;
+  // 4) QORT notional from price
+  const qortAmt = (assetAmt > 0 && price > 0) ? (assetAmt * price) : 0;
+
+  if (!(assetAmt > 0) || !(qortAmt > 0) || !(price > 0)) return null;
   return { assetAmt, qortAmt, price, ts };
 }
+
+
 
 /** Recent trades row (flat). */
 export function decodeTradeRowRecent(row: any, pairAssetId: number) {
   const rowAssetId  = Number(row?.assetId);
   const rowOtherId  = Number(row?.otherAssetId);
-  const amount      = toNum(row?.amount);       // here: QORT for your node
+  const amount      = toNum(row?.amount);       // here: QORT 
   const otherAmount = toNum(row?.otherAmount);  // here: ASSET
 
   let assetAmt = 0, qortAmt = 0;
@@ -738,6 +873,30 @@ function sideForMe(row: any, address: string, publicKey?: string | null): 'buy' 
   return (mine?.haveAssetId === 0) ? 'buy' : 'sell';
 }
 
+// export function envelopesToFills(
+//   envelopes: any[],
+//   address: string,
+//   publicKey: string | undefined,
+//   pairAssetId: number
+// ): FillEvent[] {
+//   return (Array.isArray(envelopes) ? envelopes : [])
+//     .filter((row) => rowHasMe(row, address, publicKey))
+//     .map((row) => {
+//       const base = decodePairTradeEnvelope(row, pairAssetId);
+//       const side = sideForMe(row, address, publicKey);
+//       return {
+//         orderId: String(row?.initiatingOrder?.orderId ?? row?.targetOrder?.orderId ?? ''),
+//         side,
+//         qtyAsset: base?.assetAmt ?? 0,
+//         qort: base?.qortAmt ?? 0,
+//         price: base?.price ?? 0,
+//         ts: base?.ts ?? 0,
+//       } as FillEvent;
+//     })
+//     .filter((f) => f.qtyAsset > 0 && f.qort > 0 && f.price > 0 && f.ts > 0)
+//     .sort((a, b) => b.ts - a.ts);
+// }
+
 export function envelopesToFills(
   envelopes: any[],
   address: string,
@@ -749,18 +908,20 @@ export function envelopesToFills(
     .map((row) => {
       const base = decodePairTradeEnvelope(row, pairAssetId);
       const side = sideForMe(row, address, publicKey);
+
       return {
         orderId: String(row?.initiatingOrder?.orderId ?? row?.targetOrder?.orderId ?? ''),
         side,
-        qtyAsset: base?.assetAmt ?? 0,
-        qort: base?.qortAmt ?? 0,
-        price: base?.price ?? 0,
+        qtyAsset: base?.assetAmt ?? 0,   // non-QORT amount
+        qort: base?.qortAmt ?? 0,        // QORT amount
+        price: base?.price ?? 0,         // QORT / asset
         ts: base?.ts ?? 0,
       } as FillEvent;
     })
     .filter((f) => f.qtyAsset > 0 && f.qort > 0 && f.price > 0 && f.ts > 0)
     .sort((a, b) => b.ts - a.ts);
 }
+
 
 /** Decode a single row from /assets/order/{orderId}/trades (flat or envelope). */
 export function rowToFill(r: any, side: 'buy' | 'sell', pairAssetId: number): FillEvent {

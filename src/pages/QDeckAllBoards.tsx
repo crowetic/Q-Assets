@@ -1,3 +1,4 @@
+// QDeckAllBoards.tsx
 import * as React from 'react';
 import {
   Box,
@@ -30,19 +31,7 @@ import { searchSimpleByIdPrefixOnly } from '../utils/searchSimple';
 import { RowActions, RowLinkGuard } from './QDeckPage';
 import { useAlert } from '../components/alerts';
 import { pastelBgFromId, pastelBorderFromId } from '../utils/qdeckColors';
-
-// // Helpers for pretty list rows
-// function hueFromId(id: string): number {
-//   let h = 0;
-//   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
-//   return h;
-// }
-// function bgFromId(id: string, mode: 'light' | 'dark') {
-//   const h = hueFromId(id);
-//   const s = mode === 'dark' ? 45 : 55;
-//   const l = mode === 'dark' ? 16 : 92;
-//   return `hsl(${h} ${s}% ${l}%)`;
-// }
+import { useFetchTracker } from '../state/global/fetchTracker';
 
 type WithCreated<T> = T & { createdAt?: number };
 
@@ -63,123 +52,125 @@ export default function QDeckAllBoards() {
 
   const { alert } = useAlert();
 
-  // const theme = useTheme();
-  // const isXs = useMediaQuery(theme.breakpoints.down('sm'));
   const isTouch = useMediaQuery('(hover: none), (pointer: coarse)');
 
-  const load = React.useCallback(async () => {
-    // 1) Fetch heads
-    const [pubRaw, privRaw] = await Promise.all([
-      searchSimpleByIdPrefixOnly(QDeckId.prefixPublicBoards, false),
-      searchSimpleByIdPrefixOnly(QDeckId.prefixPrivateBoards, true),
-    ]);
+  // Global loader plumbing
+  const { track, isLoadingPrefix } = useFetchTracker();
+  const busyWhile = React.useCallback(
+    async <T,>(fn: () => Promise<T> | T, label: string) => track(Promise.resolve().then(fn), label),
+    [track]
+  );
 
-    // 2) Hydrate PUBLIC
-    const pubBoards = await Promise.all(
-      pubRaw.map(async (h) => {
-        if (!h?.identifier || !h?.name) return null;
-        const shortId = h.identifier.replace(QDeckId.prefixPublicBoards, '');
-        try {
-          const doc = await qdeckFetch<QDeckBoard>(h.name, h.identifier, false);
-          if (!doc || (doc as any)?._type === 'QDECK_TOMBSTONE') return null;
+  const load = React.useCallback(async () => {
+    await busyWhile(async () => {
+      // 1) Fetch heads
+      const [pubRaw, privRaw] = await Promise.all([
+        searchSimpleByIdPrefixOnly(QDeckId.prefixPublicBoards, false),
+        searchSimpleByIdPrefixOnly(QDeckId.prefixPrivateBoards, true),
+      ]);
+
+      // 2) Hydrate PUBLIC
+      const pubBoards = await Promise.all(
+        pubRaw.map(async (h) => {
+          if (!h?.identifier || !h?.name) return null;
+          const shortId = h.identifier.replace(QDeckId.prefixPublicBoards, '');
+          try {
+            const doc = await qdeckFetch<QDeckBoard>(h.name, h.identifier, false);
+            if (!doc || (doc as any)?._type === 'QDECK_TOMBSTONE') return null;
+            return {
+              name: h.name,
+              shortId,
+              title: doc.title,
+              createdAt: doc.createdAt,
+              updatedAt: doc.updatedAt,
+              visibility: 'public' as const,
+              service: 'DOCUMENT' as const,
+              accessible: true,
+            } as WithCreated<AnyBoard>;
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      // 3) Hydrate PRIVATE (v2 ident tells us how to fetch)
+      const privBoards = await Promise.all(
+        privRaw.map(async (h) => {
+          if (!h?.identifier || !h?.name) return null;
+
+          const parsed = parsePrivateBoardIdentV2(h.identifier);
+          if (!parsed) return null; // v2 only
+
+          const shortId = parsed.boardId;
+
+          let doc: QDeckBoard | null = null;
+          try {
+            doc = await qdeckFetch<QDeckBoard>(
+              h.name,
+              h.identifier,
+              /* isPrivate */ true,
+              parsed.mode === 'group' ? parsed.groupId : undefined,
+              parsed.mode === 'group' ? !!parsed.isAdmins : undefined,
+              parsed.mode
+            );
+          } catch {
+            doc = null;
+          }
+
+          if (!doc || (doc as any)?._type === 'QDECK_TOMBSTONE') {
+            return {
+              name: h.name,
+              shortId,
+              title: '(Private board)',
+              createdAt: undefined,
+              updatedAt: undefined,
+              visibility: 'private' as const,
+              service: 'DOCUMENT_PRIVATE' as const,
+              accessible: false,
+              privMode: parsed.mode,
+            } as WithCreated<AnyBoard>;
+          }
+
           return {
             name: h.name,
             shortId,
             title: doc.title,
             createdAt: doc.createdAt,
             updatedAt: doc.updatedAt,
-            visibility: 'public' as const,
-            service: 'DOCUMENT' as const,
+            visibility: coerceVisibility(doc.visibility ?? 'private'),
+            service: coerceService(doc.service ?? 'DOCUMENT_PRIVATE'),
             accessible: true,
+            privMode: parsed.mode,
           } as WithCreated<AnyBoard>;
-        } catch {
-          return null;
-        }
-      })
-    );
+        })
+      );
 
-    // 3) Hydrate PRIVATE (v2 ident tells us how to fetch)
-    const privBoards = await Promise.all(
-      privRaw.map(async (h) => {
-        if (!h?.identifier || !h?.name) return null;
+      const list = [...pubBoards, ...privBoards].filter(Boolean) as WithCreated<AnyBoard>[];
 
-        const parsed = parsePrivateBoardIdentV2(h.identifier);
-        if (!parsed) {
-          // If a non-v2 slips through, skip (your first release is v2-only)
-          return null;
-        }
-
-        const shortId = parsed.boardId;
-
-        // Fetch using encoded mode
-        let doc: QDeckBoard | null = null;
-        try {
-          doc = await qdeckFetch<QDeckBoard>(
-            h.name,
-            h.identifier,
-            /* isPrivate */ true,
-            parsed.mode === 'group' ? parsed.groupId : undefined,
-            parsed.mode === 'group' ? !!parsed.isAdmins : undefined,
-            parsed.mode
-          );
-        } catch {
-          doc = null;
-        }
-
-        if (!doc || (doc as any)?._type === 'QDECK_TOMBSTONE') {
-          // Inaccessible or deleted: still list it, clearly marked
-          return {
-            name: h.name,
-            shortId,
-            title: '(Private board)',
-            createdAt: undefined,
-            updatedAt: undefined,
-            visibility: 'private' as const,
-            service: 'DOCUMENT_PRIVATE' as const,
-            accessible: false,
-            privMode: parsed.mode, // we still know which kind it is
-          } as WithCreated<AnyBoard>;
-        }
-
-        return {
-          name: h.name,
-          shortId,
-          title: doc.title,
-          createdAt: doc.createdAt,
-          updatedAt: doc.updatedAt,
-          visibility: coerceVisibility(doc.visibility ?? 'private'),
-          service: coerceService(doc.service ?? 'DOCUMENT_PRIVATE'),
-          accessible: true,
-          privMode: parsed.mode,
-        } as WithCreated<AnyBoard>;
-      })
-    );
-
-    const list = [...pubBoards, ...privBoards].filter(Boolean) as WithCreated<AnyBoard>[];
-
-    const earliestById = new Map<string, WithCreated<AnyBoard>>();
-    for (const b of list) {
-      const created = b.createdAt ?? b.updatedAt ?? Number.POSITIVE_INFINITY;
-      const existing = earliestById.get(b.shortId);
-      if (!existing) {
-        earliestById.set(b.shortId, b);
-      } else {
-        const existingCreated =
-          existing.createdAt ?? existing.updatedAt ?? Number.POSITIVE_INFINITY;
-        if (created < existingCreated) {
+      // Dedup by shortId keeping earliest created (fallback to updatedAt)
+      const earliestById = new Map<string, WithCreated<AnyBoard>>();
+      for (const b of list) {
+        const created = b.createdAt ?? b.updatedAt ?? Number.POSITIVE_INFINITY;
+        const existing = earliestById.get(b.shortId);
+        if (!existing) {
           earliestById.set(b.shortId, b);
+        } else {
+          const existingCreated =
+            existing.createdAt ?? existing.updatedAt ?? Number.POSITIVE_INFINITY;
+          if (created < existingCreated) {
+            earliestById.set(b.shortId, b);
+          }
         }
       }
-    }
 
-    const deduped = Array.from(earliestById.values()).sort(
-      (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
-    );
+      const deduped = Array.from(earliestById.values()).sort(
+        (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
+      );
 
-    list.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-    setStats({ pubFound: pubRaw.length, privFound: privRaw.length, hydrated: list.length });
-    setBoards(deduped);
-  }, []);
+      setStats({ pubFound: pubRaw.length, privFound: privRaw.length, hydrated: list.length });
+      setBoards(deduped);
+    }, 'blocking:qdeck:allboards');
+  }, [busyWhile]);
 
   React.useEffect(() => {
     load().catch(console.error);
@@ -194,6 +185,13 @@ export default function QDeckAllBoards() {
 
   return (
     <Box sx={{ p: { xs: 1.5, sm: 2 }, mx: 'auto' }}>
+      {/* Optional contextual hint while scanning/decrypting */}
+      {isLoadingPrefix('blocking:qdeck:allboards') && (
+        <Alert severity="info" sx={{ mb: 1 }}>
+          Loading all boards… decrypting private boards may take a moment.
+        </Alert>
+      )}
+
       {/* header */}
       <Stack
         direction={{ xs: 'column', sm: 'row' }}
@@ -219,8 +217,6 @@ export default function QDeckAllBoards() {
       {filtered.map((b) => {
         const to = `/qdeck/${encodeURIComponent(b.name)}/${b.shortId}`;
         const canDelete = myName === b.name;
-        // const bg = (t: any) => bgFromId(b.shortId, t.palette.mode);
-        // const border = (t: any) => `1px solid ${t.palette.divider}`;
         const bg = (t: any) => pastelBgFromId(b.shortId, t.palette.mode);
         const border = (t: any) => `1px solid ${pastelBorderFromId(b.shortId, t.palette.mode)}`;
 
@@ -331,81 +327,83 @@ export default function QDeckAllBoards() {
                 </Tooltip>
               )}
             </Box>
-
-            {/* Delete dialog */}
-            <Dialog open={!!confirmDel} onClose={() => setConfirmDel(null)} maxWidth="xs" fullWidth>
-              <DialogTitle>Delete board?</DialogTitle>
-              <DialogContent dividers>
-                <Stack spacing={1}>
-                  <Typography>
-                    Delete <b>{confirmDel?.title}</b> (issuer: {confirmDel?.issuer})?
-                  </Typography>
-                  <Box display="flex" alignItems="center" gap={1}>
-                    <Checkbox
-                      checked={cascadeCards}
-                      onChange={(e) => setCascadeCards(e.target.checked)}
-                    />
-                    <Typography variant="body2">Also delete all cards</Typography>
-                  </Box>
-                  <Box display="flex" alignItems="center" gap={1}>
-                    <Checkbox
-                      checked={cascadeComments}
-                      onChange={(e) => setCascadeComments(e.target.checked)}
-                      disabled={!cascadeCards}
-                    />
-                    <Typography variant="body2">Also delete card comments</Typography>
-                  </Box>
-                  <Alert severity="warning">This publishes tombstones. Proceed with caution.</Alert>
-                </Stack>
-              </DialogContent>
-              <DialogActions>
-                <Button onClick={() => setConfirmDel(null)} disabled={busyDel}>
-                  Cancel
-                </Button>
-                <Button
-                  color="error"
-                  variant="contained"
-                  disabled={busyDel}
-                  onClick={async () => {
-                    if (!confirmDel) return;
-                    setBusyDel(true);
-                    try {
-                      await deleteBoardById(confirmDel.issuer, confirmDel.boardId, {
-                        cascadeCards,
-                        cascadeComments,
-                      });
-                      setBoards((prev) =>
-                        prev.filter(
-                          (x) => !(x.name === confirmDel.issuer && x.shortId === confirmDel.boardId)
-                        )
-                      );
-                      setStats((s) => ({ ...s, hydrated: Math.max(0, s.hydrated - 1) }));
-                    } catch (e: any) {
-                      const msg = String(e?.message || e || '');
-                      if (/not authorized/i.test(msg)) {
-                        alert('You are not allowed to delete this board.', 'error', {
-                          severity: 'error',
-                        });
-                      } else if (/not found/i.test(msg)) {
-                        alert('Board not found. It may already be deleted.', 'warning', {
-                          severity: 'warning',
-                        });
-                      } else {
-                        alert(`Delete failed: ${msg}`, 'error', { severity: 'error' });
-                      }
-                    } finally {
-                      setBusyDel(false);
-                      setConfirmDel(null);
-                    }
-                  }}
-                >
-                  {busyDel ? 'Deleting…' : 'Delete'}
-                </Button>
-              </DialogActions>
-            </Dialog>
           </Paper>
         );
       })}
+
+      {/* Delete dialog (single instance, outside map) */}
+      <Dialog open={!!confirmDel} onClose={() => setConfirmDel(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Delete board?</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={1}>
+            <Typography>
+              Delete <b>{confirmDel?.title}</b> (issuer: {confirmDel?.issuer})?
+            </Typography>
+            <Box display="flex" alignItems="center" gap={1}>
+              <Checkbox
+                checked={cascadeCards}
+                onChange={(e) => setCascadeCards(e.target.checked)}
+              />
+              <Typography variant="body2">Also delete all cards</Typography>
+            </Box>
+            <Box display="flex" alignItems="center" gap={1}>
+              <Checkbox
+                checked={cascadeComments}
+                onChange={(e) => setCascadeComments(e.target.checked)}
+                disabled={!cascadeCards}
+              />
+              <Typography variant="body2">Also delete card comments</Typography>
+            </Box>
+            <Alert severity="warning">This publishes tombstones. Proceed with caution.</Alert>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmDel(null)} disabled={busyDel}>
+            Cancel
+          </Button>
+          <Button
+            color="error"
+            variant="contained"
+            disabled={busyDel}
+            onClick={async () => {
+              if (!confirmDel) return;
+              setBusyDel(true);
+              try {
+                await busyWhile(async () => {
+                  await deleteBoardById(confirmDel.issuer, confirmDel.boardId, {
+                    cascadeCards,
+                    cascadeComments,
+                  });
+                }, 'blocking:qdeck:delete');
+                setBoards((prev) =>
+                  prev.filter(
+                    (x) => !(x.name === confirmDel.issuer && x.shortId === confirmDel.boardId)
+                  )
+                );
+                setStats((s) => ({ ...s, hydrated: Math.max(0, s.hydrated - 1) }));
+              } catch (e: any) {
+                const msg = String(e?.message || e || '');
+                if (/not authorized/i.test(msg)) {
+                  alert('You are not allowed to delete this board.', 'error', {
+                    severity: 'error',
+                  });
+                } else if (/not found/i.test(msg)) {
+                  alert('Board not found. It may already be deleted.', 'warning', {
+                    severity: 'warning',
+                  });
+                } else {
+                  alert(`Delete failed: ${msg}`, 'error', { severity: 'error' });
+                }
+              } finally {
+                setBusyDel(false);
+                setConfirmDel(null);
+              }
+            }}
+          >
+            {busyDel ? 'Deleting…' : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

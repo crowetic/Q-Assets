@@ -18,8 +18,12 @@ import AssetDataPage from '../pages/AssetDataPage';
 import QDeckAllBoards from '../pages/QDeckAllBoards';
 import QDeckHome from '../pages/QDeckHome';
 
+// --- Manage (new) ---
+import ManageHome from '../pages/manage/ManageHome';
+import ManageDividends from '../pages/manage/ManageDividends';
+import ManageDividendsAsset from '../pages/manage/ManageDividendsAsset';
+
 // --- Q-Deck (lazy) ---
-// import QDeckAllBoards from '../pages/QDeckAllBoards';
 const QDeckIndex = React.lazy(() => import('../pages/QDeckMyBoards'));
 const QDeckPage = React.lazy(() => import('../pages/QDeckPage'));
 const QDeckProvider = React.lazy(() =>
@@ -33,6 +37,7 @@ function PortfolioProviderLayout() {
     </PortfolioProvider>
   );
 }
+
 declare global {
   interface CustomWindow extends Window {
     _qdnContext?: 'render' | 'preview' | string;
@@ -41,11 +46,8 @@ declare global {
   }
 }
 
-// const baseURL = (window as CustomWindow)._qdnBase;
-
 function getBasename(): string {
   let base = (window as CustomWindow)._qdnBase || '';
-  // Normalize: ensure no trailing slash (RR is fine either way, but consistency helps).
   if (base.endsWith('/') && base !== '/') base = base.slice(0, -1);
   return base;
 }
@@ -55,33 +57,38 @@ export function Routes() {
     {
       path: '/',
       element: (
-        <>
-          {/* <QdnRuntimeGuard />
-          <QdnPathGuard /> */}
-          <AlertProvider>
-            <QortalLinkProvider>
-              <QortalLinkHandler>
-                <React.Suspense fallback={<div style={{ padding: 16 }}>Loading…</div>}>
-                  <AppWrapper />
-                </React.Suspense>
-              </QortalLinkHandler>
-            </QortalLinkProvider>
-          </AlertProvider>
-        </>
+        <AlertProvider>
+          <QortalLinkProvider>
+            <QortalLinkHandler>
+              <React.Suspense fallback={<div style={{ padding: 16 }}>Loading…</div>}>
+                <AppWrapper />
+              </React.Suspense>
+            </QortalLinkHandler>
+          </QortalLinkProvider>
+        </AlertProvider>
       ),
       children: [
         { index: true, element: <Home /> },
         { path: 'assets', element: <AssetExplorer /> },
         { path: 'assets/:assetId', element: <AssetDetail /> },
         { path: 'assetdata/:assetId', element: <AssetDataPage /> },
+
         {
           element: <PortfolioProviderLayout />,
           children: [{ path: 'portfolio', element: <Portfolio /> }],
         },
+
         { path: 'issue', element: <IssueAsset /> },
         { path: 'trade', element: <TradeMarkets /> },
         { path: 'trade/:assetId', element: <TradePair /> },
         { path: 'info', element: <Information /> },
+
+        // --- Manage (new) ---
+        { path: 'manage', element: <ManageHome /> },
+        { path: 'manage/dividends', element: <ManageDividends /> },
+        { path: 'manage/dividends/:assetId', element: <ManageDividendsAsset /> },
+
+        // --- Q-Deck
         {
           path: 'qdeck',
           element: (
@@ -102,6 +109,5 @@ export function Routes() {
   ];
 
   const router = createBrowserRouter(routes, { basename: getBasename() });
-
   return <RouterProvider router={router} />;
 }
