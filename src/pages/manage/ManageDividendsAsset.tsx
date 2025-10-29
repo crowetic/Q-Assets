@@ -252,7 +252,7 @@ export default function ManageDividendsAsset() {
       if (abortRef.current) {
         alert('Dividend run canceled.');
       } else {
-        // Build dividends JSON payload from what we just sent //TODO IMPORTANT, FIGURE OUT WHY THE PAYOUTS WENT THROUGH BEFORE THE CONFIRMATION WAS ACCEPTED, AND THE PUBLISH FOR THE DIVIDENT ENTRY DIDN'T WORK.
+        // Build dividends JSON payload from what we just sent
         const publishName = userName;
         if (!publishName) {
           await authenticateUser();
@@ -285,7 +285,7 @@ export default function ManageDividendsAsset() {
                 address: p.address,
                 name: p.name ?? null,
                 amount: Number(p.payout.toFixed(8)),
-                txId: rec?.txId ?? null, //TODO - fill out the txid from the qortalRequest. Not necessary as it can be pulled again, but good to have?
+                txId: rec?.txId ?? null,
               };
             }),
           notes: '',
