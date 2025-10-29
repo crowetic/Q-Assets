@@ -29,12 +29,28 @@ const QDeckPage = React.lazy(() => import('../pages/QDeckPage'));
 const QDeckProvider = React.lazy(() =>
   import('../components/qdeck/QDeckProvider').then((m) => ({ default: m.QDeckProvider }))
 );
+// --- Data Management (lazy) ---
+const DataManagement = React.lazy(() => import('../pages/manage/DataManagement'));
+const MyPublishedData = React.lazy(() => import('../pages/manage/data/MyPublishedData'));
+const PublishData = React.lazy(() => import('../pages/manage/data/PublishData'));
+const BulkPublish = React.lazy(() => import('../pages/manage/data/BulkPublish'));
+const NameBasedAssetData = React.lazy(() => import('../pages/manage/data/NameBasedAssetData'));
+const DataExplorer = React.lazy(() => import('../pages/manage/data/DataExplorer'));
+const Archives = React.lazy(() => import('../pages/manage/data/Archives'));
 
 function PortfolioProviderLayout() {
   return (
     <PortfolioProvider>
       <Outlet />
     </PortfolioProvider>
+  );
+}
+
+function ManageDataLayout() {
+  return (
+    <React.Suspense fallback={<div style={{ padding: 16 }}>Loading Data Management…</div>}>
+      <Outlet />
+    </React.Suspense>
   );
 }
 
@@ -83,10 +99,28 @@ export function Routes() {
         { path: 'trade/:assetId', element: <TradePair /> },
         { path: 'info', element: <Information /> },
 
-        // --- Manage (new) ---
+        // --- Manage ---
         { path: 'manage', element: <ManageHome /> },
         { path: 'manage/dividends', element: <ManageDividends /> },
         { path: 'manage/dividends/:assetId', element: <ManageDividendsAsset /> },
+
+        // --- Manage / Data Management (panel + subpages)
+        {
+          path: 'manage/data',
+          element: <ManageDataLayout />,
+          children: [
+            // main panel (the big buttons)
+            { index: true, element: <DataManagement /> },
+
+            // subpages
+            { path: 'my-data', element: <MyPublishedData /> },
+            { path: 'publish', element: <PublishData /> },
+            { path: 'bulk', element: <BulkPublish /> },
+            { path: 'name-assets', element: <NameBasedAssetData /> },
+            { path: 'explorer', element: <DataExplorer /> },
+            { path: 'archives', element: <Archives /> },
+          ],
+        },
 
         // --- Q-Deck
         {

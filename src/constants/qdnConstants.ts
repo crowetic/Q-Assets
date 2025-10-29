@@ -15,9 +15,13 @@ export const DEV_GROUP_ID = 1
 export const assetCommentsPrefix   = (assetId: number) => `asset_comment__${assetId}__`;      // per-entry
 export const assetUpvotesPrefix    = (assetId: number) => `asset_paid_upvote__${assetId}__`;  // per-entry
 export const assetNewsPrefix = (assetId: number) => `asset_news_pub__${assetId}__`;     // per-entry
+export const assetDividendItemPrefix = (assetId: number) => `asset_dividendPayout__${assetId}__`;
+
 
 // Optional 'head' docs for quick fetch of the latest (we still do per-entry for history)
-export const assetNewsHeadId       = (assetId: number) => `asset_news_head__${assetId}`;
+export const assetNewsHeadId = (assetId: number) => `asset_news_head__${assetId}`;
+export const assetDividendHeadId        = (assetId: number) => `asset_dividend_head__${assetId}`;
+
 
 // ----- builders -----
 export const assetCommentId = (assetId: number, id6: string) =>
@@ -28,6 +32,10 @@ export const assetPaidUpvoteId = (assetId: number, id6: string) =>
 
 export const assetNewsItemId = (assetId: number, id6: string) =>
   `${assetNewsPrefix(assetId)}${id6}`;
+
+// Counter-based dividend entry id: …__000001, …__000002, etc.
+export const assetDividendItemId = (assetId: number, counter: number) =>
+  `${assetDividendItemPrefix(assetId)}${String(counter).padStart(6, '0')}`;
 
 
 

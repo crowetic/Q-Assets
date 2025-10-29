@@ -1,12 +1,23 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import path from 'path';
 
-// https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()
-    
-  ,],
+  plugins: [react()],
   resolve: {
+    alias: {
+      // force a single React instance
+      react: path.resolve(__dirname, 'node_modules/react'),
+      'react/jsx-runtime': path.resolve(__dirname, 'node_modules/react/jsx-runtime.js'),
+      'react/jsx-dev-runtime': path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime.js'),
+
+      // ✅ IMPORTANT: point server import to the browser-friendly build
+      'react-dom/server': path.resolve(
+        __dirname,
+        'node_modules/react-dom/server.browser.js'
+      ),
+
+    },
     dedupe: [
       'react',
       'react-dom',
@@ -18,7 +29,6 @@ export default defineConfig({
     ],
   },
   optimizeDeps: {
-    // exclude: ['react', 'react-dom'],
     include: [
       '@mui/material',
       '@mui/system',
@@ -26,6 +36,8 @@ export default defineConfig({
       '@emotion/react',
       '@emotion/styled',
       '@mui/styled-engine',
+      'react/jsx-runtime',
+      'react/jsx-dev-runtime',
     ],
   },
   base: '',
@@ -39,10 +51,4 @@ export default defineConfig({
       },
     },
   },
-
-  define: {
-  },
-  
-
 });
-
