@@ -19,7 +19,7 @@ import {
   Stack,
   IconButton,
   Skeleton,
-  useMediaQuery,
+  // useMediaQuery,
   useTheme,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
@@ -40,13 +40,13 @@ import {
   WikiOverrides,
 } from '../utils/access';
 import { useAuth } from 'qapp-core';
-import TiptapEditor from '../components/TipTapEditor';
+// import TiptapEditor from '../components/TipTapEditor';
 import EditToggleButton from '../components/buttons/EditToggleButton';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Q_ASSETS_VERSION } from '../constants/qdnConstants';
 import { prepareHtmlForPublish } from '../utils/publicationPublisher';
 import PublishedHtmlRenderer from '../components/PublishedHtmlRenderer';
-import { dialogPaperSx } from '../components/comments/CommentsSection';
+// import { dialogPaperSx } from '../components/comments/CommentsSection';
 import { useAlert } from '../components/alerts';
 import { useFetchTracker } from '../state/global/fetchTracker';
 import type { Theme } from '@mui/material';
@@ -63,13 +63,13 @@ type InfoSection = {
 
 const normId = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 
-// be nice to anchors on QDN / browser
-const slug = (s: string) =>
-  s
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\- _]/g, '')
-    .replace(/\s+/g, '-');
+// // be nice to anchors on QDN / browser
+// const slug = (s: string) =>
+//   s
+//     .toLowerCase()
+//     .trim()
+//     .replace(/[^a-z0-9\- _]/g, '')
+//     .replace(/\s+/g, '-');
 
 const makeDefaultSections = (theme: Theme): InfoSection[] => [
   {
@@ -346,7 +346,7 @@ type RemoteRow = { html: string; publisher?: string; role?: 'admin' | 'editor'; 
 
 export default function Information() {
   const theme = useTheme();
-  const isXs = useMediaQuery(theme.breakpoints.down('sm'));
+  // const isXs = useMediaQuery(theme.breakpoints.down('sm'));
   const { name: userName, address: userAddress } = useAuth();
   const { hash } = useLocation();
   const navigate = useNavigate();
@@ -697,6 +697,7 @@ export default function Information() {
   const [draftMenu, setDraftMenu] = useState<WikiMenuItem[]>([]);
   useEffect(() => {
     if (openMenuDlg) setDraftMenu(menu.map((m) => ({ ...m })));
+    console.log(draftMenu);
   }, [openMenuDlg, menu]);
 
   return (

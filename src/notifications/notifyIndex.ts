@@ -2,7 +2,7 @@
 import { objectToBase64, Service } from 'qapp-core'; // or your './data' helper
 import pLimit from 'p-limit';
 import { fetchGroupMembers } from '../utils/access'; // your code you pasted
-import { searchSimpleByFullId, SimpleHit } from '../utils/searchSimple';
+import { searchSimpleByFullId } from '../utils/searchSimple';
 import { getAllAccountNames, getPrimaryAccountName } from '../utils/qortalApi';
 // import { base64ToObject } if you want a typed parse; here we JSON.parse manually
 

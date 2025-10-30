@@ -441,7 +441,7 @@ export async function loadWikiOverrides(): Promise<WikiOverrides | null> {
 }
 
 // save (admins only)
-export async function saveWikiOverrides(doc: WikiOverrides, publisherName: string) {
+export async function saveWikiOverrides(doc: WikiOverrides/*, publisherName: string*/) {
   const payload = await objectToBase64(doc);
   // publish under JSON/Q-Assets/wiki_overrides (adjust to your scheme)
   return qortalRequest({
