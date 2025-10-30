@@ -683,7 +683,7 @@ export default function Information() {
       updatedAt: Date.now(),
       overrides: draftOverrides,
     };
-    await track(saveWikiOverrides(payload, userName), 'wiki:overrides:save');
+    await track(saveWikiOverrides(payload /*, userName*/), 'wiki:overrides:save');
     setOverrides(draftOverrides);
     setOpenOverridesDlg(false);
     alert('Overrides updated.', 'Wiki Overrides Saved', { severity: 'success' });
