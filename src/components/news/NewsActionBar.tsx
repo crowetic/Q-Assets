@@ -1,0 +1,81 @@
+import { useEffect, useState } from 'react';
+import { Box, Tooltip } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
+import { getUserRoles, UserRoles } from '../../utils/roles';
+import PromotionDialog from './PromotionDialog';
+import AnnouncementDialog from './AnnouncementDialog';
+import OrbitronButton from '../buttons/OrbitronButton';
+
+type Props = {
+  treasuryAddress: string; // where promos pay to
+  defaultPromoPriceQort?: number;
+};
+
+export default function NewsActionBar({ treasuryAddress, defaultPromoPriceQort = 5 }: Props) {
+  const [roles, setRoles] = useState<UserRoles>({
+    loggedIn: false,
+    isManagement: false,
+    isManagementAdmin: false,
+    isAssetIssuer: false,
+  });
+  const [promoOpen, setPromoOpen] = useState(false);
+  const [announceOpen, setAnnounceOpen] = useState(false);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    (async () => setRoles(await getUserRoles()))();
+  }, []);
+
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        justifyContent: 'center',
+        gap: 1,
+        flexWrap: 'wrap',
+        mb: 2,
+      }}
+    >
+      {/* Submit Promotion: visible to any logged-in user */}
+      <Tooltip
+        title={
+          roles.loggedIn
+            ? `Submit a paid promotion (default ${defaultPromoPriceQort} QORT)`
+            : 'Log in to submit promotions'
+        }
+      >
+        <span>
+          <OrbitronButton
+            variant="outlined"
+            onClick={() => setPromoOpen(true)}
+            disabled={!roles.loggedIn}
+          >
+            Submit Promotion
+          </OrbitronButton>
+        </span>
+      </Tooltip>
+
+      {/* Add Q-Assets Announcement: management only */}
+      {roles.isManagement && (
+        <OrbitronButton variant="outlined" onClick={() => setAnnounceOpen(true)}>
+          Add Q-Assets Announcement
+        </OrbitronButton>
+      )}
+
+      {/* Publish Asset News: issuers only (link to existing flow) */}
+      {roles.isAssetIssuer && (
+        <OrbitronButton variant="outlined" onClick={() => navigate('/publish-asset-news')}>
+          Publish Asset News
+        </OrbitronButton>
+      )}
+
+      <PromotionDialog
+        open={promoOpen}
+        onClose={() => setPromoOpen(false)}
+        treasuryAddress={treasuryAddress}
+        defaultAmountQort={defaultPromoPriceQort}
+      />
+      <AnnouncementDialog open={announceOpen} onClose={() => setAnnounceOpen(false)} />
+    </Box>
+  );
+}

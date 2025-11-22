@@ -29,7 +29,6 @@ export function bgFromId(id: string, mode: 'light' | 'dark') {
   return `hsl(${h} ${s}% ${l}%)`;
 }
 
-
 // --- stable hash (FNV-1a) ---
 function hash32(s: string): number {
   let h = 0x811c9dc5 >>> 0;
@@ -78,13 +77,13 @@ export function pastelBgFromId(id: string, mode: 'light' | 'dark'): string {
 
   if (mode === 'dark') {
     // Dark mode: muted tint on a dark surface
-    const s = 22 + wiggle * 8;  // 22–30%
-    const l = 12 + wiggle * 6;  // 12–18%
+    const s = 22 + wiggle * 8; // 22–30%
+    const l = 12 + wiggle * 6; // 12–18%
     return `hsl(${hue} ${s}% ${l}%)`;
   } else {
     // Light mode: very soft pastel
     const s = 28 + wiggle * 10; // 28–38%
-    const l = 90 + wiggle * 4;  // 90–94%
+    const l = 90 + wiggle * 4; // 90–94%
     return `hsl(${hue} ${s}% ${l}%)`;
   }
 }
@@ -93,10 +92,16 @@ export function pastelBgFromId(id: string, mode: 'light' | 'dark'): string {
 export function pastelBorderFromId(id: string, mode: 'light' | 'dark'): string {
   const bg = pastelBgFromId(id, mode);
   // Nudge the lightness for a subtle border contrast
-  return bg.replace(/(\d+(\.\d+)?)%\)$/, (_, l) => `${Math.max(0, Math.min(100, Number(l) - (mode === 'dark' ? 4 : 6)))}%)`);
+  return bg.replace(
+    /(\d+(\.\d+)?)%\)$/,
+    (_, l) => `${Math.max(0, Math.min(100, Number(l) - (mode === 'dark' ? 4 : 6)))}%)`
+  );
 }
 
 export function pastelHoverFromId(id: string, mode: 'light' | 'dark'): string {
   const bg = pastelBgFromId(id, mode);
-  return bg.replace(/(\d+(\.\d+)?)%\)$/, (_, l) => `${Math.max(0, Math.min(100, Number(l) + (mode === 'dark' ? 3 : -3)))}%)`);
+  return bg.replace(
+    /(\d+(\.\d+)?)%\)$/,
+    (_, l) => `${Math.max(0, Math.min(100, Number(l) + (mode === 'dark' ? 3 : -3)))}%)`
+  );
 }

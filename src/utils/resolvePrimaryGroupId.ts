@@ -1,5 +1,5 @@
 // utils/resolvePrimaryGroupId.ts
-import { resolveAssetPublicationById } from "./resolveAssetPublication";
+import { resolveAssetPublicationById } from './resolveAssetPublication';
 
 export async function resolvePrimaryGroupId(assetId: number): Promise<number | null> {
   // base assets are skipped

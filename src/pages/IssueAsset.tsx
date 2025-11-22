@@ -7,11 +7,17 @@ import {
   Divider,
   FormControlLabel,
   Checkbox,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  CircularProgress,
+  Chip,
 } from '@mui/material';
 import { useTheme } from '@mui/material';
 import { useAuth } from 'qapp-core';
 import { AssetPublication } from '../types/AssetPublicationMetadata';
-import { issueAsset } from '../utils/qortalApi';
+import { issueAsset, getAccountGroups, type GroupSummary } from '../utils/qortalApi';
 import { objectToBase64 } from 'qapp-core';
 import { getAssetIdentifiers } from '../constants/qdnConstants';
 import { fileToBase64 } from '../utils/data';
@@ -40,7 +46,9 @@ export default function IssueAsset() {
   const [groupName, setGroupName] = useState('');
   const [groupId, setGroupId] = useState('');
   const [groupLink, setGroupLink] = useState('');
-  // const [groupIsPrivate, setGroupIsPrivate] = useState(false);
+  const [groupOptions, setGroupOptions] = useState<GroupSummary[]>([]);
+  const [groupsLoading, setGroupsLoading] = useState(false);
+  const [groupIsPrivate, setGroupIsPrivate] = useState(false);
   const [avatarBase64, setAvatarBase64] = useState<string>('');
   // const [newAssetID, setNewAssetID] = useState<number>(0);
 
@@ -60,6 +68,25 @@ export default function IssueAsset() {
     }
   }, [userName, authenticateUser]);
 
+  useEffect(() => {
+    if (!userAddress) return;
+    let alive = true;
+    (async () => {
+      try {
+        setGroupsLoading(true);
+        const rows = await getAccountGroups(userAddress);
+        if (alive) setGroupOptions(rows);
+      } catch {
+        if (alive) setGroupOptions([]);
+      } finally {
+        if (alive) setGroupsLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [userAddress]);
+
   async function predictAssetID(): Promise<number> {
     const allAssets = await getAllAssets(false); // no need to load metadata
     const ids = allAssets.map((a: any) => a.assetId).filter((id: number) => typeof id === 'number');
@@ -78,10 +105,26 @@ export default function IssueAsset() {
     setGroupName('');
     setGroupId('');
     setGroupLink('');
-    // setGroupIsPrivate(false);
+    setGroupIsPrivate(false);
     setAttemptedSubmit(false);
     setAvatarBase64('');
     setHtml('');
+  };
+
+  const joinLinkForId = (id?: string | number, existing?: string) => {
+    if (existing && existing.trim().length > 0) return existing.trim();
+    if (!id) return '';
+    return `qortal://use-group/action-join/groupid-${id}`;
+  };
+
+  const initGenesisTemplate = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || editorHasInit) return;
+    const today = new Date().toLocaleDateString();
+    const header = `<center><h2><span style="color:${theme.palette.info.main}">-ANNouncement-</span> Genesis - <span style="color:${theme.palette.success.main}">${trimmed}</span> - ${today}</h2></center>`;
+    const body = `<p>Describe your asset here...</p>`;
+    setHtml(`${header}${body}`);
+    setEditorHasInit(true);
   };
 
   const handleIssueAsset = async () => {
@@ -108,14 +151,16 @@ export default function IssueAsset() {
     try {
       const predictedAssetID = await predictAssetID();
 
+      const normalizedJoinLink = joinLinkForId(groupId, groupLink);
+
       const publication: AssetPublication = {
         description: currentDescription,
         html,
         primaryGroup: {
           name: groupName,
           id: groupId,
-          joinLink: groupLink,
-          isPrivate: false,
+          joinLink: normalizedJoinLink,
+          isPrivate: groupIsPrivate,
         },
       };
 
@@ -209,21 +254,7 @@ export default function IssueAsset() {
             value={assetName}
             error={!assetName && attemptedSubmit}
             onChange={(e) => setAssetName(e.target.value)}
-            onBlur={() => {
-              if (!editorHasInit && assetName.trim()) {
-                const today = new Date().toISOString().split('T')[0];
-                const title = `<center><h2>
-                              <span style="color:${theme.palette.info.dark}">Announcement</span> - 
-                              <span style="color:${theme.palette.primary.light}">${assetName}</span> - 
-                              Genesis Announcement - 
-                              <span style="color:${theme.palette.primary.main}">${today}</span>
-                              </h2></center>`;
-                const body = `<p>Describe your asset here...</p>`;
-
-                setHtml(`${title}${body}`);
-                setEditorHasInit(true);
-              }
-            }}
+            onBlur={(e) => initGenesisTemplate(e.target.value)}
             helperText={!assetName && attemptedSubmit ? 'Asset name is required' : ''}
           />
 
@@ -323,6 +354,57 @@ export default function IssueAsset() {
           Input group information for your primary asset group. This is where communications/further
           data/announcements will be published regarding your asset.
         </Typography>
+        <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+          <InputLabel id="primary-group-select">Select Primary Group</InputLabel>
+          <Select
+            labelId="primary-group-select"
+            label="Select Primary Group"
+            value={groupId}
+            onChange={(e) => {
+              const selectedId = String(e.target.value || '');
+              setGroupId(selectedId);
+              const match = groupOptions.find((g) => String(g.groupId) === selectedId);
+              if (match) {
+                setGroupName(match.groupName || '');
+                setGroupLink(joinLinkForId(match.groupId));
+                setGroupIsPrivate(!match.isOpen);
+              } else {
+                setGroupIsPrivate(false);
+              }
+            }}
+            disabled={groupsLoading || !groupOptions.length}
+            renderValue={(value) => {
+              if (!value) return 'Select from your groups';
+              const match = groupOptions.find((g) => String(g.groupId) === value);
+              if (!match) return value;
+              return `${match.groupName} (#${match.groupId}) — ${match.isOpen ? 'Public' : 'Private'}`;
+            }}
+          >
+            <MenuItem value="">
+              <em>Manual entry</em>
+            </MenuItem>
+            {groupOptions.map((group) => (
+              <MenuItem key={group.groupId} value={group.groupId}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <span>
+                    {group.groupName} (#{group.groupId}) {group.isAdmin ? '— admin' : ''}
+                  </span>
+                  <Chip
+                    size="small"
+                    label={group.isOpen ? 'Public' : 'Private'}
+                    color={group.isOpen ? 'success' : 'warning'}
+                    variant="outlined"
+                  />
+                </Box>
+              </MenuItem>
+            ))}
+          </Select>
+          {groupsLoading && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 1 }}>
+              <CircularProgress size={20} />
+            </Box>
+          )}
+        </FormControl>
         <TextField
           fullWidth
           label="Primary Group Name"
@@ -343,16 +425,16 @@ export default function IssueAsset() {
           value={groupLink}
           onChange={(e) => setGroupLink(e.target.value)}
           sx={{ mb: 2 }}
+          placeholder="qortal://use-group/action-join/groupid-123"
         />
         <FormControlLabel
           control={
             <Checkbox
-              checked={false} // set to groupIsPrivate later
-              // onChange={(e) => setGroupIsPrivate(e.target.checked)}
-              disabled={true}
+              checked={groupIsPrivate}
+              onChange={(e) => setGroupIsPrivate(e.target.checked)}
             />
           }
-          label="Make Private? (Private Asset Issuance Feature Coming Soon)"
+          label="Mark group as private (restricts publication access)"
         />
 
         <Divider sx={{ my: 3 }} />

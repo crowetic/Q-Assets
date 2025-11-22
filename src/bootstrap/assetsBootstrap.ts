@@ -7,8 +7,8 @@ import { ASSETS_KEY, Q_ASSET_APP_VERSION } from '../constants/qdnConstants';
 export type AssetsIndex = Record<number, Asset>;
 
 interface CacheShape {
-  v: number;             // schema version
-  t: number;             // updatedAt (ms)
+  v: number; // schema version
+  t: number; // updatedAt (ms)
   index: AssetsIndex;
 }
 
@@ -18,7 +18,9 @@ const SCHEMA_VERSION = Q_ASSET_APP_VERSION;
 // Reasonable default TTL - tweak as you like.
 const DEFAULT_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-function now() { return Date.now(); }
+function now() {
+  return Date.now();
+}
 
 function readCache(): CacheShape | null {
   try {
@@ -68,9 +70,10 @@ async function fetchAssetsIndex(): Promise<AssetsIndex> {
  * - Return cache immediately if fresh.
  * - Otherwise do a network fetch; if cache exists but stale, return cache and refresh in background.
  */
-export async function ensureAssetsIndexLoaded(
-  opts?: { ttlMs?: number; force?: boolean; }
-): Promise<AssetsIndex> {
+export async function ensureAssetsIndexLoaded(opts?: {
+  ttlMs?: number;
+  force?: boolean;
+}): Promise<AssetsIndex> {
   const ttl = opts?.ttlMs ?? DEFAULT_TTL_MS;
   const force = !!opts?.force;
 
@@ -84,7 +87,9 @@ export async function ensureAssetsIndexLoaded(
     // Stale-but-present: kick off background refresh, return stale immediately
     void fetchAssetsIndex()
       .then((idx) => writeCache(idx))
-      .catch(() => {/* ignore background errors */});
+      .catch(() => {
+        /* ignore background errors */
+      });
     return cached.index;
   }
 
@@ -99,7 +104,6 @@ export function readAssetsIndexSync(): AssetsIndex | null {
   const c = readCache();
   return c?.index ?? null;
 }
-
 
 export async function ensureAssetMini(assetId: number): Promise<Asset | null> {
   const cached = readCache();

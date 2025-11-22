@@ -10,7 +10,10 @@ const Header = () => {
   const { pathname, hash } = useLocation();
 
   // compact mode on trade & qdeck routes
-  const compact = pathname.startsWith('/trade') || pathname.startsWith('/qdeck/');
+  const compact =
+    pathname.startsWith('/trade') ||
+    pathname.startsWith('/qdeck/') ||
+    pathname.startsWith('/manage/');
 
   const navLinks = [
     { label: 'Home', to: '/' },

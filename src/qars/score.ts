@@ -12,8 +12,7 @@ export function scoreEpoch(metrics: QarsMetrics, W: QarsWeightsV1): number {
     s += w * norm;
   }
   // penalties: treat as fractions 0..1 and scale with a global penalty weight (or include in linear with negative weights)
-  const penalty =
-    (metrics.selfDealPenalty ?? 0) + (metrics.sybilPenalty ?? 0);
+  const penalty = (metrics.selfDealPenalty ?? 0) + (metrics.sybilPenalty ?? 0);
   return Math.max(0, s * (1 - Math.min(0.9, penalty))); // keep ≥0; clamp penalty impact
 }
 

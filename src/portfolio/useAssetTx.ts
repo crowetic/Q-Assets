@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchAssetTransactions, AssetTx } from './assetTxTypes'
+import { fetchAssetTransactions, AssetTx } from './assetTxTypes';
 
 export function useAssetTx(address: string, assetId: number, pageSize = 20) {
   const [items, setItems] = useState<AssetTx[]>([]);
@@ -26,7 +26,7 @@ export function useAssetTx(address: string, assetId: number, pageSize = 20) {
         address,
         assetId,
         limit: pageSize,
-        offset: offsetRef.current
+        offset: offsetRef.current,
       });
       setItems((prev) => [...prev, ...batch]);
       offsetRef.current += batch.length;

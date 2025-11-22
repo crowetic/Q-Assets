@@ -4,9 +4,9 @@
   "asOfHeight": 145123,
   "asOfTimeMs": 1756154123456,
 
-  "windowBlocks": 2880,        
-  "weightsVersion": 1,            
-  "codeVersion": "1.0.0",          
+  "windowBlocks": 2880,
+  "weightsVersion": 1,
+  "codeVersion": "1.0.0",
 
   "metrics": {
     "tradesCount": 124,
@@ -26,7 +26,7 @@
     "sybilPenalty": 0.0
   },
 
-  "scoreEpoch": 87.3,             
+  "scoreEpoch": 87.3,
   "inputsProof": {
     "nodeInfo": { "height": 145200, "network": "main" },
     "ranges": [
@@ -34,14 +34,14 @@
       { "name": "holders", "asOfHeight": 145200, "sha256": "..." }
     ],
     "sampleRefs": {
-      "trades": ["<txId1>", "<txId2>", "<txId3>"],  
+      "trades": ["<txId1>", "<txId2>", "<txId3>"],
       "orders": ["<createOrderTxId>"]
     }
   },
 
   "publisher": {
     "address": "Qxxxx...",
-    "groupVerified": false,      
+    "groupVerified": false,
     "signature": "<publisherSignatureOverFile>"
   }
 }

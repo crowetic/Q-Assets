@@ -1,6 +1,12 @@
 import { base64ToObject } from 'qapp-core';
-import { assetDividendHeadId, assetDividendItemId, assetDividendItemPrefix, Q_ASSET_APP_PUBLISHER, Q_ASSETS_VERSION,} from '../constants/qdnConstants';
-import {type DividendEntry, type DividendHead } from '../types/dividendsObject'
+import {
+  assetDividendHeadId,
+  assetDividendItemId,
+  assetDividendItemPrefix,
+  Q_ASSET_APP_PUBLISHER,
+  Q_ASSETS_VERSION,
+} from '../constants/qdnConstants';
+import { type DividendEntry, type DividendHead } from '../types/dividendsObject';
 import { searchSimpleNameIdPrefix } from '../utils/searchSimple';
 import { objectToBase64 } from './data';
 
@@ -14,9 +20,10 @@ export async function getPrimaryName(address: string): Promise<string | null> {
   return null;
 }
 
-
-
-export async function getNextDividendCounter(publishName: string, assetId: number): Promise<number> {
+export async function getNextDividendCounter(
+  publishName: string,
+  assetId: number
+): Promise<number> {
   const prefix = assetDividendItemPrefix(assetId);
 
   // Fast path via head
@@ -26,13 +33,15 @@ export async function getNextDividendCounter(publishName: string, assetId: numbe
       name: publishName,
       service: 'DOCUMENT',
       identifier: assetDividendHeadId(assetId),
-      encoding: 'base64'
+      encoding: 'base64',
     });
     if (head && typeof head === 'string') {
       const json = base64ToObject(head) as DividendHead;
       if (Number.isFinite(json?.lastCounter)) return Number(json.lastCounter) + 1;
     }
-  } catch { /* head not present, fall through */ }
+  } catch {
+    /* head not present, fall through */
+  }
 
   // Faster, targeted scan by prefix
   const hits = await searchSimpleNameIdPrefix(prefix, publishName);
@@ -47,9 +56,13 @@ export async function getNextDividendCounter(publishName: string, assetId: numbe
   return maxCounter + 1;
 }
 
-
 // Publish a single dividend JSON record
-export async function publishDividendEntry(publishName: string, assetId: number, entry: DividendEntry, counter: number) {
+export async function publishDividendEntry(
+  publishName: string,
+  assetId: number,
+  entry: DividendEntry,
+  counter: number
+) {
   const identifier = assetDividendItemId(assetId, counter);
   const data64 = await objectToBase64(entry);
 
@@ -68,14 +81,19 @@ export async function publishDividendEntry(publishName: string, assetId: number,
 }
 
 // Publish/refresh the head pointer
-export async function publishDividendHead(publishName: string, assetId: number, lastCounter: number, lastIdentifier: string) {
+export async function publishDividendHead(
+  publishName: string,
+  assetId: number,
+  lastCounter: number,
+  lastIdentifier: string
+) {
   const head: DividendHead = {
     app: Q_ASSET_APP_PUBLISHER,
     appVersion: Q_ASSETS_VERSION,
     assetId,
     lastCounter,
     lastIdentifier,
-    updated: Date.now()
+    updated: Date.now(),
   };
   const data64 = await objectToBase64(head);
 

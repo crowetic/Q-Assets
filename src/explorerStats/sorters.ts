@@ -1,10 +1,13 @@
 // src/explorerStats/sorters.ts
-import type { ExplorerStats } from "./types";
+import type { ExplorerStats } from './types';
 
 export type WithStats<T> = T & { _stats?: ExplorerStats | null; _qarsScore?: number | null };
 
-export function attachStats<T>(rows: T[], lookup: (row: T) => ExplorerStats | null): WithStats<T>[] {
-  return rows.map(r => ({ ...r, _stats: lookup(r) }));
+export function attachStats<T>(
+  rows: T[],
+  lookup: (row: T) => ExplorerStats | null
+): WithStats<T>[] {
+  return rows.map((r) => ({ ...r, _stats: lookup(r) }));
 }
 
 // Primary: QARS score desc (if present)

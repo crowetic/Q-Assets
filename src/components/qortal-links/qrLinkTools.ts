@@ -1,4 +1,4 @@
-import { Service } from "qapp-core";
+import { Service } from 'qapp-core';
 
 /** Get base '/arbitrary/SERVICE/Name[/identifier]' via Hub */
 export async function getBaseArbitraryUrl(

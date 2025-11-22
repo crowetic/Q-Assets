@@ -10,8 +10,8 @@ import {
   snapshotHeadId,
   snapshotEpochId,
   QARS_QDN_SERVICE,
-  QASSETS_OWNER_NAME,             // optional: publish under app-owned name
-  QARS_SCHEMA_VERSION,            // for tags/metadata
+  QASSETS_OWNER_NAME, // optional: publish under app-owned name
+  QARS_SCHEMA_VERSION, // for tags/metadata
 } from '../constants/qarsConstants';
 import { objectToBase64 } from '../utils/data';
 
@@ -42,21 +42,15 @@ async function signJsonIfAvailable(_payloadCanonical: string): Promise<string | 
   return undefined;
 }
 
-
-
 // ---- Main -------------------------------------------------------------------
 export async function computeAndPublishQars(params: {
   assetId: number;
-  windowBlocks?: number;        // default 2880 (~2 days)
-  weightsVersion?: number;      // default latest (pass explicitly if you want older)
+  windowBlocks?: number; // default 2880 (~2 days)
+  weightsVersion?: number; // default latest (pass explicitly if you want older)
   publisher: { address: string; groupVerified?: boolean; qdnNameOverride?: string };
-  publishHistory?: boolean;     // also publish per-epoch record (default true)
+  publishHistory?: boolean; // also publish per-epoch record (default true)
 }) {
-  const {
-    assetId,
-    publisher,
-    publishHistory = true,
-  } = params;
+  const { assetId, publisher, publishHistory = true } = params;
 
   const windowBlocks = params.windowBlocks ?? 2880;
   const weightsVersion = params.weightsVersion ?? 1;
@@ -91,37 +85,35 @@ export async function computeAndPublishQars(params: {
   // };
 
   function ensureNodeInfo(
-  candidate: { height?: number; network?: string } | undefined,
-  fallbackHeight: number
-): { height: number; network: string } {
-  const height =
-    typeof candidate?.height === 'number' && Number.isFinite(candidate.height)
-      ? candidate.height
-      : fallbackHeight;
+    candidate: { height?: number; network?: string } | undefined,
+    fallbackHeight: number
+  ): { height: number; network: string } {
+    const height =
+      typeof candidate?.height === 'number' && Number.isFinite(candidate.height)
+        ? candidate.height
+        : fallbackHeight;
 
-  const rawNet = candidate?.network;
-  const network = rawNet && typeof rawNet === 'string' && rawNet.trim()
-    ? rawNet
-    : 'main'; // or await fetchNodeInfo().network if you prefer
+    const rawNet = candidate?.network;
+    const network = rawNet && typeof rawNet === 'string' && rawNet.trim() ? rawNet : 'main'; // or await fetchNodeInfo().network if you prefer
 
-  return { height, network };
-}
+    return { height, network };
+  }
 
-const snapshot = buildQarsSnapshot(
-  {
-    assetId,
-    asOfHeight,
-    asOfTimeMs,
-    windowBlocks,
-    weightsVersion,
-    codeVersion: APP_QARS_CODE_VERSION,
-    nodeInfo,
-  },
-  metrics as any, // MetricsInput aligns with your QarsMetrics keys
-  { ranges: inputsProof.ranges, sampleRefs: inputsProof.sampleRefs },
-  { address: publisher.address, groupVerified: !!publisher.groupVerified },
-  weights // let builder compute scoreEpoch with the same weights
-);
+  const snapshot = buildQarsSnapshot(
+    {
+      assetId,
+      asOfHeight,
+      asOfTimeMs,
+      windowBlocks,
+      weightsVersion,
+      codeVersion: APP_QARS_CODE_VERSION,
+      nodeInfo,
+    },
+    metrics as any, // MetricsInput aligns with your QarsMetrics keys
+    { ranges: inputsProof.ranges, sampleRefs: inputsProof.sampleRefs },
+    { address: publisher.address, groupVerified: !!publisher.groupVerified },
+    weights // let builder compute scoreEpoch with the same weights
+  );
 
   // Optional signing (over canonical JSON)
   const canonical = canonicalizeJson(snapshot);
@@ -136,8 +128,7 @@ const snapshot = buildQarsSnapshot(
   //  - explicit override from caller takes precedence
   //  - else use app-owned name if provided (QASSETS_OWNER_NAME)
   //  - else undefined => publish as current user context
-  const publishName =
-    publisher.qdnNameOverride ?? QASSETS_OWNER_NAME ?? undefined;
+  const publishName = publisher.qdnNameOverride ?? QASSETS_OWNER_NAME ?? undefined;
 
   // Common metadata (helps discovery & admin/community arbitration logic)
   const metadata = {
@@ -154,10 +145,10 @@ const snapshot = buildQarsSnapshot(
   };
 
   // HEAD publish (latest pointer)
-  const snapshot64 = await objectToBase64(snapshot)
+  const snapshot64 = await objectToBase64(snapshot);
   const headPublishRef = await publishSnapshotToQdn({
     name: publishName,
-    service: QARS_QDN_SERVICE,            // 'DOCUMENT'
+    service: QARS_QDN_SERVICE, // 'DOCUMENT'
     identifier: headIdentifier,
     data64: snapshot64,
     metadata,

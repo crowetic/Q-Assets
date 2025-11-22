@@ -1,8 +1,7 @@
 import { getAssetIdentifiers } from '../constants/qdnConstants';
 
 // Optional: configure the QDN name that owns override avatars for core assets
-const APP_OWNER_NAME =
-  "Q-Assets";
+const APP_OWNER_NAME = 'Q-Assets';
 
 // ---------------- Core-asset helpers ----------------
 
@@ -10,12 +9,12 @@ type CoreKey = 'qort' | 'legacy-qora' | 'qort-from-qora';
 
 // map aliases -> canonical key
 const CORE_ASSET_ALIASES: Record<string, CoreKey> = {
-  'qort': 'qort',
-  'qortal': 'qort',
+  qort: 'qort',
+  qortal: 'qort',
   'legacy-qora': 'legacy-qora',
-  'legacy_qora': 'legacy-qora',                
+  legacy_qora: 'legacy-qora',
   'qort-from-qora': 'qort-from-qora',
-  'qort_from_qora': 'qort-from-qora',
+  qort_from_qora: 'qort-from-qora',
 };
 
 function canonicalCoreKey(assetName: string): CoreKey | null {
@@ -26,9 +25,12 @@ function canonicalCoreKey(assetName: string): CoreKey | null {
 // local static assets shipped with the app (ensure these files exist)
 function staticCoreAssetPath(key: CoreKey): string {
   switch (key) {
-    case 'qort': return '/src/core-assets/QORT-logo-512.png';
-    case 'legacy-qora': return '/src/core-assets/QORA-logo-GOOD.png';
-    case 'qort-from-qora': return '/src/core-assets/QORT-to-QORA-logo.png';
+    case 'qort':
+      return '/src/core-assets/QORT-logo-512.png';
+    case 'legacy-qora':
+      return '/src/core-assets/QORA-logo-GOOD.png';
+    case 'qort-from-qora':
+      return '/src/core-assets/QORT-to-QORA-logo.png';
   }
 }
 
@@ -39,9 +41,9 @@ function coreOverrideIdentifier(key: CoreKey) {
   return `coreAvatar_${key}`;
 }
 const DEFAULT_AVATAR_IDENTIFIERS = [
-  'assetAvatar_default',        // preferred
-  'coreAvatar_default',         // legacy alias
-  'qassets_default_avatar',     // legacy alias
+  'assetAvatar_default', // preferred
+  'coreAvatar_default', // legacy alias
+  'qassets_default_avatar', // legacy alias
 ];
 
 // ---------------- MIME sniffing ----------------
@@ -50,28 +52,31 @@ export function guessImageMimeFromBase64(base64: string): string {
   if (!base64) return 'application/octet-stream';
   // read a small slice
   const sample = atob(base64.slice(0, 64));
-  const b = Array.from(sample).map(ch => ch.charCodeAt(0));
+  const b = Array.from(sample).map((ch) => ch.charCodeAt(0));
 
   // PNG
-  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) return 'image/png';
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png';
   // JPEG
-  if (b[0] === 0xFF && b[1] === 0xD8) return 'image/jpeg';
+  if (b[0] === 0xff && b[1] === 0xd8) return 'image/jpeg';
   // GIF
   if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return 'image/gif';
   // BMP
-  if (b[0] === 0x42 && b[1] === 0x4D) return 'image/bmp';
+  if (b[0] === 0x42 && b[1] === 0x4d) return 'image/bmp';
   // WEBP ("RIFF....WEBP")
   if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46) return 'image/webp';
   // SVG (text: "<svg")
-  if (b[0] === 0x3C && b[1] === 0x73 && b[2] === 0x76 && b[3] === 0x67) return 'image/svg+xml';
+  if (b[0] === 0x3c && b[1] === 0x73 && b[2] === 0x76 && b[3] === 0x67) return 'image/svg+xml';
 
   return 'application/octet-stream';
 }
 
 // simple in-memory cache to avoid repeated fetches
 const avatarMemo = new Map<string, string | null>();
-const memoOk = (k: string) => avatarMemo.has(k) ? avatarMemo.get(k)! : null;
-const memoSet = (k: string, v: string | null) => { avatarMemo.set(k, v); return v; };
+const memoOk = (k: string) => (avatarMemo.has(k) ? avatarMemo.get(k)! : null);
+const memoSet = (k: string, v: string | null) => {
+  avatarMemo.set(k, v);
+  return v;
+};
 
 async function fetchOwnerImageByIdentifiers(ids: string[]): Promise<string | null> {
   if (!APP_OWNER_NAME) return null;
@@ -88,7 +93,9 @@ async function fetchOwnerImageByIdentifiers(ids: string[]): Promise<string | nul
         const mime = guessImageMimeFromBase64(base64);
         return `data:${mime};base64,${base64}`;
       }
-    } catch {/* try next id */}
+    } catch {
+      /* try next id */
+    }
   }
   return null;
 }
@@ -167,9 +174,9 @@ export const fetchAssetAvatar = async (
   try {
     const ownerDefault = await fetchOwnerImageByIdentifiers(DEFAULT_AVATAR_IDENTIFIERS);
     if (ownerDefault) return memoSet(memoKey, ownerDefault);
-  } catch {/* continue */ }
-  
-  
+  } catch {
+    /* continue */
+  }
 
   // 3) App owner: core-asset override (QDN) if applicable
   if (coreKey && APP_OWNER_NAME) {
@@ -184,7 +191,9 @@ export const fetchAssetAvatar = async (
       });
       const mime = guessImageMimeFromBase64(base64);
       return memoSet(memoKey, `data:${mime};base64,${base64}`);
-    } catch {/* fall through */}
+    } catch {
+      /* fall through */
+    }
   }
 
   // 4) Static bundle (last resort)

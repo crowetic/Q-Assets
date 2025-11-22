@@ -14,7 +14,9 @@ export function usePrimaryGroupId(assetId: number) {
       const n = await resolvePrimaryGroupId(assetId);
       if (alive) setGroupId(n);
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [assetId]);
   return groupId;
 }

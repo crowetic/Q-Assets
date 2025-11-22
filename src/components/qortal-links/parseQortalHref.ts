@@ -1,8 +1,12 @@
-import { Service } from "qapp-core";
+import { Service } from 'qapp-core';
 
-export type ParsedQortal =
-  | { service: Service, name: string; identifier?: string, path?: string; raw: string }
-  | null;
+export type ParsedQortal = {
+  service: Service;
+  name: string;
+  identifier?: string;
+  path?: string;
+  raw: string;
+} | null;
 
 export function parseQortalHref(raw: string): ParsedQortal {
   const href = (raw || '').trim();
@@ -27,7 +31,7 @@ export function parseQortalHref(raw: string): ParsedQortal {
 export function arbitraryToRenderUrl(baseArbitrary: string, path?: string): string {
   let render = baseArbitrary.replace(/^\/arbitrary\//, '/render/');
   if (path) {
-    const segs = path.split('/').map(seg => encodeURIComponent(seg).replace(/#/g, '%23'));
+    const segs = path.split('/').map((seg) => encodeURIComponent(seg).replace(/#/g, '%23'));
     render += '/' + segs.join('/');
   }
   return render;

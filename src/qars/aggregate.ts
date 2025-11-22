@@ -26,43 +26,43 @@ function medianDefined(nums: Array<number | undefined>): number | undefined {
 export function aggregateMetrics(list: QarsMetrics[]): QarsMetrics {
   return {
     // Market
-    tradesCount:           medianOf(list, 'tradesCount'),
-    volAsset:              medianOf(list, 'volAsset'),
-    volQort:               medianOf(list, 'volQort'),
-    uniqueTraders:         medianOf(list, 'uniqueTraders'),
-    bookDiversity:         medianDefined(list.map((m) => m.bookDiversity)),
+    tradesCount: medianOf(list, 'tradesCount'),
+    volAsset: medianOf(list, 'volAsset'),
+    volQort: medianOf(list, 'volQort'),
+    uniqueTraders: medianOf(list, 'uniqueTraders'),
+    bookDiversity: medianDefined(list.map((m) => m.bookDiversity)),
 
     // Holders
-    holdersCount:          medianOf(list, 'holdersCount'),
-    holdersDelta:          medianOf(list, 'holdersDelta'),
-    holderRegularity:      medianOf(list, 'holderRegularity'),
+    holdersCount: medianOf(list, 'holdersCount'),
+    holdersDelta: medianOf(list, 'holdersDelta'),
+    holderRegularity: medianOf(list, 'holderRegularity'),
 
     // Transfers
-    userTransfers:         medianOf(list, 'userTransfers'),
-    transferRegularity:    medianOf(list, 'transferRegularity'),
+    userTransfers: medianOf(list, 'userTransfers'),
+    transferRegularity: medianOf(list, 'transferRegularity'),
 
     // Dividends
-    dividendEvents:        medianOf(list, 'dividendEvents'),
-    dividendQortTotal:     medianOf(list, 'dividendQortTotal'),
+    dividendEvents: medianOf(list, 'dividendEvents'),
+    dividendQortTotal: medianOf(list, 'dividendQortTotal'),
 
     // Fees / contribution
-    totalFeesQort:         medianOf(list, 'totalFeesQort'),
-    burnsQort:             medianOf(list, 'burnsQort'),
+    totalFeesQort: medianOf(list, 'totalFeesQort'),
+    burnsQort: medianOf(list, 'burnsQort'),
 
     // Community/QDN
-    newsPosts:             medianOf(list, 'newsPosts'),
-    newsComments:          medianOf(list, 'newsComments'),
-    paidUpvotes:           medianOf(list, 'paidUpvotes'),
-    paidUpvotesQort:       medianOf(list, 'paidUpvotesQort'),
-    groupMembers:          medianOf(list, 'groupMembers'),
-    communityRegularity:   medianOf(list, 'communityRegularity'),
+    newsPosts: medianOf(list, 'newsPosts'),
+    newsComments: medianOf(list, 'newsComments'),
+    paidUpvotes: medianOf(list, 'paidUpvotes'),
+    paidUpvotesQort: medianOf(list, 'paidUpvotesQort'),
+    groupMembers: medianOf(list, 'groupMembers'),
+    communityRegularity: medianOf(list, 'communityRegularity'),
 
     // Issuer/Admin
-    issuerActivityScore:   medianOf(list, 'issuerActivityScore'),
+    issuerActivityScore: medianOf(list, 'issuerActivityScore'),
 
     // Anti-gaming
-    selfDealPenalty:       medianOf(list, 'selfDealPenalty'),
-    sybilPenalty:          medianOf(list, 'sybilPenalty'),
+    selfDealPenalty: medianOf(list, 'selfDealPenalty'),
+    sybilPenalty: medianOf(list, 'sybilPenalty'),
   };
 }
 

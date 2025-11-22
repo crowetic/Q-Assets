@@ -8,7 +8,7 @@ import { getAssetBalances } from '../utils/qortalAssetRequests';
 export type BookOrder = {
   orderId: string;
   priceQortPerAsset: number; // QORT/ASSET
-  qtyAsset: number;          // ASSET units remaining (approx based on 'fulfilled')
+  qtyAsset: number; // ASSET units remaining (approx based on 'fulfilled')
   creator?: string;
   haveAssetId: number;
   wantAssetId: number;
@@ -20,46 +20,46 @@ type DecStr = string;
 export interface AddressOrderRow {
   orderId: string;
   creatorPublicKey: string;
-  haveAssetId: number;      // 0 = QORT
-  wantAssetId: number;      // the other asset in the pair
-  amount: DecStr;           // in units of amountAssetId (human)
-  price: DecStr;            // QORT per 1 unit of amountAssetId (human)
-  fulfilled: DecStr;        // fulfilled in units of amountAssetId (human)
-  timestamp: number;        // ms (older nodes might use sec; we guard)
+  haveAssetId: number; // 0 = QORT
+  wantAssetId: number; // the other asset in the pair
+  amount: DecStr; // in units of amountAssetId (human)
+  price: DecStr; // QORT per 1 unit of amountAssetId (human)
+  fulfilled: DecStr; // fulfilled in units of amountAssetId (human)
+  timestamp: number; // ms (older nodes might use sec; we guard)
   isClosed: boolean;
   isFulfilled: boolean;
   haveAssetName?: string;
   wantAssetName?: string;
-  amountAssetId: number;    // which asset "amount" is denominated in
+  amountAssetId: number; // which asset "amount" is denominated in
   amountAssetName?: string;
-  pricePair?: string;       // e.g. "QORT/Q-Asset"
+  pricePair?: string; // e.g. "QORT/Q-Asset"
 }
 
 type Side = 'buy' | 'sell';
 
 export interface UiMyOrder {
   orderId: string;
-  side: Side;                // relative to the non-zero pair asset
+  side: Side; // relative to the non-zero pair asset
   priceQortPerAsset: number; // QORT per 1 pair asset
   qtyAssetTotal: number;
-  qtyAssetOpen: number;      // remaining amount in pair asset units
-  ts: number;                // ms
-  raw: AddressOrderRow;      // keep for debugging
+  qtyAssetOpen: number; // remaining amount in pair asset units
+  ts: number; // ms
+  raw: AddressOrderRow; // keep for debugging
 }
 
 export interface AggregatedOrderbookRow {
   price: number;
-  pricePair: string;         // e.g. "0/2" or "QORT/ASSET"
-  unfulfilled: number;       // remaining size at this price (denominated in unfulfilledAssetId)
+  pricePair: string; // e.g. "0/2" or "QORT/ASSET"
+  unfulfilled: number; // remaining size at this price (denominated in unfulfilledAssetId)
   unfulfilledAssetId: number;
   unfulfilledAssetName?: string;
 }
 
 export interface OrderTradeRow {
   orderId: string;
-  price: number;        // QORT per ASSET
-  amount: number;       // ASSET units (for Qortal endpoints this is *usually* asset)
-  otherAmount: number;  // QORT units
+  price: number; // QORT per ASSET
+  amount: number; // ASSET units (for Qortal endpoints this is *usually* asset)
+  otherAmount: number; // QORT units
   timestamp: number;
   creatorPublicKey?: string;
   creatorAddress?: string;
@@ -69,10 +69,10 @@ export interface OrderTradeRow {
 export interface FillEvent {
   orderId: string;
   side: 'buy' | 'sell';
-  price: number;        // QORT / ASSET
-  qtyAsset: number;     // ASSET units filled in this trade row
-  qort: number;         // QORT paid/received in this trade row
-  ts: number;           // ms
+  price: number; // QORT / ASSET
+  qtyAsset: number; // ASSET units filled in this trade row
+  qort: number; // QORT paid/received in this trade row
+  ts: number; // ms
 }
 
 export type ChartTrade = { price: number; quantity: number; side: 'buy' | 'sell'; ts: number };
@@ -116,14 +116,16 @@ async function getAccountData(address: string) {
 async function getPublicKeyFor(address: string): Promise<string> {
   const acc = await getAccountData(address);
   const pk = acc?.publicKey;
-  if (!pk || typeof pk !== 'string') throw new Error('Unable to obtain public key for authenticated user.');
+  if (!pk || typeof pk !== 'string')
+    throw new Error('Unable to obtain public key for authenticated user.');
   return pk;
 }
 
 async function getReferenceFor(address: string): Promise<string> {
   const acc = await getAccountData(address);
   const ref = acc?.reference;
-  if (!ref || typeof ref !== 'string') throw new Error('Unable to obtain last reference for authenticated user.');
+  if (!ref || typeof ref !== 'string')
+    throw new Error('Unable to obtain last reference for authenticated user.');
   return ref;
 }
 
@@ -143,10 +145,12 @@ export const assertSufficientBalance = async (
 
   if (side === 'sell') {
     const need = toBaseUnits(qtyAsset, map.get(assetId)?.decimals ?? 8);
-    if (!map.has(assetId) || map.get(assetId)!.balance < need) throw new Error('Insufficient asset balance');
+    if (!map.has(assetId) || map.get(assetId)!.balance < need)
+      throw new Error('Insufficient asset balance');
   } else {
     const needQort = toBaseUnits(price * qtyAsset, 8);
-    if (!map.has(QORT_ID) || map.get(QORT_ID)!.balance < needQort) throw new Error('Insufficient QORT');
+    if (!map.has(QORT_ID) || map.get(QORT_ID)!.balance < needQort)
+      throw new Error('Insufficient QORT');
   }
 };
 
@@ -194,22 +198,25 @@ function openQtyInAssetUnits(
   row: { amount: any; fulfilled: any; amountAssetId: number | string; price: any },
   pairAssetId: number // the non-QORT id on this screen
 ): number {
-  const amt  = toNum(row.amount);
-  const ful  = toNum(row.fulfilled);
-  const open = Math.max(0, amt - ful);             // units of amountAssetId
-  const aId  = Number(row.amountAssetId);
-  const px   = toNum(row.price);                    // QORT per 1 asset
+  const amt = toNum(row.amount);
+  const ful = toNum(row.fulfilled);
+  const open = Math.max(0, amt - ful); // units of amountAssetId
+  const aId = Number(row.amountAssetId);
+  const px = toNum(row.price); // QORT per 1 asset
 
-  if (aId === pairAssetId) return open;             // already in asset units
-  if (aId === QORT_ID) {                            // in QORT -> convert to asset
+  if (aId === pairAssetId) return open; // already in asset units
+  if (aId === QORT_ID) {
+    // in QORT -> convert to asset
     return px > 0 ? open / px : 0;
   }
   // Unknown denomination: best effort (don’t lie)
   return 0;
 }
 
-
-export async function fetchAsks(assetId: number, opts?: {limit?: number; offset?: number; reverse?: boolean }): Promise<BookOrder[]> {
+export async function fetchAsks(
+  assetId: number,
+  opts?: { limit?: number; offset?: number; reverse?: boolean }
+): Promise<BookOrder[]> {
   const qs = new URLSearchParams();
   if (opts?.limit != null) qs.set('limit', String(opts.limit));
   if (opts?.offset != null) qs.set('offset', String(opts.offset));
@@ -230,7 +237,10 @@ export async function fetchAsks(assetId: number, opts?: {limit?: number; offset?
   }));
 }
 
-export async function fetchBids(assetId: number, opts?: {limit?: number; offset?: number; reverse?: boolean }): Promise<BookOrder[]> {
+export async function fetchBids(
+  assetId: number,
+  opts?: { limit?: number; offset?: number; reverse?: boolean }
+): Promise<BookOrder[]> {
   const qs = new URLSearchParams();
   if (opts?.limit != null) qs.set('limit', String(opts.limit));
   if (opts?.offset != null) qs.set('offset', String(opts.offset));
@@ -278,13 +288,13 @@ export async function fetchOrderTrades(
 export async function createOrderAndBroadcast(params: {
   side: 'buy' | 'sell';
   assetId: number;
-  priceQortPerAsset: number;   // QORT per 1 ASSET
-  qtyAsset: number;            // ASSET units
+  priceQortPerAsset: number; // QORT per 1 ASSET
+  qtyAsset: number; // ASSET units
   address: string;
   publicKey?: string;
-  fee?: number;                // default 0.01 QORT
-  txGroupId?: number;          // default 0
-  assetDecimals?: 0 | 8;       // default 8; pass 0 if non-divisible
+  fee?: number; // default 0.01 QORT
+  txGroupId?: number; // default 0
+  assetDecimals?: 0 | 8; // default 8; pass 0 if non-divisible
 }): Promise<string> {
   const {
     side,
@@ -305,20 +315,20 @@ export async function createOrderAndBroadcast(params: {
   const creatorPublicKey = publicKey ?? (await getPublicKeyFor(address));
   const reference = await getReferenceFor(address);
 
-  const q8 = (n: number) => Math.trunc(n * 1e8) / 1e8;                         // QORT 8dp
+  const q8 = (n: number) => Math.trunc(n * 1e8) / 1e8; // QORT 8dp
   const qAsset = (n: number) => (assetDecimals === 0 ? Math.floor(n) : q8(n)); // asset dp
 
   const price = q8(priceQortPerAsset);
-  const qty   = qAsset(qtyAsset);
-  const feeQ  = q8(fee);
+  const qty = qAsset(qtyAsset);
+  const feeQ = q8(fee);
   if (!(price > 0) || !(qty > 0)) throw new Error('Invalid price/qty after quantization');
 
   const haveAssetId = side === 'sell' ? assetId : 0; // QORT=0
   const wantAssetId = side === 'sell' ? 0 : assetId;
 
-  // amount is in units of wantAssetId - have changed the below and it seems to be working, I'm not going to mess with it. 
+  // amount is in units of wantAssetId - have changed the below and it seems to be working, I'm not going to mess with it.
   // const amount = side === 'sell' ? qAsset(qty) : q8(price * qty);
-  const amount = qAsset(qty)
+  const amount = qAsset(qty);
   if (!(amount > 0)) throw new Error('Invalid amount (rounded to zero)');
 
   const body = {
@@ -341,7 +351,9 @@ export async function createOrderAndBroadcast(params: {
   });
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
-    throw new Error(`Create order failed: ${res.status} ${res.statusText}${txt ? ` — ${txt}` : ''}`);
+    throw new Error(
+      `Create order failed: ${res.status} ${res.statusText}${txt ? ` — ${txt}` : ''}`
+    );
   }
   const unsignedBase58 = await res.text();
 
@@ -357,7 +369,9 @@ export async function createOrderAndBroadcast(params: {
   });
   if (!final.ok) {
     const txt = await final.text().catch(() => '');
-    throw new Error(`Broadcast failed: ${final.status} ${final.statusText}${txt ? ` — ${txt}` : ''}`);
+    throw new Error(
+      `Broadcast failed: ${final.status} ${final.statusText}${txt ? ` — ${txt}` : ''}`
+    );
   }
   return await final.text();
 }
@@ -478,12 +492,15 @@ export async function getMyOrdersForAssetUi(
   const deduped = Array.from(byId.values());
 
   // Sort like books: asks lowest→highest, bids highest→lowest
-  const asks = deduped.filter((o) => o.side === 'sell').sort((a, b) => a.priceQortPerAsset - b.priceQortPerAsset);
-  const bids = deduped.filter((o) => o.side === 'buy').sort((a, b) => b.priceQortPerAsset - a.priceQortPerAsset);
+  const asks = deduped
+    .filter((o) => o.side === 'sell')
+    .sort((a, b) => a.priceQortPerAsset - b.priceQortPerAsset);
+  const bids = deduped
+    .filter((o) => o.side === 'buy')
+    .sort((a, b) => b.priceQortPerAsset - a.priceQortPerAsset);
 
   return [...asks, ...bids];
 }
-
 
 /**
  * Pair-scoped. Returns **UI-ready** orders for the given pair.
@@ -521,7 +538,7 @@ export async function getAddressOrdersByPair(
 export function mapAddressOrderRowToUi(
   row: AddressOrderRow,
   assetId: number,
-  otherAssetId: number, 
+  otherAssetId: number,
   divisible: boolean
 ): UiMyOrder {
   const side: Side = row.haveAssetId === QORT_ID ? 'buy' : 'sell';
@@ -594,7 +611,11 @@ export async function getTrades(
   if (opts?.reverse !== undefined) q.set('reverse', String(opts.reverse));
   const qs = q.toString() ? `?${q.toString()}` : '';
   const data = await fetchApiJSON<any>(`/assets/trades/${assetId}/${otherAssetId}${qs}`);
-  return Array.isArray(data) ? data : (Array.isArray((data as any)?.trades) ? (data as any).trades : []);
+  return Array.isArray(data)
+    ? data
+    : Array.isArray((data as any)?.trades)
+      ? (data as any).trades
+      : [];
 }
 
 // Fetch newest-first pages until we reach windowStart or a safety cap.
@@ -705,15 +726,22 @@ export async function fetchQortToAssetTrades(
   return merged;
 }
 
-
 export async function getRecentTrades(
   assetIds?: number[],
   otherAssetIds?: number[],
   opts?: { limit?: number; offset?: number; reverse?: boolean }
 ): Promise<any[]> {
   const q = new URLSearchParams();
-  if (assetIds?.length) assetIds.forEach((a) => { q.append('assetId', String(a)); q.append('assetid', String(a)); });
-  if (otherAssetIds?.length) otherAssetIds.forEach((a) => { q.append('otherAssetId', String(a)); q.append('otherassetid', String(a)); });
+  if (assetIds?.length)
+    assetIds.forEach((a) => {
+      q.append('assetId', String(a));
+      q.append('assetid', String(a));
+    });
+  if (otherAssetIds?.length)
+    otherAssetIds.forEach((a) => {
+      q.append('otherAssetId', String(a));
+      q.append('otherassetid', String(a));
+    });
   if (opts?.limit !== undefined) q.set('limit', String(opts.limit));
   if (opts?.offset !== undefined) q.set('offset', String(opts.offset));
   if (opts?.reverse !== undefined) q.set('reverse', String(opts.reverse));
@@ -722,7 +750,11 @@ export async function getRecentTrades(
   const res = await fetch(`/assets/trades/recent${qs}`);
   if (!res.ok) throw new Error(`recent trades failed: ${res.status} ${res.statusText}`);
   const data = await res.json();
-  return Array.isArray(data) ? data : (Array.isArray((data as any)?.trades) ? (data as any).trades : []);
+  return Array.isArray(data)
+    ? data
+    : Array.isArray((data as any)?.trades)
+      ? (data as any).trades
+      : [];
 }
 
 /* =========================
@@ -772,7 +804,7 @@ export function decodePairTradeEnvelope(
   if (!t) return null;
 
   const tsRaw = toNum(t.timestamp);
-  const ts    = tsRaw > 0 && tsRaw < 2e10 ? tsRaw * 1000 : tsRaw;
+  const ts = tsRaw > 0 && tsRaw < 2e10 ? tsRaw * 1000 : tsRaw;
   if (!(ts > 0)) return null;
 
   const iOrd = row?.initiatingOrder ?? {};
@@ -781,7 +813,7 @@ export function decodePairTradeEnvelope(
   // 1) Maker is the older order (resting on book)
   const ti = toNum(iOrd.timestamp);
   const tt = toNum(tOrd.timestamp);
-  const maker = (tt && ti) ? (tt <= ti ? tOrd : iOrd) : (tOrd || iOrd);
+  const maker = tt && ti ? (tt <= ti ? tOrd : iOrd) : tOrd || iOrd;
   const makerPrice = toNum(maker?.price);
 
   // 2) Prefer the order that expresses amount in *pair asset* units
@@ -808,8 +840,8 @@ export function decodePairTradeEnvelope(
   if (!(assetAmt > 0)) {
     const iaId = Number(iOrd.haveAssetId);
     const taId = Number(tOrd.haveAssetId);
-    const ia   = toNum(t.initiatorAmount);
-    const ta   = toNum(t.targetAmount);
+    const ia = toNum(t.initiatorAmount);
+    const ta = toNum(t.targetAmount);
     if (iaId === pairAssetId) assetAmt = ia;
     else if (taId === pairAssetId) assetAmt = ta;
   }
@@ -818,43 +850,44 @@ export function decodePairTradeEnvelope(
   const price = makerPrice > 0 ? makerPrice : 0;
 
   // 4) QORT notional from price
-  const qortAmt = (assetAmt > 0 && price > 0) ? (assetAmt * price) : 0;
+  const qortAmt = assetAmt > 0 && price > 0 ? assetAmt * price : 0;
 
   if (!(assetAmt > 0) || !(qortAmt > 0) || !(price > 0)) return null;
   return { assetAmt, qortAmt, price, ts };
 }
 
-
-
 /** Recent trades row (flat). */
 export function decodeTradeRowRecent(row: any, pairAssetId: number) {
-  const rowAssetId  = Number(row?.assetId);
-  const rowOtherId  = Number(row?.otherAssetId);
-  const amount      = toNum(row?.amount);       // here: QORT 
-  const otherAmount = toNum(row?.otherAmount);  // here: ASSET
+  const rowAssetId = Number(row?.assetId);
+  const rowOtherId = Number(row?.otherAssetId);
+  const amount = toNum(row?.amount); // here: QORT
+  const otherAmount = toNum(row?.otherAmount); // here: ASSET
 
-  let assetAmt = 0, qortAmt = 0;
+  let assetAmt = 0,
+    qortAmt = 0;
 
   if (rowAssetId === 0 && rowOtherId === pairAssetId) {
-    qortAmt = amount; assetAmt = otherAmount;
+    qortAmt = amount;
+    assetAmt = otherAmount;
   } else if (rowAssetId === pairAssetId && rowOtherId === 0) {
-    assetAmt = amount; qortAmt = otherAmount;
+    assetAmt = amount;
+    qortAmt = otherAmount;
   } else {
     assetAmt = otherAmount > 0 ? otherAmount : amount;
-    qortAmt  = otherAmount > 0 ? amount : otherAmount;
+    qortAmt = otherAmount > 0 ? amount : otherAmount;
   }
 
-  const price = assetAmt > 0 ? qortAmt / assetAmt : 0;   // QORT / ASSET
+  const price = assetAmt > 0 ? qortAmt / assetAmt : 0; // QORT / ASSET
   const tsRaw = toNum(row?.timestamp ?? row?.ts ?? 0);
-  const ts    = tsRaw < 2e10 ? tsRaw * 1000 : tsRaw;
+  const ts = tsRaw < 2e10 ? tsRaw * 1000 : tsRaw;
 
   return { assetAmt, qortAmt, price, ts };
 }
 
 /** Build fills directly from pair trades by matching your identity. */
 function rowHasMe(row: any, address: string, publicKey?: string | null): boolean {
-  const iC  = row?.initiatingOrder?.creator;
-  const tC  = row?.targetOrder?.creator;
+  const iC = row?.initiatingOrder?.creator;
+  const tC = row?.targetOrder?.creator;
   const iPK = row?.initiatingOrder?.creatorPublicKey;
   const tPK = row?.targetOrder?.creatorPublicKey;
   return (
@@ -868,9 +901,12 @@ function sideForMe(row: any, address: string, publicKey?: string | null): 'buy' 
   const init = row?.initiatingOrder;
   const targ = row?.targetOrder;
   const mine =
-    (init?.creator === address || init?.creatorPublicKey === publicKey) ? init :
-    (targ?.creator === address || targ?.creatorPublicKey === publicKey) ? targ : null;
-  return (mine?.haveAssetId === 0) ? 'buy' : 'sell';
+    init?.creator === address || init?.creatorPublicKey === publicKey
+      ? init
+      : targ?.creator === address || targ?.creatorPublicKey === publicKey
+        ? targ
+        : null;
+  return mine?.haveAssetId === 0 ? 'buy' : 'sell';
 }
 
 // export function envelopesToFills(
@@ -912,16 +948,15 @@ export function envelopesToFills(
       return {
         orderId: String(row?.initiatingOrder?.orderId ?? row?.targetOrder?.orderId ?? ''),
         side,
-        qtyAsset: base?.assetAmt ?? 0,   // non-QORT amount
-        qort: base?.qortAmt ?? 0,        // QORT amount
-        price: base?.price ?? 0,         // QORT / asset
+        qtyAsset: base?.assetAmt ?? 0, // non-QORT amount
+        qort: base?.qortAmt ?? 0, // QORT amount
+        price: base?.price ?? 0, // QORT / asset
         ts: base?.ts ?? 0,
       } as FillEvent;
     })
     .filter((f) => f.qtyAsset > 0 && f.qort > 0 && f.price > 0 && f.ts > 0)
     .sort((a, b) => b.ts - a.ts);
 }
-
 
 /** Decode a single row from /assets/order/{orderId}/trades (flat or envelope). */
 export function rowToFill(r: any, side: 'buy' | 'sell', pairAssetId: number): FillEvent {
@@ -938,23 +973,37 @@ export function rowToFill(r: any, side: 'buy' | 'sell', pairAssetId: number): Fi
   }
 
   const amountAssetId = Number(r?.amountAssetId);
-  const amount        = toNum(r?.amount);
-  const otherAmount   = toNum(r?.otherAmount);
+  const amount = toNum(r?.amount);
+  const otherAmount = toNum(r?.otherAmount);
 
-  let assetAmt = 0, qortAmt = 0;
+  let assetAmt = 0,
+    qortAmt = 0;
   if (Number.isFinite(amountAssetId)) {
-    if (amountAssetId === 0) { qortAmt = amount; assetAmt = otherAmount; }
-    else if (amountAssetId === pairAssetId) { assetAmt = amount; qortAmt = otherAmount; }
-    else { assetAmt = otherAmount > 0 ? otherAmount : amount; qortAmt = otherAmount > 0 ? amount : otherAmount; }
+    if (amountAssetId === 0) {
+      qortAmt = amount;
+      assetAmt = otherAmount;
+    } else if (amountAssetId === pairAssetId) {
+      assetAmt = amount;
+      qortAmt = otherAmount;
+    } else {
+      assetAmt = otherAmount > 0 ? otherAmount : amount;
+      qortAmt = otherAmount > 0 ? amount : otherAmount;
+    }
   } else {
-    const aId = Number(r?.assetId), oId = Number(r?.otherAssetId);
-    if (aId === 0 && oId === pairAssetId) { qortAmt = amount; assetAmt = otherAmount; }
-    else { assetAmt = otherAmount > 0 ? otherAmount : amount; qortAmt = otherAmount > 0 ? amount : otherAmount; }
+    const aId = Number(r?.assetId),
+      oId = Number(r?.otherAssetId);
+    if (aId === 0 && oId === pairAssetId) {
+      qortAmt = amount;
+      assetAmt = otherAmount;
+    } else {
+      assetAmt = otherAmount > 0 ? otherAmount : amount;
+      qortAmt = otherAmount > 0 ? amount : otherAmount;
+    }
   }
 
-  const price = (toNum(r?.price) > 0) ? toNum(r?.price) : (assetAmt > 0 ? qortAmt / assetAmt : 0);
+  const price = toNum(r?.price) > 0 ? toNum(r?.price) : assetAmt > 0 ? qortAmt / assetAmt : 0;
   const tsRaw = toNum(r?.timestamp ?? r?.ts ?? 0);
-  const ts    = tsRaw > 0 && tsRaw < 2e10 ? tsRaw * 1000 : tsRaw;
+  const ts = tsRaw > 0 && tsRaw < 2e10 ? tsRaw * 1000 : tsRaw;
 
   return {
     orderId: String(r?.orderId ?? r?.orderid ?? ''),
@@ -982,20 +1031,23 @@ export async function getMyFillsForPair(
 
   // Pull user's orders for this pair (open/closed/fulfilled)
   const [open, closed, fulfilled] = await Promise.all([
-    getAddressOrdersByPair(address, pairAssetId, 0, { isClosed: false, isFulfilled: false, limit, reverse: true }),
+    getAddressOrdersByPair(address, pairAssetId, 0, {
+      isClosed: false,
+      isFulfilled: false,
+      limit,
+      reverse: true,
+    }),
     getAddressOrdersByPair(address, pairAssetId, 0, { isClosed: true, limit, reverse: true }),
     getAddressOrdersByPair(address, pairAssetId, 0, { isFulfilled: true, limit, reverse: true }),
   ]);
 
   // Dedupe by orderId
   const seen = new Set<string>();
-  const mine = ([] as UiMyOrder[])
-    .concat(open ?? [], closed ?? [], fulfilled ?? [])
-    .filter((o) => {
-      if (seen.has(o.orderId)) return false;
-      seen.add(o.orderId);
-      return true;
-    });
+  const mine = ([] as UiMyOrder[]).concat(open ?? [], closed ?? [], fulfilled ?? []).filter((o) => {
+    if (seen.has(o.orderId)) return false;
+    seen.add(o.orderId);
+    return true;
+  });
 
   if (!mine.length) {
     // Fallback: scan pair trades and filter by address
@@ -1065,21 +1117,29 @@ export function envelopesToChartTrades(envelopes: any[], pairAssetId: number): C
 
     const iaId = Number(t.initiatorAmountAssetId);
     const taId = Number(t.targetAmountAssetId);
-    const ia   = toNum(t.initiatorAmount);
-    const ta   = toNum(t.targetAmount);
+    const ia = toNum(t.initiatorAmount);
+    const ta = toNum(t.targetAmount);
 
-    let assetAmt = 0, qortAmt = 0, side: 'buy' | 'sell' = 'buy';
-    if (iaId === 0 && taId === pairAssetId) { qortAmt = ia; assetAmt = ta; side = 'buy'; }
-    else if (taId === 0 && iaId === pairAssetId) { assetAmt = ia; qortAmt = ta; side = 'sell'; }
-    else {
+    let assetAmt = 0,
+      qortAmt = 0,
+      side: 'buy' | 'sell' = 'buy';
+    if (iaId === 0 && taId === pairAssetId) {
+      qortAmt = ia;
+      assetAmt = ta;
+      side = 'buy';
+    } else if (taId === 0 && iaId === pairAssetId) {
+      assetAmt = ia;
+      qortAmt = ta;
+      side = 'sell';
+    } else {
       assetAmt = ta > 0 ? ta : ia;
-      qortAmt  = ta > 0 ? ia : ta;
-      side     = qortAmt === ia ? 'buy' : 'sell';
+      qortAmt = ta > 0 ? ia : ta;
+      side = qortAmt === ia ? 'buy' : 'sell';
     }
 
     const p1 = toNum(row?.initiatingOrder?.price);
     const p2 = toNum(row?.targetOrder?.price);
-    const price = p1 > 0 ? p1 : (p2 > 0 ? p2 : (assetAmt > 0 ? qortAmt / assetAmt : 0));
+    const price = p1 > 0 ? p1 : p2 > 0 ? p2 : assetAmt > 0 ? qortAmt / assetAmt : 0;
     const tsRaw = toNum(t.timestamp);
     const ts = tsRaw > 0 && tsRaw < 2e10 ? tsRaw * 1000 : tsRaw;
 

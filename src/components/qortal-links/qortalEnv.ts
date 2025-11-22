@@ -12,17 +12,13 @@ export function getHubOrigin(): string {
     return window.location.origin;
   }
   // Try common Core/HUB addresses in priority order.
-  const defaults = [
-    'http://127.0.0.1:12391',
-    'http://localhost:12391',
-  ];
+  const defaults = ['http://127.0.0.1:12391', 'http://localhost:12391'];
   return defaults[0]; // pick first; or implement a ping race if you want to be fancy
 }
 
 function stripTrailingSlash(u: string) {
   return u.endsWith('/') ? u.slice(0, -1) : u;
 }
-
 
 export async function waitForQortalRequest(timeoutMs = 5000): Promise<void> {
   const start = Date.now();

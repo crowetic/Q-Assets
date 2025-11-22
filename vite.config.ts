@@ -12,11 +12,7 @@ export default defineConfig({
       'react/jsx-dev-runtime': path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime.js'),
 
       // ✅ IMPORTANT: point server import to the browser-friendly build
-      'react-dom/server': path.resolve(
-        __dirname,
-        'node_modules/react-dom/server.browser.js'
-      ),
-
+      'react-dom/server': path.resolve(__dirname, 'node_modules/react-dom/server.browser.js'),
     },
     dedupe: [
       'react',

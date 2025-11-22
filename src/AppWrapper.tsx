@@ -4,6 +4,9 @@ import { publicSalt } from './qapp-config';
 import { TxTrackerProvider } from './unconfirmedTxTracker/TxTrackerProvider';
 import { UnconfirmedTxWidget } from './unconfirmedTxTracker/UnconfirmedTxWidget';
 import { UnconfirmedTxAutoScanner } from './unconfirmedTxTracker/UnconfirmedTxAutoScanner';
+import { NotificationProvider } from './notifications/NotificationProvider';
+import { NotificationWidget } from './notifications/NotificationWidget';
+import { NotificationAutoFetcher } from './notifications/NotificationAutoFetcher';
 
 export const AppWrapper = () => {
   return (
@@ -18,8 +21,12 @@ export const AppWrapper = () => {
       }}
     >
       <TxTrackerProvider>
-        <Layout />
-        <UnconfirmedTxWidget />
+        <NotificationProvider>
+          <Layout />
+          <UnconfirmedTxWidget />
+          <NotificationWidget />
+          <NotificationAutoFetcher scopes={['global']} intervalMs={60_000} />
+        </NotificationProvider>
         <UnconfirmedTxAutoScanner intervalMs={3_000} missGoneThreshold={2} limit={75} />
       </TxTrackerProvider>
     </GlobalProvider>

@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef } from 'react';
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import {
   Typography,
   Box,
@@ -19,6 +19,11 @@ import {
   TextField,
   Switch,
   FormControlLabel,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  CircularProgress,
   Stack,
   IconButton,
 } from '@mui/material';
@@ -56,7 +61,13 @@ import SectionCard from '../components/layout/SectionCard';
 import ActionsToolbar from '../components/asset/ActionsToolbar';
 import PublishedHtmlRenderer from '../components/PublishedHtmlRenderer';
 import { useAlert } from '../components/alerts';
-import { updateAsset, getAccount } from '../utils/qortalApi';
+import {
+  updateAsset,
+  getAccount,
+  getAccountGroups,
+  type GroupSummary,
+  getGroupById,
+} from '../utils/qortalApi';
 // import { getAssetInfo } from '../utils/qortalAssetRequests';
 
 type Enriched = {
@@ -93,6 +104,9 @@ export default function AssetDetail() {
   // News
   const [openNewsDlg, setOpenNewsDlg] = useState(false);
   const [newsForm, setNewsForm] = useState(assetPub?.news ?? []);
+  const [groupOptions, setGroupOptions] = useState<GroupSummary[]>([]);
+  const [groupsLoading, setGroupsLoading] = useState(false);
+  const [groupDetails, setGroupDetails] = useState<Record<string, GroupSummary>>({});
 
   type KV = { key: string; value: string };
   const [openExFieldDlg, setOpenExFieldDlg] = useState(false);
@@ -107,6 +121,55 @@ export default function AssetDetail() {
   const [divPeriod, setDivPeriod] = useState<'1W' | '2W' | '1M' | '3M' | '6M' | '1Y'>(
     assetPub?.dividendPeriod ?? '1M'
   );
+  const [hasPendingChanges, setHasPendingChanges] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const markPending = useCallback(() => setHasPendingChanges(true), []);
+  const normalizeGroupId = useCallback((id?: string | number) => {
+    if (id === null || id === undefined) return '';
+    return String(id).trim();
+  }, []);
+  const joinLinkForId = useCallback(
+    (id?: string | number, existing?: string) => {
+      if (existing && existing.trim().length > 0) return existing.trim();
+      const normalized = normalizeGroupId(id);
+      if (!normalized) return '';
+      return `qortal://use-group/action-join/groupid-${normalized}`;
+    },
+    [normalizeGroupId]
+  );
+  const handleHtmlChange = useCallback(
+    (value: string) => {
+      setHtml(value);
+      if (editing) markPending();
+    },
+    [editing, markPending]
+  );
+
+  const primaryGroupDisplay = useMemo(() => {
+    if (!assetPub?.primaryGroup) return null;
+    const base = assetPub.primaryGroup;
+    const idKey = normalizeGroupId(base.id);
+    const detail = idKey ? groupDetails[idKey] : undefined;
+    const isPrivate =
+      typeof base.isPrivate === 'boolean' ? base.isPrivate : detail ? !detail.isOpen : false;
+    const joinLink = joinLinkForId(base.id, base.joinLink);
+    const groupName = detail?.groupName || base.name;
+    return { ...base, name: groupName, isPrivate, joinLink };
+  }, [assetPub?.primaryGroup, groupDetails, joinLinkForId, normalizeGroupId]);
+
+  const extraGroupsDisplay = useMemo(
+    () =>
+      (assetPub?.extraGroups ?? []).map((g) => {
+        const idKey = normalizeGroupId(g.id);
+        const detail = idKey ? groupDetails[idKey] : undefined;
+        const isPrivate =
+          typeof g.isPrivate === 'boolean' ? g.isPrivate : detail ? !detail.isOpen : false;
+        const joinLink = joinLinkForId(g.id, g.joinLink);
+        const groupName = detail?.groupName || g.name;
+        return { ...g, name: groupName, isPrivate, joinLink };
+      }),
+    [assetPub?.extraGroups, groupDetails, joinLinkForId, normalizeGroupId]
+  );
 
   //asset desctiption / on-chain / update state
   const [openDescDlg, setOpenDescDlg] = useState(false);
@@ -120,6 +183,57 @@ export default function AssetDetail() {
 
   const canPublish = isIssuer && issuerName && issuerName === (userName as string | undefined);
   const id = useMemo(() => Number(assetId), [assetId]);
+  const publishAllChanges = useCallback(async () => {
+    if (!canPublish || !asset) return;
+    setPublishing(true);
+    try {
+      const currentPub = assetPub ?? {};
+      const normalizedPrimary = currentPub.primaryGroup
+        ? {
+            ...currentPub.primaryGroup,
+            joinLink: joinLinkForId(currentPub.primaryGroup.id, currentPub.primaryGroup.joinLink),
+          }
+        : undefined;
+      const normalizedExtras = (currentPub.extraGroups ?? []).map((grp) => ({
+        ...grp,
+        joinLink: joinLinkForId(grp.id, grp.joinLink),
+      }));
+      const pub: AssetPublication = {
+        description: asset.description,
+        html: prepareHtmlForPublish(html, theme),
+        primaryGroup: normalizedPrimary,
+        extraGroups: normalizedExtras,
+        news: currentPub.news ?? [],
+        dividends: currentPub.dividends ?? divEnabled,
+        dividendPeriod:
+          (currentPub.dividends ?? divEnabled)
+            ? (currentPub.dividendPeriod ?? divPeriod)
+            : undefined,
+        customFields: currentPub.customFields ?? {},
+      };
+      await publishAssetPublication(userName as string, asset.name, pub);
+      alert('Publication updated!');
+      setAssetPub(pub);
+      setHasPendingChanges(false);
+      setEditing(false);
+      setHtml(pub.html ?? html);
+    } catch (e: any) {
+      alert(e?.message || 'Failed to publish updates.');
+    } finally {
+      setPublishing(false);
+    }
+  }, [
+    alert,
+    asset,
+    assetPub,
+    canPublish,
+    divEnabled,
+    divPeriod,
+    html,
+    theme,
+    userName,
+    joinLinkForId,
+  ]);
 
   useEffect(() => {
     if (editing) setHtml(assetPub?.html ?? '');
@@ -128,6 +242,25 @@ export default function AssetDetail() {
   useEffect(() => {
     if (!editing) setHtml(assetPub?.html ?? '');
   }, [assetPub, editing]);
+
+  useEffect(() => {
+    if (!isIssuer || !userAddress) return;
+    let alive = true;
+    (async () => {
+      try {
+        setGroupsLoading(true);
+        const rows = await getAccountGroups(userAddress);
+        if (alive) setGroupOptions(rows);
+      } catch {
+        if (alive) setGroupOptions([]);
+      } finally {
+        if (alive) setGroupsLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [isIssuer, userAddress]);
 
   useEffect(() => {
     let cancelled = false;
@@ -157,7 +290,9 @@ export default function AssetDetail() {
         let iname = '';
         try {
           iname = await getPrimaryAccountName(mini.owner);
-        } catch {}
+        } catch {
+          /* empty */
+        }
         if (!cancelled) setIssuerName(iname || null);
 
         // total & circulating
@@ -214,7 +349,9 @@ export default function AssetDetail() {
             const url = await fetchAssetAvatar(avatarIssuer, mini.name);
             if (!cancelled) setAvatar(url);
           }
-        } catch {}
+        } catch {
+          /* empty */
+        }
 
         // Publication
         try {
@@ -222,8 +359,10 @@ export default function AssetDetail() {
             const pub = await fetchAssetPublication(iname, mini.name);
             if (!cancelled) setAssetPub(pub);
           }
-        } catch {}
-      } catch (e) {
+        } catch {
+          /* empty */
+        }
+      } catch {
         // swallow; page renders with error states below if needed
       }
     })();
@@ -234,7 +373,14 @@ export default function AssetDetail() {
   }, [id]);
 
   useEffect(() => {
-    setPrimaryForm(assetPub?.primaryGroup ?? { name: '', id: '', joinLink: '', isPrivate: false });
+    setPrimaryForm(
+      assetPub?.primaryGroup
+        ? {
+            ...assetPub.primaryGroup,
+            joinLink: joinLinkForId(assetPub.primaryGroup.id, assetPub.primaryGroup.joinLink),
+          }
+        : { name: '', id: '', joinLink: '', isPrivate: false }
+    );
     setExtraGroupsForm(assetPub?.extraGroups ?? []);
     setNewsForm(assetPub?.news ?? []);
     setKvForm(
@@ -245,6 +391,48 @@ export default function AssetDetail() {
     setDivEnabled(Boolean(assetPub?.dividends));
     setDivPeriod((assetPub?.dividendPeriod as any) ?? '1M');
   }, [assetPub]);
+
+  useEffect(() => {
+    const ids = new Set<string>();
+    if (assetPub?.primaryGroup?.id) ids.add(String(assetPub.primaryGroup.id));
+    (assetPub?.extraGroups ?? []).forEach((g) => {
+      if (g.id != null) ids.add(String(g.id));
+    });
+    if (!ids.size) {
+      setGroupDetails({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const entries = await Promise.all(
+          Array.from(ids).map(async (id): Promise<[string, GroupSummary] | null> => {
+            try {
+              const summary = await getGroupById(Number(id));
+              return summary ? [id, summary] : null;
+            } catch {
+              return null;
+            }
+          })
+        );
+        if (!cancelled) {
+          const map: Record<string, GroupSummary> = {};
+          entries.forEach((entry) => {
+            if (entry) {
+              const [id, summary] = entry;
+              map[id] = summary;
+            }
+          });
+          setGroupDetails(map);
+        }
+      } catch {
+        if (!cancelled) setGroupDetails({});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [assetPub?.primaryGroup?.id, assetPub?.extraGroups, normalizeGroupId]);
 
   if (!asset) return <Typography>Loading asset...</Typography>;
 
@@ -467,20 +655,36 @@ export default function AssetDetail() {
             Asset Groups
           </Typography>
           <SectionCard>
-            {assetPub?.primaryGroup ? (
-              <>
-                <Typography>
-                  Name:{' '}
-                  <span style={{ color: theme.palette.primary.contrastText }}>
-                    {assetPub.primaryGroup.name}
-                  </span>
-                </Typography>
+            {primaryGroupDisplay ? (
+              <Box textAlign="center">
+                <Stack direction="row" spacing={1} alignItems="center" justifyContent="center">
+                  <Typography>
+                    Name:{' '}
+                    <span style={{ color: theme.palette.primary.contrastText }}>
+                      {primaryGroupDisplay.name}
+                    </span>
+                  </Typography>
+                  <Chip
+                    size="small"
+                    label={primaryGroupDisplay.isPrivate ? 'Private' : 'Public'}
+                    color={primaryGroupDisplay.isPrivate ? 'warning' : 'success'}
+                    variant="outlined"
+                  />
+                </Stack>
                 <Typography sx={{ mt: 1 }}>
                   GroupID:{' '}
                   <span style={{ color: theme.palette.secondary.light }}>
-                    {assetPub.primaryGroup.id}
+                    {primaryGroupDisplay.id}
                   </span>
                 </Typography>
+                {primaryGroupDisplay.joinLink && (
+                  <Typography sx={{ mt: 1 }}>
+                    Join:{' '}
+                    <Link href={primaryGroupDisplay.joinLink} rel="noopener" target="_blank">
+                      {primaryGroupDisplay.joinLink}
+                    </Link>
+                  </Typography>
+                )}
                 {canPublish && (
                   <Box mt={2} display="flex" justifyContent="center">
                     <InfoOutlineButton onClick={() => setOpenPrimaryDlg(true)}>
@@ -488,27 +692,45 @@ export default function AssetDetail() {
                     </InfoOutlineButton>
                   </Box>
                 )}
-              </>
+              </Box>
             ) : (
-              <Typography color="text.secondary">No group data</Typography>
+              <Typography color="text.secondary" textAlign="center">
+                No group data
+              </Typography>
             )}
           </SectionCard>
 
-          {(assetPub?.extraGroups?.length ?? 0) > 0 ? (
+          {extraGroupsDisplay.length > 0 ? (
             <SectionCard sx={{ mt: 2 }}>
               <Typography variant="h5" textAlign="center" sx={{ mb: 1 }}>
                 Other Groups
               </Typography>
               <Stack spacing={1}>
-                {assetPub!.extraGroups!.map((g, i) => (
-                  <Box key={`${g.id}-${i}`}>
-                    <Typography>
-                      Name:{' '}
-                      <span style={{ color: theme.palette.primary.contrastText }}>{g.name}</span>
-                    </Typography>
+                {extraGroupsDisplay.map((g, i) => (
+                  <Box key={`${g.id}-${i}`} textAlign="center">
+                    <Stack direction="row" spacing={1} alignItems="center" justifyContent="center">
+                      <Typography>
+                        Name:{' '}
+                        <span style={{ color: theme.palette.primary.contrastText }}>{g.name}</span>
+                      </Typography>
+                      <Chip
+                        size="small"
+                        label={g.isPrivate ? 'Private' : 'Public'}
+                        color={g.isPrivate ? 'warning' : 'success'}
+                        variant="outlined"
+                      />
+                    </Stack>
                     <Typography>
                       GroupID: <span style={{ color: theme.palette.secondary.light }}>{g.id}</span>
                     </Typography>
+                    {g.joinLink && (
+                      <Typography sx={{ mt: 0.5 }}>
+                        Join:{' '}
+                        <Link href={g.joinLink} rel="noopener" target="_blank">
+                          {g.joinLink}
+                        </Link>
+                      </Typography>
+                    )}
                   </Box>
                 ))}
               </Stack>
@@ -522,15 +744,16 @@ export default function AssetDetail() {
             </SectionCard>
           ) : (
             canPublish && (
-              // <SectionCard sx={{ mt: 2 }}>
-              //   <Typography color="text.secondary">No extra groups yet.</Typography>
-              //   <Box mt={2} display="flex" justifyContent="center" textAlign={'center'}>
-              //     <InfoOutlineButton onClick={() => setOpenExtraDlg(true)}>
-              //       Add Extra Groups
-              //     </InfoOutlineButton>
-              //   </Box>
-              // </SectionCard>
-              <Typography align="center">ExtraGroup Features coming soon...</Typography>
+              <SectionCard sx={{ mt: 2 }}>
+                <Typography color="text.secondary" textAlign="center">
+                  No extra groups yet.
+                </Typography>
+                <Box mt={2} display="flex" justifyContent="center" textAlign={'center'}>
+                  <InfoOutlineButton onClick={() => setOpenExtraDlg(true)}>
+                    Add Extra Groups
+                  </InfoOutlineButton>
+                </Box>
+              </SectionCard>
             )
           )}
         </Grid>
@@ -606,6 +829,7 @@ export default function AssetDetail() {
                 </InfoOutlineButton> */}
                 <NewsPublisher
                   assetId={asset.assetId}
+                  assetName={asset.name}
                   primaryGroupId={parseInt(String(assetPub?.primaryGroup?.id || ''), 10)}
                   isIssuer={!!canPublish}
                   onPublished={() => setNewsForm((s) => s.slice())}
@@ -661,6 +885,68 @@ export default function AssetDetail() {
         <DialogTitle>Edit Primary Group</DialogTitle>
         <DialogContent dividers>
           <Box sx={{ display: 'grid', gap: 2, mt: 1 }}>
+            <FormControl size="small" fullWidth>
+              <InputLabel id="owned-group-select">Select Owned Group</InputLabel>
+              <Select
+                labelId="owned-group-select"
+                label="Select Owned Group"
+                value={primaryForm.id || ''}
+                onChange={(e) => {
+                  const selectedId = String(e.target.value || '');
+                  if (!selectedId) {
+                    setPrimaryForm((s) => ({
+                      ...s,
+                      id: '',
+                      name: '',
+                      joinLink: '',
+                      isPrivate: false,
+                    }));
+                    return;
+                  }
+                  const match = groupOptions.find((g) => String(g.groupId) === selectedId);
+                  if (match) {
+                    setPrimaryForm((s) => ({
+                      ...s,
+                      id: String(match.groupId),
+                      name: match.groupName || '',
+                      joinLink: joinLinkForId(match.groupId),
+                      isPrivate: !match.isOpen,
+                    }));
+                  }
+                }}
+                disabled={groupsLoading || !groupOptions.length}
+                renderValue={(value) => {
+                  if (!value) return 'Select from your groups';
+                  const match = groupOptions.find((g) => String(g.groupId) === value);
+                  if (!match) return value;
+                  return `${match.groupName} (#${match.groupId}) — ${match.isOpen ? 'Public' : 'Private'}`;
+                }}
+              >
+                <MenuItem value="">
+                  <em>Manual entry</em>
+                </MenuItem>
+                {groupOptions.map((group) => (
+                  <MenuItem key={group.groupId} value={group.groupId}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <span>
+                        {group.groupName} (#{group.groupId}) {group.isAdmin ? '— admin' : ''}
+                      </span>
+                      <Chip
+                        size="small"
+                        label={group.isOpen ? 'Public' : 'Private'}
+                        color={group.isOpen ? 'success' : 'warning'}
+                        variant="outlined"
+                      />
+                    </Box>
+                  </MenuItem>
+                ))}
+              </Select>
+              {groupsLoading && (
+                <Box sx={{ display: 'flex', justifyContent: 'center', mt: 1 }}>
+                  <CircularProgress size={18} />
+                </Box>
+              )}
+            </FormControl>
             <TextField
               label="Name"
               value={primaryForm.name}
@@ -699,6 +985,7 @@ export default function AssetDetail() {
                 ...(prev ?? {}),
                 primaryGroup: { ...primaryForm },
               }));
+              markPending();
               setOpenPrimaryDlg(false);
             }}
           >
@@ -791,6 +1078,7 @@ export default function AssetDetail() {
             variant="contained"
             onClick={() => {
               setAssetPub((prev) => ({ ...(prev ?? {}), extraGroups: extraGroupsForm }));
+              markPending();
               setOpenExtraDlg(false);
             }}
           >
@@ -870,6 +1158,7 @@ export default function AssetDetail() {
             variant="contained"
             onClick={() => {
               setAssetPub((prev) => ({ ...(prev ?? {}), news: newsForm }));
+              markPending();
               setOpenNewsDlg(false);
             }}
           >
@@ -943,6 +1232,7 @@ export default function AssetDetail() {
                 return acc;
               }, {});
               setAssetPub((prev) => ({ ...(prev ?? {}), customFields: obj }));
+              markPending();
               setOpenExFieldDlg(false);
             }}
           >
@@ -990,6 +1280,7 @@ export default function AssetDetail() {
                 dividends: divEnabled,
                 dividendPeriod: divEnabled ? divPeriod : undefined,
               }));
+              markPending();
               setOpenDivDlg(false);
             }}
           >
@@ -1120,38 +1411,31 @@ export default function AssetDetail() {
             <Typography textAlign="center" variant="h5">
               Edit Genesis Publication
             </Typography>
-            <TiptapEditor value={html} onChange={setHtml} />
+            <TiptapEditor value={html} onChange={handleHtmlChange} />
           </Box>
 
           <Box mt={2} display="flex" justifyContent={'flex-end'} gap={1}>
-            <SuccessButton
-              onClick={async () => {
-                const pub: AssetPublication = {
-                  description: asset.description,
-                  html: prepareHtmlForPublish(html, theme),
-                  primaryGroup: assetPub?.primaryGroup ?? undefined,
-                  extraGroups: assetPub?.extraGroups ?? [],
-                  news: assetPub?.news ?? [],
-                  dividends: assetPub?.dividends ?? divEnabled,
-                  dividendPeriod:
-                    (assetPub?.dividends ?? divEnabled)
-                      ? (assetPub?.dividendPeriod ?? divPeriod)
-                      : undefined,
-                  customFields: assetPub?.customFields ?? {},
-                };
-                await publishAssetPublication(userName as string, asset.name, pub);
-
-                alert('Publication updated!');
-                setAssetPub(pub);
-                setEditing(false); // close after save, because we’re merciful
-              }}
-            >
-              Publish All Changes
+            <SuccessButton onClick={publishAllChanges} disabled={publishing}>
+              {publishing ? 'Publishing…' : 'Publish All Changes'}
             </SuccessButton>
             <CancelButton onClick={() => setEditing(false)}>Cancel</CancelButton>
           </Box>
         </Paper>
       </Collapse>
+      {canPublish && hasPendingChanges && (
+        <Box
+          sx={{
+            position: 'fixed',
+            right: 24,
+            bottom: { xs: 96, md: 40 },
+            zIndex: (t) => t.zIndex.tooltip + 10,
+          }}
+        >
+          <SuccessButton onClick={publishAllChanges} disabled={publishing}>
+            {publishing ? 'Publishing…' : 'Publish Pending Changes'}
+          </SuccessButton>
+        </Box>
+      )}
     </PageContainer>
   );
 }

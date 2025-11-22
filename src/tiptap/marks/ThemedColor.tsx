@@ -4,7 +4,7 @@ declare module '@tiptap/core' {
   interface Commands<ReturnType> {
     themedColor: {
       /** Apply a theme color token to the current selection */
-      setThemeColor: (token: string) => ReturnType;
+      setThemeColor: (token: string, fallbackColor?: string | null) => ReturnType;
       /** Remove the theme color token from the current selection */
       unsetThemeColor: () => ReturnType;
     };
@@ -24,7 +24,10 @@ export const ThemedColor = Mark.create({
       token: {
         default: null,
         parseHTML: (element) => element.getAttribute('data-theme-color'),
-        renderHTML: (attrs) => (attrs.token ? { 'data-theme-color': attrs.token } : {}),
+      },
+      fallback: {
+        default: null,
+        parseHTML: (element) => element.getAttribute('data-theme-color-fallback'),
       },
     };
   },
@@ -35,16 +38,29 @@ export const ThemedColor = Mark.create({
   },
 
   renderHTML({ HTMLAttributes }) {
-    // we don’t set style=color here; CSS will map token → color
-    return ['span', mergeAttributes(HTMLAttributes), 0];
+    const attrs = { ...HTMLAttributes };
+    const token = attrs.token;
+    const fallback = attrs.fallback;
+    delete attrs.token;
+    delete attrs.fallback;
+
+    if (token) attrs['data-theme-color'] = token;
+    if (fallback) {
+      attrs['data-theme-color-fallback'] = fallback;
+      attrs.style = attrs.style ? `${attrs.style};color:${fallback}` : `color:${fallback}`;
+    }
+
+    return ['span', mergeAttributes(attrs), 0];
   },
 
   addCommands() {
     return {
       setThemeColor:
-        (token) =>
+        (token, fallbackColor) =>
         ({ chain }) =>
-          chain().setMark(this.name, { token }).run(),
+          chain()
+            .setMark(this.name, { token, fallback: fallbackColor ?? null })
+            .run(),
       unsetThemeColor:
         () =>
         ({ chain }) =>

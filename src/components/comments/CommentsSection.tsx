@@ -851,6 +851,7 @@ export default function CommentsSection({
         <Typography variant="h4" textAlign={'center'}>
           Comments
         </Typography>
+
         {isPending && (
           <Typography variant="caption" color="text.secondary">
             updating…
@@ -891,6 +892,42 @@ export default function CommentsSection({
       >
         {!collapsed && (
           <Card ref={hostRef} sx={{ mt: '0.5rem', width: '100%', maxWidth: '100%' }}>
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: '1rem' }}>
+              <InfoOutlineButton
+                variant="outlined"
+                onClick={() => openNew(null)}
+                sx={{
+                  width: { xs: '100%', sm: 'auto' },
+                  minWidth: { sm: '12rem' },
+                  p: '0.5rem 1rem',
+                }}
+              >
+                Add Comment
+              </InfoOutlineButton>
+            </Box>
+            <Box
+              sx={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                mb: '0.5rem',
+              }}
+            >
+              <Typography
+                variant="body2"
+                color="info.contrastText"
+                textAlign="right"
+                sx={{ mt: '1rem', flex: 1 }}
+              ></Typography>
+              <EditToggleButton
+                editing={editMode}
+                variant={editMode ? 'contained' : 'outlined'}
+                onClick={() => setEditMode((v) => !v)}
+                sx={{ ml: '1rem' }}
+              >
+                {editMode ? 'Disable Comment Edit Mode' : 'Enable Comment Edit Mode'}
+              </EditToggleButton>
+            </Box>
             <CardContent sx={{ overflowX: 'hidden' }}>
               <>
                 {loading && (

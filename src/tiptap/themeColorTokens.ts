@@ -23,16 +23,11 @@ export function themedColorCSS(tokens: readonly string[]) {
 }
 
 /** CSS using *hex values* from a palette object (no CssVarsProvider required). */
-export function themedColorCSSFromTheme(
-  tokens: readonly string[],
-  palette: Record<string, any>
-) {
+export function themedColorCSSFromTheme(tokens: readonly string[], palette: Record<string, any>) {
   const resolve = (t: string) => {
     const [cat, shade] = t.split('.');
     const v = palette?.[cat]?.[shade as any];
     return typeof v === 'string' ? v : palette?.text?.primary || '#ddd';
   };
-  return tokens
-    .map((t) => `.tiptap [data-theme-color="${t}"]{ color: ${resolve(t)}; }`)
-    .join('\n');
+  return tokens.map((t) => `.tiptap [data-theme-color="${t}"]{ color: ${resolve(t)}; }`).join('\n');
 }

@@ -1,9 +1,12 @@
-import {  getAssetIdentifiers } from '../constants/qdnConstants';
+import { getAssetIdentifiers } from '../constants/qdnConstants';
 import { base64ToObject } from './data';
 import type { AssetPublication } from '../types/AssetPublicationMetadata';
 
-
-export const fetchAssetPublication = async (name: string, assetName: string, assetId?: number): Promise<AssetPublication | null> => {
+export const fetchAssetPublication = async (
+  name: string,
+  assetName: string,
+  assetId?: number
+): Promise<AssetPublication | null> => {
   const publishInfo = await getAssetIdentifiers(assetName, assetId);
 
   // Try correct, ID-based identifier first
@@ -22,10 +25,10 @@ export const fetchAssetPublication = async (name: string, assetName: string, ass
 
   // Fallback: search for anything resembling the asset name
   const results = await qortalRequest({
-    action: "SEARCH_QDN_RESOURCES",
+    action: 'SEARCH_QDN_RESOURCES',
     service: publishInfo.services.genesisPost,
     name,
-    query: "asset", 
+    query: 'asset',
     default: false,
     includeStatus: false,
     includeMetadata: false,
@@ -41,9 +44,8 @@ export const fetchAssetPublication = async (name: string, assetName: string, ass
   });
 
   // Optional: try to find something that at least matches the asset name in the identifier
-  const match = results.find((r: any) =>
-    typeof r.identifier === 'string' &&
-    r.identifier.includes(`_${assetName}_`)
+  const match = results.find(
+    (r: any) => typeof r.identifier === 'string' && r.identifier.includes(`_${assetName}_`)
   );
 
   if (match) {
@@ -54,10 +56,10 @@ export const fetchAssetPublication = async (name: string, assetName: string, ass
         name,
         service: match.service,
         identifier: match.identifier,
-        encoding: 'base64'
+        encoding: 'base64',
       });
 
-      return await base64ToObject(response)
+      return await base64ToObject(response);
     } catch {
       console.warn(`Fallback match failed to fetch.`);
       return null;
@@ -65,6 +67,4 @@ export const fetchAssetPublication = async (name: string, assetName: string, ass
   }
 
   return null;
-}
-
-
+};

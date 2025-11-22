@@ -12,8 +12,8 @@ export function prepareHtmlForPublish(
   html: string,
   theme: Theme,
   opts?: {
-    scopeClassName?: string;        // default "qdn-content"
-    addSignatureComment?: boolean;  // default true
+    scopeClassName?: string; // default "qdn-content"
+    addSignatureComment?: boolean; // default true
   }
 ) {
   if (html.includes('class="qdn-content"') || html.includes("class='qdn-'")) return html;

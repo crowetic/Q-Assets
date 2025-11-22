@@ -1,27 +1,24 @@
-
-
 export async function signAndBroadcast(rawTx: string): Promise<object> {
-  const signedBytes  = await qortalRequest({
-    action: "SIGN_TRANSACTION",
-    unsignedBytes: rawTx
+  const signedBytes = await qortalRequest({
+    action: 'SIGN_TRANSACTION',
+    unsignedBytes: rawTx,
   });
 
-  console.log('signedBytes from signAndBroadcast',signedBytes)
-  const res = await fetch("/transactions/process", {
-    method: "POST",
+  console.log('signedBytes from signAndBroadcast', signedBytes);
+  const res = await fetch('/transactions/process', {
+    method: 'POST',
     headers: {
-      "Content-Type": "text/plain",
-      "X-API-VERSION": "2"
+      'Content-Type': 'text/plain',
+      'X-API-VERSION': '2',
     },
-    body: signedBytes
+    body: signedBytes,
   });
 
-  console.log('finalResponse',res)
+  console.log('finalResponse', res);
   if (!res.ok) throw new Error();
 
   return res;
 }
-
 
 // GROUP CALLS --------------------------
 
@@ -31,6 +28,7 @@ export interface GroupSummary {
   groupName: string;
   description: string;
   created: number;
+  updated?: number;
   isOpen: boolean;
   approvalThreshold: string;
   minimumBlockDelay: number;
@@ -39,20 +37,24 @@ export interface GroupSummary {
   isAdmin: boolean;
 }
 
-
 // Low-level call to REST endpoint
-export async function getAccountGroups(address: string, opts?: { signal?: AbortSignal }): Promise<GroupSummary[]> {
+export async function getAccountGroups(
+  address: string,
+  opts?: { signal?: AbortSignal },
+): Promise<GroupSummary[]> {
   if (!address) throw new Error('address is required');
   const url = `/groups/member/${encodeURIComponent(address)}`;
   const res = await fetch(url, {
     method: 'GET',
-    headers: { 'Accept': 'application/json' },
+    headers: { Accept: 'application/json' },
     signal: opts?.signal,
   });
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`GET ${url} failed: ${res.status} ${res.statusText}${text ? ` — ${text}` : ''}`);
+    throw new Error(
+      `GET ${url} failed: ${res.status} ${res.statusText}${text ? ` — ${text}` : ''}`,
+    );
   }
 
   const data = await res.json();
@@ -72,7 +74,39 @@ export async function getAccountGroups(address: string, opts?: { signal?: AbortS
     maximumBlockDelay: Number(g.maximumBlockDelay ?? 0),
     memberCount: Number(g.memberCount ?? 0),
     isAdmin: Boolean(g.isAdmin),
+    updated: Number(g.updated ?? g.created ?? 0),
   })) as GroupSummary[];
+}
+
+export async function getGroupById(
+  groupId: number,
+  opts?: { signal?: AbortSignal },
+): Promise<GroupSummary | null> {
+  const id = Number(groupId);
+  if (!Number.isFinite(id)) throw new Error('groupId must be a number');
+  const url = `/groups/${id}`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    signal: opts?.signal,
+  });
+  if (!res.ok) throw new Error(`GET ${url} failed: ${res.status} ${res.statusText}`);
+  const g = await res.json();
+  if (!g || typeof g !== 'object') return null;
+  return {
+    groupId: Number(g.groupId),
+    owner: String(g.owner ?? ''),
+    groupName: String(g.groupName ?? ''),
+    description: String(g.description ?? ''),
+    created: Number(g.created ?? 0),
+    updated: Number(g.updated ?? g.created ?? 0),
+    isOpen: Boolean(g.isOpen),
+    approvalThreshold: String(g.approvalThreshold ?? ''),
+    minimumBlockDelay: Number(g.minimumBlockDelay ?? 0),
+    maximumBlockDelay: Number(g.maximumBlockDelay ?? 0),
+    memberCount: Number(g.memberCount ?? 0),
+    isAdmin: Boolean((g as any).isAdmin ?? false),
+  };
 }
 
 /* ---------- Convenience helpers for Q-Deck ACLs ---------- */
@@ -80,17 +114,20 @@ export async function getAccountGroups(address: string, opts?: { signal?: AbortS
 // just the ids
 export async function getAccountGroupIds(address: string): Promise<number[]> {
   const groups = await getAccountGroups(address);
-  return groups.map(g => g.groupId);
+  return groups.map((g) => g.groupId);
 }
 
 // groups where user is admin
 export async function getAdminGroupIds(address: string): Promise<number[]> {
   const groups = await getAccountGroups(address);
-  return groups.filter(g => g.isAdmin).map(g => g.groupId);
+  return groups.filter((g) => g.isAdmin).map((g) => g.groupId);
 }
 
 // predicate for “can edit this board” based on groupsAllowed
-export async function userCanEditBoard(address: string, groupsAllowed: Array<string | number>): Promise<boolean> {
+export async function userCanEditBoard(
+  address: string,
+  groupsAllowed: Array<string | number>,
+): Promise<boolean> {
   const myIds = new Set(await getAccountGroupIds(address));
   // groupsAllowed might be strings; coerce to number where possible
   for (const id of groupsAllowed ?? []) {
@@ -101,7 +138,6 @@ export async function userCanEditBoard(address: string, groupsAllowed: Array<str
 }
 
 // END GROUPS-RELATED
-
 
 // --- helpers ---
 
@@ -114,7 +150,9 @@ async function resolveRecipientToAddress(recipient: string): Promise<string> {
     const data = await qortalRequest({ action: 'GET_NAME_DATA', name: recipient.trim() });
     const addr = data?.owner;
     if (typeof addr === 'string' && addr.startsWith('Q')) return addr;
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   throw new Error(`Recipient is not a valid address or resolvable Qortal name: ${recipient}`);
 }
@@ -124,13 +162,13 @@ async function resolveRecipientToAddress(recipient: string): Promise<string> {
 export async function createTransferAssetTransaction(
   senderAddress: string,
   senderPublicKey: string,
-  recipient: string,            // Qortal name or address
+  recipient: string, // Qortal name or address
   assetId: number,
-  amount: number,               // amount in the asset's native units; ensure you pass atomic if your API expects it
+  amount: number, // amount in the asset's native units; ensure you pass atomic if your API expects it
   opts?: {
-    fee?: number;               // default 0.01
-    txGroupId?: number;         // default 0
-  }
+    fee?: number; // default 0.01
+    txGroupId?: number; // default 0
+  },
 ): Promise<string> {
   const account = await getAccount(senderAddress);
   const recipientAddress = await resolveRecipientToAddress(recipient);
@@ -158,8 +196,10 @@ export async function createTransferAssetTransaction(
   }
 
   const unsigned = await res.text();
-  if (!await isValidQortalTx(unsigned, 'TRANSFER_ASSET')) {
-    throw new Error(`Response from /assets/transfer doesn't look like a TRANSFER_ASSET; got: ${unsigned.slice(0, 16)}…`);
+  if (!(await isValidQortalTx(unsigned, 'TRANSFER_ASSET'))) {
+    throw new Error(
+      `Response from /assets/transfer doesn't look like a TRANSFER_ASSET; got: ${unsigned.slice(0, 16)}…`,
+    );
   }
 
   return unsigned;
@@ -170,10 +210,10 @@ export async function createTransferAssetTransaction(
 export async function transferAsset(
   senderAddress: string,
   senderPublicKey: string,
-  recipient: string,       // name or address
+  recipient: string, // name or address
   assetId: number,
   amount: number,
-  opts?: { fee?: number; txGroupId?: number }
+  opts?: { fee?: number; txGroupId?: number },
 ): Promise<object> {
   const unsigned = await createTransferAssetTransaction(
     senderAddress,
@@ -181,13 +221,11 @@ export async function transferAsset(
     recipient,
     assetId,
     amount,
-    opts
+    opts,
   );
 
   return await signAndBroadcast(unsigned);
 }
-
-
 
 export const getPrimaryAccountName = async (address: string): Promise<string> => {
   try {
@@ -217,7 +255,9 @@ export async function getAllAccountNames(address: string): Promise<string[]> {
         .filter((s: any) => typeof s === 'string' && s.trim().length > 0)
         .map((s: string) => s.trim());
     }
-  } catch {}
+  } catch {
+    /* empty */
+  }
   // HTTP fallback some nodes provide
   try {
     const res = await fetch(`/names/address/${addr}`, { headers: { accept: 'application/json' } });
@@ -230,7 +270,9 @@ export async function getAllAccountNames(address: string): Promise<string[]> {
           .map((s: string) => s.trim());
       }
     }
-  } catch {}
+  } catch {
+    /* empty */
+  }
   return [];
 }
 
@@ -268,14 +310,11 @@ export const getTransactionInfoBySignature = async (txSig: string): Promise<Sign
   return data;
 };
 
-
-
-
 async function isValidQortalTx(base58Tx: string, txType: string): Promise<boolean> {
   const res = await fetch(`/transactions/decode?ignoreValidityChecks=false`, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
-    body: base58Tx
+    body: base58Tx,
   });
 
   if (!res.ok) return false;
@@ -283,8 +322,6 @@ async function isValidQortalTx(base58Tx: string, txType: string): Promise<boolea
   const tx = await res.json();
   return tx?.type === txType;
 }
-
-
 
 export async function createIssueAssetTransaction(
   issuerAddress: string,
@@ -295,7 +332,6 @@ export async function createIssueAssetTransaction(
   data?: string,
   divisible: boolean = true,
   unspendable: boolean = false,
-  
 ): Promise<string> {
   const account = await getAccount(issuerAddress);
   const txBody = {
@@ -308,7 +344,7 @@ export async function createIssueAssetTransaction(
     assetName,
     description,
     quantity,
-    data: data ? data : "none",
+    data: data ? data : 'none',
     isDivisible: divisible,
     isUnspendable: unspendable,
   };
@@ -319,19 +355,18 @@ export async function createIssueAssetTransaction(
     },
     body: JSON.stringify(txBody),
   });
-  console.log('txBody', txBody)
+  console.log('txBody', txBody);
 
   if (!result.ok) {
     throw new Error(`Issue asset failed: ${result.status} ${result.statusText}`);
   }
 
   const sig = await result.text();
-  if (!await isValidQortalTx(sig, "ISSUE_ASSET")) throw new Error(`response from issueAssetTransaction doesn't seem to be a signature: ${sig}`);
+  if (!(await isValidQortalTx(sig, 'ISSUE_ASSET')))
+    throw new Error(`response from issueAssetTransaction doesn't seem to be a signature: ${sig}`);
 
   return sig;
 }
-
-
 
 export async function issueAsset(
   issuerAddress: string,
@@ -342,7 +377,6 @@ export async function issueAsset(
   data?: string,
   divisible: boolean = true,
   unspendable: boolean = false,
-  
 ): Promise<object> {
   const unsigned = await createIssueAssetTransaction(
     issuerAddress,
@@ -355,10 +389,9 @@ export async function issueAsset(
     unspendable,
   );
 
-  console.log('unsignedTx', unsigned)
+  console.log('unsignedTx', unsigned);
   return await signAndBroadcast(unsigned);
 }
-
 
 // --- core: create unsigned UPDATE_ASSET ---
 
@@ -382,17 +415,22 @@ export async function createUpdateAssetTransaction(
   ownerPublicKey: string,
   assetId: number,
   changes: {
-    newOwner?: string;            // Qortal name or address
+    newOwner?: string; // Qortal name or address
     newDescription?: string;
-    newData?: string | object;    // if object, will be JSON.stringified
+    newData?: string | object; // if object, will be JSON.stringified
   },
   opts?: {
-    fee?: number;                 // default 0.01
-    txGroupId?: number;           // default 0
-  }
+    fee?: number; // default 0.01
+    txGroupId?: number; // default 0
+  },
 ): Promise<string> {
-  if (!changes || (!changes.newOwner && !changes.newDescription && typeof changes.newData === 'undefined')) {
-    throw new Error('Nothing to update: provide at least one of newOwner, newDescription, or newData');
+  if (
+    !changes ||
+    (!changes.newOwner && !changes.newDescription && typeof changes.newData === 'undefined')
+  ) {
+    throw new Error(
+      'Nothing to update: provide at least one of newOwner, newDescription, or newData',
+    );
   }
 
   const account = await getAccount(ownerAddress);
@@ -404,7 +442,7 @@ export async function createUpdateAssetTransaction(
     fee: opts?.fee ?? 0.01,
     txGroupId: opts?.txGroupId ?? 0,
     assetId,
-    ownerPublicKey
+    ownerPublicKey,
   };
 
   if (typeof changes.newOwner === 'string' && changes.newOwner.trim().length > 0) {
@@ -417,9 +455,8 @@ export async function createUpdateAssetTransaction(
   }
 
   if (typeof changes.newData !== 'undefined') {
-    txBody.newData = typeof changes.newData === 'string'
-      ? changes.newData
-      : JSON.stringify(changes.newData);
+    txBody.newData =
+      typeof changes.newData === 'string' ? changes.newData : JSON.stringify(changes.newData);
   }
 
   const res = await fetch('/assets/update', {
@@ -436,8 +473,10 @@ export async function createUpdateAssetTransaction(
   const unsigned = await res.text();
 
   // Qortal type guard (mirrors your other helpers)
-  if (!await isValidQortalTx(unsigned, 'UPDATE_ASSET')) {
-    throw new Error(`Response from /assets/update doesn't look like UPDATE_ASSET; got: ${unsigned.slice(0, 16)}…`);
+  if (!(await isValidQortalTx(unsigned, 'UPDATE_ASSET'))) {
+    throw new Error(
+      `Response from /assets/update doesn't look like UPDATE_ASSET; got: ${unsigned.slice(0, 16)}…`,
+    );
   }
 
   return unsigned;
@@ -453,22 +492,19 @@ export async function updateAsset(
   ownerPublicKey: string,
   assetId: number,
   changes: {
-    newOwner?: string;            // Qortal name or address
+    newOwner?: string; // Qortal name or address
     newDescription?: string;
     newData?: string | object;
   },
-  opts?: { fee?: number; txGroupId?: number }
+  opts?: { fee?: number; txGroupId?: number },
 ): Promise<object> {
   const unsigned = await createUpdateAssetTransaction(
     ownerAddress,
     ownerPublicKey,
     assetId,
     changes,
-    opts
+    opts,
   );
 
   return await signAndBroadcast(unsigned);
 }
-
-
-

@@ -23,7 +23,7 @@ import {
   MenuItem,
   List as MList,
   ListItem,
-  ListItemText,
+  // ListItemText,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -202,22 +202,21 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
   const [cloneTitle, setCloneTitle] = React.useState('');
   const [confirmDeleteOpen, setConfirmDeleteOpen] = React.useState(false);
 
+  // Manage Lists – drafts keyed by listId
+  const [listTitleDrafts, setListTitleDrafts] = React.useState<Record<string, string>>({});
+
+  // --- per-list inline rename state ---
+  const [editingListId, setEditingListId] = React.useState<string | null>(null);
+  const [editingListTitle, setEditingListTitle] = React.useState('');
+
   // quick-add per-list
   const [addingForListId, setAddingForListId] = React.useState<string | null>(null);
-  // const [newTitle, setNewTitle] = React.useState('');
-  // const [newQuickDesc, setNewQuickDesc] = React.useState('');
-  // const [newPriority, setNewPriority] = React.useState<Priority>('NORMAL');
-  // const [newPrimaryImagePreview, setNewPrimaryImagePreview] = React.useState<string | null>(null);
-  // const [newPrimaryImageFile, setNewPrimaryImageFile] = React.useState<File | null>(null);
+
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
   // Select/open cards
   const [selectedCardId, setSelectedCardId] = React.useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = React.useState(false);
-
-  // tags and estimates
-  // const [newEstimatedMinutes, setNewEstimatedMinutes] = React.useState<number | ''>('');
-  // const [newTagsCsv, setNewTagsCsv] = React.useState('');
 
   const theme = useTheme();
   const isXs = useMediaQuery(theme.breakpoints.down('sm'));
@@ -240,18 +239,30 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
     }
   }, [addingForListId]);
 
+  React.useEffect(() => {
+    if (manageListsOpen && board) {
+      // seed drafts from current board on open
+      const seed: Record<string, string> = {};
+      for (const l of board.lists) seed[l.listId] = l.title;
+      setListTitleDrafts(seed);
+    }
+  }, [manageListsOpen, board]);
+
   if (!board) return <Typography>Loading board…</Typography>;
 
-  // group cards by list
-  // const cardsByList: Record<string, string[]> = {};
-  // Object.values(cards).forEach((c) => {
-  //   (cardsByList[c.statusListId] ||= []).push(c.cardId);
-  // });
-  // Object.keys(cardsByList).forEach((listId) => {
-  //   // order 0 at top => ascending
-  //   cardsByList[listId].sort((a, b) => cards[a].order - cards[b].order);
-  //   // In BoardView where you compute listCardIds:
-  // });
+  const saveManageListTitles = React.useCallback(async () => {
+    if (!board) return;
+    const nextLists = board.lists.map((l) => {
+      const t = (listTitleDrafts[l.listId] ?? l.title).trim();
+      return t && t !== l.title ? { ...l, title: t } : l;
+    });
+    // only persist if any title changed
+    const changed = nextLists.some((l, i) => l.title !== board.lists[i].title);
+    if (changed) {
+      await persistBoard({ ...board, lists: nextLists, updatedAt: Date.now() });
+    }
+    setManageListsOpen(false);
+  }, [board, listTitleDrafts, persistBoard]);
 
   const cardsByList = React.useMemo(() => {
     const byList: Record<string, string[]> = {};
@@ -317,6 +328,17 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
   }, []);
   const closeCard = () => setDialogOpen(false);
 
+  const renameList = React.useCallback(
+    async (listId: string, newTitleRaw: string) => {
+      if (!board) return;
+      const newTitle = newTitleRaw.trim().toUpperCase();
+      if (!newTitle) return; // ignore empty
+      const lists = board.lists.map((l) => (l.listId === listId ? { ...l, title: newTitle } : l));
+      await persistBoard({ ...board, lists, updatedAt: Date.now() });
+    },
+    [board, persistBoard]
+  );
+
   const saveTitle = async () => {
     const t = titleInput.trim();
     if (!t || !board) {
@@ -373,72 +395,6 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
     // choose cascade options
     await deleteBoard({ cascadeCards: false, cascadeComments: false });
   };
-
-  // quick-add card
-
-  // const startAdd = (listId: string) => {
-  //   setAddingForListId(listId);
-  //   setNewTitle('');
-  //   setNewQuickDesc('');
-  //   setNewPriority('NORMAL');
-  //   // setNewPrimaryImageFile(null); // <-- fix: no undefined variable
-  //   // setNewPrimaryImagePreview(null);
-  //   setNewEstimatedMinutes('');
-  //   setNewTagsCsv('');
-  // };
-
-  // const cancelAdd = () => {
-  //   setAddingForListId(null);
-  //   setNewTitle('');
-  //   setNewQuickDesc('');
-  //   setNewPriority('NORMAL');
-  //   // setNewPrimaryImageFile(null);
-  //   // setNewPrimaryImagePreview(null);
-  // };
-
-  // const submitAdd = async () => {
-  //   if (!addingForListId) return;
-  //   const title = newTitle.trim();
-  //   if (!title) return;
-  //   // try {
-  //   const tags = newTagsCsv
-  //     .split(',')
-  //     .map((s) => s.trim())
-  //     .filter(Boolean);
-
-  //   const nextIndex = cardsByList[addingForListId]?.length ?? 0;
-
-  //   void createCard({
-  //     title,
-  //     statusListId: addingForListId,
-  //     order: nextIndex,
-  //     quickDescription: newQuickDesc.trim() || undefined,
-  //     priority: newPriority,
-  //     estimatedCompletionTimeMinutes:
-  //       typeof newEstimatedMinutes === 'number' ? newEstimatedMinutes : undefined,
-  //     tags,
-  //   });
-
-  //   // if (newPrimaryImageFile) {                                   //todo - figure out how to resolve this so that I can keep the image on initial publish
-  //   //   try {
-  //   //     const ref = await publishPrimaryImageForCard(
-  //   //       creatorName,
-  //   //       board,
-  //   //       draft.cardId,
-  //   //       newPrimaryImageFile
-  //   //     );
-  //   //     await updateCard({
-  //   //       ...draft,
-  //   //       primaryImage: ref,
-  //   //       updatedAt: Date.now(),
-  //   //       seq: draft.seq + 1,
-  //   //     });
-  //   //   } catch (e) {
-  //   //     console.warn('Image publish failed; keeping card without image', e);
-  //   //   }
-  //   // }
-  //   cancelAdd();
-  // };
 
   // layout vars
   const listCount = board.lists.length;
@@ -621,32 +577,81 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
                     minInlineSize: 0,
                   }}
                 >
-                  <Typography variant="h6" sx={{ px: '0.75rem', py: '0.5rem' }}>
-                    {list.title}
-                  </Typography>
-
-                  {/* <SortableContext
-                    items={listCardIds.map((cid) => `${cid}::${list.listId}`)}
-                    strategy={verticalListSortingStrategy}
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 0.5,
+                      px: '0.75rem',
+                      py: '0.5rem',
+                    }}
                   >
-                    <Box
-                      sx={{
-                        px: '0.5rem',
-                        pb: '0.5rem',
-                        flex: 1,
-                        minHeight: 0,
-                        overflowY: 'hidden',
-                        pr: '0.25rem',
-                      }}
-                    >
-                      <ListColumn
-                        issuerName={issuerName}
-                        list={list}
-                        cardIds={listCardIds}
-                        onCardClick={openCard}
-                      />
-                    </Box>
-                  </SortableContext> */}
+                    {editingListId === list.listId ? (
+                      <>
+                        <TextField
+                          size="small"
+                          value={editingListTitle}
+                          onChange={(e) => setEditingListTitle(e.target.value)}
+                          onKeyDown={async (e) => {
+                            if (e.key === 'Enter') {
+                              await renameList(list.listId, editingListTitle);
+                              setEditingListId(null);
+                            } else if (e.key === 'Escape') {
+                              setEditingListId(null);
+                            }
+                          }}
+                          onBlur={async () => {
+                            // commit on blur if title changed
+                            if (editingListTitle.trim() && editingListTitle.trim() !== list.title) {
+                              await renameList(list.listId, editingListTitle);
+                            }
+                            setEditingListId(null);
+                          }}
+                          autoFocus
+                          sx={{ flex: 1, minWidth: 0 }}
+                        />
+                        <Button
+                          size="small"
+                          variant="contained"
+                          onClick={async () => {
+                            await renameList(list.listId, editingListTitle);
+                            setEditingListId(null);
+                          }}
+                        >
+                          Save
+                        </Button>
+                        <Button size="small" onClick={() => setEditingListId(null)}>
+                          Cancel
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Typography
+                          variant="h6"
+                          sx={{ flex: 1, minWidth: 0, lineHeight: 1.3, userSelect: 'none' }}
+                          onDoubleClick={() => {
+                            setEditingListId(list.listId);
+                            setEditingListTitle(list.title);
+                          }}
+                          title="Double-click to rename"
+                        >
+                          {list.title}
+                        </Typography>
+                        <Tooltip title="Rename list">
+                          <IconButton
+                            size="small"
+                            onClick={() => {
+                              setEditingListId(list.listId);
+                              setEditingListTitle(list.title);
+                            }}
+                          >
+                            {/* You can swap for an Edit icon if you prefer */}
+                            <MoreVertIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </>
+                    )}
+                  </Box>
 
                   <ListDroppable id={`list::${list.listId}`}>
                     <SortableContext
@@ -727,26 +732,55 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
                 <ListItem
                   key={l.listId}
                   secondaryAction={
-                    <Button
-                      size="small"
-                      color="error"
-                      onClick={() => removeList(l.listId)}
-                      disabled={board.lists.length <= 1}
-                    >
-                      Remove
-                    </Button>
+                    <Stack direction="row" spacing={1}>
+                      <Button
+                        size="small"
+                        color="error"
+                        onClick={() => removeList(l.listId)}
+                        disabled={board.lists.length <= 1}
+                      >
+                        Remove
+                      </Button>
+                    </Stack>
                   }
+                  sx={{ alignItems: 'flex-start', gap: 1 }}
                 >
-                  <ListItemText primary={l.title} secondary={`Order: ${l.order}`} />
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="List title"
+                      value={listTitleDrafts[l.listId] ?? l.title}
+                      onChange={(e) =>
+                        setListTitleDrafts((d) => ({ ...d, [l.listId]: e.target.value }))
+                      }
+                      onBlur={async () => {
+                        // commit single field on blur (optional)
+                        const newTitle = (listTitleDrafts[l.listId] ?? l.title).trim();
+                        if (newTitle && newTitle !== l.title) {
+                          await renameList(l.listId, newTitle);
+                        }
+                      }}
+                    />
+                    <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                      Order: {l.order}
+                    </Typography>
+                  </Box>
                 </ListItem>
               ))}
           </MList>
-          <Box sx={{ mt: '1rem' }}>
+
+          <Box sx={{ mt: '1rem', display: 'flex', gap: 1 }}>
             <Button variant="outlined" startIcon={<PlaylistAddIcon />} onClick={addList}>
               Add list
             </Button>
+            <Box sx={{ flex: 1 }} />
+            <Button variant="contained" onClick={saveManageListTitles}>
+              Save changes
+            </Button>
           </Box>
         </DialogContent>
+
         <DialogActions>
           <Button onClick={() => setManageListsOpen(false)}>Close</Button>
         </DialogActions>

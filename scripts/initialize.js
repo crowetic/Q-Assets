@@ -27,4 +27,3 @@ try {
     console.error('❌ Error writing qapp-config.ts:', error);
   }
 }
-

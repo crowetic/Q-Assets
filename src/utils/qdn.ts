@@ -9,7 +9,7 @@ export type Role = 'admin' | 'member';
 type Hit = {
   name: string;
   identifier: string;
-  role: Role;       // admin | member (from the group list)
+  role: Role; // admin | member (from the group list)
   created?: number;
   updated?: number;
 };
@@ -18,7 +18,10 @@ type Hit = {
  * Search QDN DOCUMENTs for resources whose identifier starts with `identifierPrefix`.
  * Only within the Q-Assets-Management group (admins first).
  */
-export async function searchByIdentifierPrefixInGroup(identifierPrefix: string, groupId: number): Promise<Hit[]> {
+export async function searchByIdentifierPrefixInGroup(
+  identifierPrefix: string,
+  groupId: number
+): Promise<Hit[]> {
   const publishers = await listManagementGroupNames(groupId); // [{ name, role }]
   if (!publishers.length) return [];
 
@@ -30,21 +33,22 @@ export async function searchByIdentifierPrefixInGroup(identifierPrefix: string, 
             action: 'SEARCH_QDN_RESOURCES',
             service: 'DOCUMENT',
             name: p.name,
-            identifier: identifierPrefix,       
-            prefixOnly: true
+            identifier: identifierPrefix,
+            prefixOnly: true,
           } as any).catch(() => null);
 
-          const rows: any[] = Array.isArray(res) ? res :
-                              res ? [res] : [];
+          const rows: any[] = Array.isArray(res) ? res : res ? [res] : [];
 
-          return rows
-            .map(r => ({
-              name: p.name,
-              identifier: r.identifier,
-              role: p.role,
-              created: Number(r.created ?? 0) || 0,
-              updated: Number(r.updated ?? 0) || 0,
-            }) as Hit);
+          return rows.map(
+            (r) =>
+              ({
+                name: p.name,
+                identifier: r.identifier,
+                role: p.role,
+                created: Number(r.created ?? 0) || 0,
+                updated: Number(r.updated ?? 0) || 0,
+              }) as Hit
+          );
         } catch {
           return [] as Hit[];
         }
@@ -54,10 +58,12 @@ export async function searchByIdentifierPrefixInGroup(identifierPrefix: string, 
 
   // Flatten and sort: admins first by recency, then members by recency
   const hits = results.flat();
-  const admins  = hits.filter(h => h.role === 'admin')
-                      .sort((a,b) => (b.updated ?? b.created ?? 0) - (a.updated ?? a.created ?? 0));
-  const members = hits.filter(h => h.role === 'member')
-                      .sort((a,b) => (b.updated ?? b.created ?? 0) - (a.updated ?? a.created ?? 0));
+  const admins = hits
+    .filter((h) => h.role === 'admin')
+    .sort((a, b) => (b.updated ?? b.created ?? 0) - (a.updated ?? a.created ?? 0));
+  const members = hits
+    .filter((h) => h.role === 'member')
+    .sort((a, b) => (b.updated ?? b.created ?? 0) - (a.updated ?? a.created ?? 0));
   return admins.concat(members);
 }
 

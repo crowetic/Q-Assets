@@ -1,14 +1,14 @@
 // src/explorerStats/useExplorerStats.ts
-import { useEffect, useMemo, useState } from "react";
-import { TTL, TRADE_FETCH_N, type ExplorerStats } from "./types";
-import { loadStats, saveStats } from "./storage";
+import { useEffect, useMemo, useState } from 'react';
+import { TTL, TRADE_FETCH_N, type ExplorerStats } from './types';
+import { loadStats, saveStats } from './storage';
 
 import {
   fetchTradesSummary,
   fetchQortVolumeLastN,
   fetchCommentsSummaryForAsset,
   fetchGroupMembersCountFromRest,
-} from "./fetchers";
+} from './fetchers';
 
 export type AssetMeta = {
   assetId: number;
@@ -17,7 +17,7 @@ export type AssetMeta = {
   primaryGroupId?: number; // if absent => default members=0
 };
 
-type Field = "trades" | "comments" | "members";
+type Field = 'trades' | 'comments' | 'members';
 
 const inFlight = new Set<string>();
 const key = (id: number) => `k:${id}`;
@@ -56,11 +56,11 @@ export function useExplorerStats(meta: AssetMeta) {
 
   const shouldFetch = (field: Field, s: ExplorerStats, now: number) => {
     const age = now - (s.updatedAt ?? 0);
-    if (field === "trades") {
+    if (field === 'trades') {
       return s.trades == null || s.qortVolLastN == null || age > TTL.trades;
     }
-    if (field === "comments") return age > TTL.comments;
-    if (field === "members")  return age > TTL.members;
+    if (field === 'comments') return age > TTL.comments;
+    if (field === 'members') return age > TTL.members;
     return false;
   };
 
@@ -82,13 +82,13 @@ export function useExplorerStats(meta: AssetMeta) {
         return;
       }
 
-      const needTrades   = shouldFetch("trades", cur, now);
-      const needComments = shouldFetch("comments", cur, now);
-      const needMembers  = (meta.primaryGroupId != null) && shouldFetch("members", cur, now);
+      const needTrades = shouldFetch('trades', cur, now);
+      const needComments = shouldFetch('comments', cur, now);
+      const needMembers = meta.primaryGroupId != null && shouldFetch('members', cur, now);
 
       if (!needTrades && !needComments && !needMembers) return;
 
-      const lock = `${key(meta.assetId)}:${needTrades?1:0}${needComments?1:0}${needMembers?1:0}`;
+      const lock = `${key(meta.assetId)}:${needTrades ? 1 : 0}${needComments ? 1 : 0}${needMembers ? 1 : 0}`;
       if (inFlight.has(lock)) return;
       inFlight.add(lock);
 
@@ -97,7 +97,7 @@ export function useExplorerStats(meta: AssetMeta) {
         // Fetch trades: count+lastTs AND qort volume in parallel (only if needed)
         const tradesP = needTrades
           ? Promise.all([
-              fetchTradesSummary(meta.assetId),                // { total, lastTs, approximate? }
+              fetchTradesSummary(meta.assetId), // { total, lastTs, approximate? }
               fetchQortVolumeLastN(meta.assetId, TRADE_FETCH_N), // { count, qortSum, newestTs }
             ])
           : Promise.resolve<[null, null]>([null, null]);
@@ -119,7 +119,7 @@ export function useExplorerStats(meta: AssetMeta) {
           trades: tSummary?.total ?? cur.trades ?? 0,
           lastTradeTs: tSummary?.lastTs ?? cur.lastTradeTs ?? null,
           qortVolLastN: tVol?.qortSum ?? cur.qortVolLastN ?? 0,
-          approximate: !!(tSummary?.approximate),
+          approximate: !!tSummary?.approximate,
 
           // COMMENTS
           comments: c?.total ?? cur.comments ?? 0,
@@ -127,9 +127,7 @@ export function useExplorerStats(meta: AssetMeta) {
 
           // MEMBERS
           groupMembers:
-            typeof m?.memberCount === "number"
-              ? m.memberCount
-              : (cur.groupMembers ?? 0),
+            typeof m?.memberCount === 'number' ? m.memberCount : (cur.groupMembers ?? 0),
 
           updatedAt: now,
           v: 1,
@@ -149,8 +147,7 @@ export function useExplorerStats(meta: AssetMeta) {
             lastTradeTs: stats.lastTradeTs ?? null,
             comments: stats.comments ?? 0,
             lastCommentTs: stats.lastCommentTs ?? null,
-            groupMembers:
-              meta.primaryGroupId != null ? (stats.groupMembers ?? 0) : 0,
+            groupMembers: meta.primaryGroupId != null ? (stats.groupMembers ?? 0) : 0,
             updatedAt: now,
             approximate: true,
             v: 1,
@@ -164,7 +161,9 @@ export function useExplorerStats(meta: AssetMeta) {
       }
     })();
 
-    return () => { stop = true; };
+    return () => {
+      stop = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meta.assetId, meta.primaryGroupId]);
 

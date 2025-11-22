@@ -22,31 +22,29 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
-      'react-refresh/only-export-components': [
-        'warn',
-        { allowConstantExport: true },
-      ],
-      'prettier/prettier': 'error',
+      'react-refresh/only-export-components': 'off',
+      'react-hooks/exhaustive-deps': 'off',
+      '@typescript-eslint/no-explicit-any': 'off',
+      'prefer-const': 'off',
+      'prettier/prettier': 'off',
     },
   },
   {
     // This disables ESLint rules that would conflict with Prettier
     name: 'prettier-config',
-    rules: prettierConfig.rules,
-    
-  "extends": [
-    "react-app",
-    "eslint:recommended",
-    "plugin:prettier/recommended"
-  ],
-  "plugins": ["prettier"],
-  "rules": {
-    "prettier/prettier": ["error", {
-      "singleQuote": true,
-      "semi": true
-    }]
-  }
-
-
+    plugins: {
+      prettier: prettierPlugin,
+    },
+    rules: {
+      ...prettierConfig.rules,
+      'prettier/prettier': [
+        'warn',
+        {
+          singleQuote: true,
+          semi: true,
+          trailingComma: 'all',
+        },
+      ],
+    },
   }
 );

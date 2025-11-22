@@ -1,4 +1,3 @@
-
 import pLimit from 'p-limit';
 import { getPrimaryAccountName } from './qortalApi';
 
@@ -7,7 +6,7 @@ const limit = pLimit(6);
 
 export type HolderRow = {
   address: string;
-  balance: number;     // human units
+  balance: number; // human units
   assetId: number;
   assetName?: string;
   name?: string | null; // resolved account name (optional)
@@ -16,23 +15,23 @@ export type HolderRow = {
 export type AssetTx =
   | {
       type: 'ISSUE_ASSET';
-      timestamp: number;      // ms
+      timestamp: number; // ms
       creatorAddress: string;
       assetId: number;
       assetName: string;
       description?: string;
-      quantity: number;       // human units
+      quantity: number; // human units
       isDivisible: boolean;
       signature: string;
     }
   | {
       type: 'CREATE_ASSET_ORDER';
-      timestamp: number;      // ms
+      timestamp: number; // ms
       creatorAddress: string;
       haveAssetId: number;
       wantAssetId: number;
-      amount: number;         // human units (amount of haveAsset)
-      price: number;          // QORT per asset (as string in API; parse to number)
+      amount: number; // human units (amount of haveAsset)
+      price: number; // QORT per asset (as string in API; parse to number)
       haveAssetName?: string;
       wantAssetName?: string;
       pricePair?: string;
@@ -41,7 +40,7 @@ export type AssetTx =
   | {
       // Add more types as needed later (TRADE, CANCEL_ASSET_ORDER, etc.)
       type: string;
-      timestamp: number;      // ms
+      timestamp: number; // ms
       creatorAddress?: string;
       signature?: string;
       [k: string]: any;
@@ -92,7 +91,7 @@ export async function fetchAssetHolders(params: {
     `&offset=${encodeURIComponent(String(offset))}`;
 
   const res = await fetch(path, { method: 'GET' });
-  console.log('asset balances path',path)
+  console.log('asset balances path', path);
   const data = await getJsonOrThrow('fetchAssetHolders', res);
   const arr = Array.isArray(data) ? data : [];
 
@@ -170,9 +169,6 @@ export async function fetchAssetTransactions(params: {
  * Small in-memory cache; you can swap for QDN later if you want global shared cache.
  */
 const nameCache = new Map<string, string | null>();
-
-
-
 
 export async function resolveNames(addresses: string[]): Promise<Map<string, string | null>> {
   const unique = Array.from(new Set(addresses.filter(Boolean)));

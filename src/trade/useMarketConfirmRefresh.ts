@@ -18,11 +18,11 @@ type UnconfirmedTx = {
 };
 
 export interface UseMarketConfirmRefreshOpts {
-  assetId: number;           // the non-QORT asset for the pair
-  onConfirm: () => void;     // called when any market trade tx confirms (disappears)
-  intervalMs?: number;       // default 3000
-  hiddenMs?: number;         // default 12000
-  jitterMs?: number;         // default 1000
+  assetId: number; // the non-QORT asset for the pair
+  onConfirm: () => void; // called when any market trade tx confirms (disappears)
+  intervalMs?: number; // default 3000
+  hiddenMs?: number; // default 12000
+  jitterMs?: number; // default 1000
 }
 
 function isThisMarket(tx: UnconfirmedTx, assetId: number): boolean {
@@ -84,8 +84,8 @@ export function useMarketConfirmRefresh(opts: UseMarketConfirmRefreshOpts) {
         // swallow and retry next tick
       }
 
-      const marketTxs = list.filter(tx => isThisMarket(tx, assetId));
-      const current = new Set(marketTxs.map(tx => tx.signature).filter(Boolean));
+      const marketTxs = list.filter((tx) => isThisMarket(tx, assetId));
+      const current = new Set(marketTxs.map((tx) => tx.signature).filter(Boolean));
 
       // detection: anything that was there last tick but not now -> confirmed/gone
       const disappeared: string[] = [];

@@ -9,12 +9,13 @@ export async function withBackoff<T>(
 
   let lastErr: any;
   for (let i = 0; i < tries; i++) {
-    try { return await fn(); }
-    catch (e) {
+    try {
+      return await fn();
+    } catch (e) {
       lastErr = e;
       if (i === tries - 1) break;
       const delay = Math.round(base * Math.pow(factor, i));
-      await new Promise(r => setTimeout(r, delay));
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
   throw lastErr;

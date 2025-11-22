@@ -1,7 +1,30 @@
 import React, { useEffect } from 'react';
 import { Box, Button, Chip, CircularProgress, Collapse, Typography, Tooltip } from '@mui/material';
 import { useAssetTx } from './useAssetTx';
-import { formatDistanceToNow } from 'date-fns';
+
+const relativeTimeFormat = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+const RELATIVE_TIME_UNITS: { unit: Intl.RelativeTimeFormatUnit; seconds: number }[] = [
+  { unit: 'year', seconds: 60 * 60 * 24 * 365 },
+  { unit: 'month', seconds: 60 * 60 * 24 * 30 },
+  { unit: 'week', seconds: 60 * 60 * 24 * 7 },
+  { unit: 'day', seconds: 60 * 60 * 24 },
+  { unit: 'hour', seconds: 60 * 60 },
+  { unit: 'minute', seconds: 60 },
+  { unit: 'second', seconds: 1 },
+];
+
+function formatRelativeTime(tsMs: number) {
+  const diffSeconds = Math.round((tsMs - Date.now()) / 1000);
+  const absSeconds = Math.abs(diffSeconds);
+
+  for (const { unit, seconds } of RELATIVE_TIME_UNITS) {
+    if (absSeconds >= seconds || unit === 'second') {
+      const value = Math.round(diffSeconds / seconds);
+      return relativeTimeFormat.format(value, unit);
+    }
+  }
+  return '';
+}
 
 interface Props {
   open: boolean;
@@ -86,10 +109,7 @@ export default function TransactionsPanel({
               const sign = isOut ? '-' : '+';
               const color = isOut ? 'text.secondary' : undefined;
               const tsMs = normTsMs(Number(tx?.timestamp ?? 0));
-              const when =
-                Number.isFinite(tsMs) && tsMs > 0
-                  ? formatDistanceToNow(new Date(tsMs), { addSuffix: true })
-                  : '';
+              const when = Number.isFinite(tsMs) && tsMs > 0 ? formatRelativeTime(tsMs) : '';
 
               const otherParty = isOut ? tx?.recipient : tx?.sender;
               const otherPartyShort =

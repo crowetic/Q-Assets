@@ -10,12 +10,12 @@ type FetchLike = typeof fetch;
 const Q_ADDR_RX = /^Q[1-9A-HJ-NP-Za-km-z]{20,60}$/;
 
 const LKG_KEY = 'qassets:lastKnownQortalAddress';
-const LKG_TS  = 'qassets:lastKnownQortalAddress:ts';
+const LKG_TS = 'qassets:lastKnownQortalAddress:ts';
 const LKG_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 // Name/addr cache TTLs
-const RESOLVE_TTL_MS  = 10 * 60 * 1000;     // 10 minutes
-const VALIDATE_TTL_MS = 30 * 60 * 1000;     // 30 minutes
+const RESOLVE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const VALIDATE_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const MAX_CACHE_ENTRIES = 500;
 
 // -----------------------------------------------------------------------------
@@ -25,34 +25,45 @@ export function isQAddressFormat(s: string): boolean {
 }
 
 // Tiny in-memory caches
-const _resolveCache = new Map<string, { addr: string; ts: number }>();  // input -> addr
-const _validateCache = new Map<string, { ok: boolean; ts: number }>();  // addr -> ok
+const _resolveCache = new Map<string, { addr: string; ts: number }>(); // input -> addr
+const _validateCache = new Map<string, { ok: boolean; ts: number }>(); // addr -> ok
 
-function _now() { return Date.now(); }
+function _now() {
+  return Date.now();
+}
 function _prune<K, V>(m: Map<K, V>, max = MAX_CACHE_ENTRIES) {
   if (m.size <= max) return;
   // naive prune: drop first N
   const drop = m.size - max;
   let i = 0;
-  for (const k of m.keys()) { m.delete(k); if (++i >= drop) break; }
+  for (const k of m.keys()) {
+    m.delete(k);
+    if (++i >= drop) break;
+  }
 }
 
 // Validate an address on *this* node; falls back to format check on transient errors.
-export async function validateQortalAddress(address: string, fetcher?: FetchLike): Promise<boolean> {
+export async function validateQortalAddress(
+  address: string,
+  fetcher?: FetchLike
+): Promise<boolean> {
   const addr = (address || '').trim();
   if (!addr) return false;
 
   const hit = _validateCache.get(addr);
-  if (hit && (_now() - hit.ts) < VALIDATE_TTL_MS) return hit.ok;
+  if (hit && _now() - hit.ts < VALIDATE_TTL_MS) return hit.ok;
 
   let ok = false;
   try {
     const f = fetcher ?? fetch;
     // If your node exposes a JSON endpoint instead, swap this out.
-    const res = await f(`/addresses/validate/${addr}`, { method: 'GET', headers: { accept: 'text/plain' }});
+    const res = await f(`/addresses/validate/${addr}`, {
+      method: 'GET',
+      headers: { accept: 'text/plain' },
+    });
     if (res.ok) {
       const txt = (await res.text()).trim().toLowerCase();
-      ok = (txt === 'true' || txt === '1' || txt === 'yes' || txt === 'ok' || txt === 'valid');
+      ok = txt === 'true' || txt === '1' || txt === 'yes' || txt === 'ok' || txt === 'valid';
     } else {
       ok = isQAddressFormat(addr);
     }
@@ -71,7 +82,7 @@ export async function resolveRecipientStrict(input: string): Promise<string> {
   if (!raw) throw new Error('Empty recipient');
 
   const memo = _resolveCache.get(raw);
-  if (memo && (_now() - memo.ts) < RESOLVE_TTL_MS) return memo.addr;
+  if (memo && _now() - memo.ts < RESOLVE_TTL_MS) return memo.addr;
 
   // address path
   if (isQAddressFormat(raw)) {
@@ -98,9 +109,9 @@ export async function resolveRecipientStrict(input: string): Promise<string> {
     _prune(_resolveCache);
     return addr;
   } catch (e: any) {
-    throw new Error(typeof e?.message === 'string'
-      ? e.message
-      : `Unable to resolve "${name}" to an address`);
+    throw new Error(
+      typeof e?.message === 'string' ? e.message : `Unable to resolve "${name}" to an address`
+    );
   }
 }
 
@@ -112,9 +123,11 @@ export function getLastKnownAddress(): string | null {
     const tsStr = localStorage.getItem(LKG_TS);
     if (!addr || !isQAddressFormat(addr)) return null;
     const ts = tsStr ? Number(tsStr) : 0;
-    if (!Number.isFinite(ts) || (_now() - ts) > LKG_TTL_MS) return null;
+    if (!Number.isFinite(ts) || _now() - ts > LKG_TTL_MS) return null;
     return addr;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 export function rememberAuthAddress(addr: string | null) {
@@ -127,16 +140,20 @@ export function rememberAuthAddress(addr: string | null) {
       localStorage.removeItem(LKG_KEY);
       localStorage.removeItem(LKG_TS);
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 // Convenience: ensure a usable address by preferring explicit > auth > LKG.
 // If it returns a value, it’s already validated against the node (unless skipValidate=true).
-export async function ensureUsableAddress(opts: {
-  explicit?: string | null;        // e.g., from a user picker
-  authAddress?: string | null;     // e.g., from useAuth()
-  skipValidate?: boolean;          // when you just need a string quickly
-} = {}): Promise<string | null> {
+export async function ensureUsableAddress(
+  opts: {
+    explicit?: string | null; // e.g., from a user picker
+    authAddress?: string | null; // e.g., from useAuth()
+    skipValidate?: boolean; // when you just need a string quickly
+  } = {}
+): Promise<string | null> {
   const { explicit, authAddress, skipValidate } = opts;
 
   // Highest priority: explicit

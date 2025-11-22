@@ -1,20 +1,22 @@
 // src/utils/qdeckIndexCache.ts
-import { loadBoardsIndex, saveBoardsIndex } from "./qdeckApi"; // adjust path
-import type { BoardsIndexDoc } from "../types/qdeck";
+import { loadBoardsIndex, saveBoardsIndex } from './qdeckApi'; // adjust path
+import type { BoardsIndexDoc } from '../types/qdeck';
 
-export function normalizeIndexDoc(doc: BoardsIndexDoc | null, expectedIssuer?: string): BoardsIndexDoc | null {
+export function normalizeIndexDoc(
+  doc: BoardsIndexDoc | null,
+  expectedIssuer?: string
+): BoardsIndexDoc | null {
   if (!doc) return null;
 
-  const issuerName = (doc.issuerName && doc.issuerName.trim())
-    ? doc.issuerName.trim()
-    : (expectedIssuer ?? '');
+  const issuerName =
+    doc.issuerName && doc.issuerName.trim() ? doc.issuerName.trim() : (expectedIssuer ?? '');
 
   // nothing else fancy, but you could coerce row types here too
   return {
     _type: 'QDECK_BOARDS_INDEX',
     version: 1 as const,
     issuerName,
-    boards: (doc.boards ?? []).map(row=> ({
+    boards: (doc.boards ?? []).map((row) => ({
       boardId: String(row.boardId),
       title: String(row.title ?? ''),
       createdAt: Number(row.createdAt ?? 0),
@@ -26,7 +28,6 @@ export function normalizeIndexDoc(doc: BoardsIndexDoc | null, expectedIssuer?: s
     seq: Number(doc.seq ?? 0),
   };
 }
-
 
 const keyFor = (issuerName: string) => `qdeck.idx:${issuerName}`;
 
@@ -46,14 +47,22 @@ export function setLocalIndex(issuerName: string, doc: BoardsIndexDoc) {
   } catch {}
 }
 
-export function mergeIndices(a?: BoardsIndexDoc | null, b?: BoardsIndexDoc | null): BoardsIndexDoc | null {
+export function mergeIndices(
+  a?: BoardsIndexDoc | null,
+  b?: BoardsIndexDoc | null
+): BoardsIndexDoc | null {
   if (!a && !b) return null;
   if (a && !b) return a;
   if (b && !a) return b;
   // prefer higher seq, else newer updatedAt
-  const newer = (a!.seq ?? 0) > (b!.seq ?? 0)
-    ? a! : ( (a!.seq ?? 0) < (b!.seq ?? 0) ? b! :
-              ((a!.updatedAt ?? 0) >= (b!.updatedAt ?? 0) ? a! : b!) );
+  const newer =
+    (a!.seq ?? 0) > (b!.seq ?? 0)
+      ? a!
+      : (a!.seq ?? 0) < (b!.seq ?? 0)
+        ? b!
+        : (a!.updatedAt ?? 0) >= (b!.updatedAt ?? 0)
+          ? a!
+          : b!;
   // union boards by boardId with latest updatedAt
   const map = new Map<string, any>();
   for (const src of [a!, b!]) {
@@ -87,7 +96,11 @@ export async function loadBoardsIndexMerged(issuer: string): Promise<BoardsIndex
 }
 
 export async function saveBoardsIndexWriteThrough(issuer: string, next: BoardsIndexDoc) {
-  const fixed = normalizeIndexDoc(next, issuer)!;  // force correct issuer
+  const fixed = normalizeIndexDoc(next, issuer)!; // force correct issuer
   setLocalIndex(issuer, fixed);
-  try { await saveBoardsIndex(issuer, fixed); } catch (e) { console.warn('saveBoardsIndex failed', e); }
+  try {
+    await saveBoardsIndex(issuer, fixed);
+  } catch (e) {
+    console.warn('saveBoardsIndex failed', e);
+  }
 }

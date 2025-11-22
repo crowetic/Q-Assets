@@ -24,31 +24,12 @@ import FolderRoundedIcon from '@mui/icons-material/FolderRounded';
 import ArticleRoundedIcon from '@mui/icons-material/ArticleRounded';
 import ImageRoundedIcon from '@mui/icons-material/ImageRounded';
 import AllInboxRoundedIcon from '@mui/icons-material/AllInboxRounded';
-import { useAuth } from 'qapp-core';
-import { useAlert } from '../../../components/alerts';
 import { objectToBase64 } from 'qapp-core';
 import { Service } from 'qapp-core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-
-type QdnStatus = {
-  status: string;
-  id: string;
-  title: string;
-  description: string;
-};
-
-type QdnResource = {
-  name: string;
-  service: string;
-  identifier: string;
-  status?: QdnStatus;
-  size?: number;
-  created?: number;
-  // metadata is optional; structure varies by publisher/app
-  metadata?: Record<string, any>;
-};
-
-type AccountName = { name: string; owner: string };
+import { useAlert } from '../../../components/alerts';
+import { useAccountNames } from '../../../hooks/useAccountNames';
+import { useQdnResources, type QdnResource } from '../../../hooks/useQdnResources';
 
 type ViewMode = 'flat' | 'service' | 'app';
 
@@ -77,7 +58,6 @@ const formatTs = (ts?: number) => {
 type TombstoneArgs = { name: string; service: string; identifier: string; reason?: string };
 
 export async function deletePublishedData({ name, service, identifier, reason }: TombstoneArgs) {
-  const { alert } = useAlert();
   const tombstone = {
     qassets: { tombstone: true, version: 1 },
     deleted: true,
@@ -92,132 +72,19 @@ export async function deletePublishedData({ name, service, identifier, reason }:
 
   // Standard QDN publish path for Q-Apps
   // Some cores expect `mimeType`, and accept either `data64` (preferred) or `data` (Uint8Array).
-  try {
-    await qortalRequest({
-      action: 'PUBLISH_QDN_RESOURCE',
-      name,
-      service: service as Service,
-      identifier,
-      data64,
-      title: 'TOMBSTONE',
-      description: 'Resource removed by publisher',
-      encrypt: false,
-    } as any);
-  } catch (e) {
-    alert(`${e}`);
-  }
+  await qortalRequest({
+    action: 'PUBLISH_QDN_RESOURCE',
+    name,
+    service: service as Service,
+    identifier,
+    data64,
+    title: 'TOMBSTONE',
+    description: 'Resource removed by publisher',
+    encrypt: false,
+  } as any);
 }
 
 /** ---------- hooks ---------- */
-
-/** Load all names on the account */
-function useAccountNames() {
-  const [entries, setEntries] = useState<AccountName[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const { address: userAddress, authenticateUser } = useAuth();
-  const { alert } = useAlert();
-
-  // Ensure auth once
-  useEffect(() => {
-    (async () => {
-      try {
-        if (!userAddress) await authenticateUser();
-      } catch (e: any) {
-        alert(e?.message || 'Authentication failed');
-      }
-    })();
-  }, [userAddress, authenticateUser, alert]);
-
-  const load = useCallback(async () => {
-    if (!userAddress) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await qortalRequest({ action: 'GET_ACCOUNT_NAMES', address: userAddress });
-      // Expect: [{ name, owner }, ...]
-      const arr = Array.isArray(res) ? res : (res?.names ?? []);
-      const normalized: AccountName[] = (arr as any[])
-        .map((x) =>
-          x && typeof x.name === 'string' && typeof x.owner === 'string'
-            ? { name: x.name, owner: x.owner }
-            : null
-        )
-        .filter(Boolean) as AccountName[];
-      setEntries(normalized);
-    } catch (e: any) {
-      setError(e?.message || 'Failed to load names');
-      setEntries([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [userAddress]);
-
-  useEffect(() => {
-    if (userAddress) void load();
-  }, [userAddress, load]);
-
-  return { entries, loading, error, reload: load };
-}
-
-/** Fetch QDN resources for a given name with paging and filters */
-function useQdnResources(name: string | null) {
-  const [rows, setRows] = useState<QdnResource[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [hasMore, setHasMore] = useState(false);
-  const [offset, setOffset] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-
-  const PAGE = 500;
-
-  const reset = useCallback(() => {
-    setRows([]);
-    setOffset(0);
-    setHasMore(false);
-    setError(null);
-  }, []);
-
-  const loadMore = useCallback(async () => {
-    if (!name) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await qortalRequest({
-        action: 'LIST_QDN_RESOURCES',
-        name,
-        default: false,
-        includeStatus: true,
-        includeMetadata: true,
-        followedOnly: false,
-        excludeBlocked: false,
-        limit: PAGE,
-        offset,
-        reverse: true,
-      });
-      const list: QdnResource[] = Array.isArray(res) ? res : [];
-      setRows((prev) => prev.concat(list));
-      const more = list.length === PAGE;
-      setHasMore(more);
-      if (more) setOffset((o) => o + PAGE);
-    } catch (e: any) {
-      setError(e?.message || 'Failed to list resources');
-    } finally {
-      setLoading(false);
-    }
-  }, [name, offset]);
-
-  useEffect(() => {
-    reset();
-  }, [name, reset]);
-
-  useEffect(() => {
-    // auto-load first page when name changes
-    if (name) void loadMore();
-  }, [name, loadMore]);
-
-  return { rows, loading, hasMore, loadMore, error, reset };
-}
 
 /** ---------- icons by heuristic service ---------- */
 function serviceIcon(service?: string) {
@@ -296,6 +163,7 @@ function ResourceRow({
 /** ---------- main page ---------- */
 
 export default function MyPublishedData() {
+  const { alert } = useAlert();
   // load available names
   const {
     entries,

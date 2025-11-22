@@ -1,4 +1,4 @@
-import { ParsedQortal } from "./parseQortalHref";
+import { ParsedQortal } from './parseQortalHref';
 
 const THIS_APP = 'Q-Assets';
 
@@ -9,8 +9,7 @@ const THIS_APP = 'Q-Assets';
  * - Encodes each segment (preserves literal "%23" as-is)
  */
 export function buildInternal(p: ParsedQortal): string | undefined {
-  
-  if (!p) return
+  if (!p) return;
   const isOurApp = p.service?.toUpperCase() === 'APP' && p.name === THIS_APP;
   if (!isOurApp) return '/';
 

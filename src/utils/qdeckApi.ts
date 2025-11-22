@@ -1,8 +1,31 @@
-import { QDeckBoard, QDeckCard, CardCommentThread, coerceVisibility, coerceService, QDeckTombstone, CardsIndexDoc, PaymentLine, BoardsIndexDoc, PaymentsDoc } from '../types/qdeck';
+import {
+  QDeckBoard,
+  QDeckCard,
+  CardCommentThread,
+  coerceVisibility,
+  coerceService,
+  QDeckTombstone,
+  CardsIndexDoc,
+  PaymentLine,
+  BoardsIndexDoc,
+  PaymentsDoc,
+} from '../types/qdeck';
 import { base64ToObject, objectToBase64 } from 'qapp-core';
 import { createBoard } from './qdeckDefaults';
-import { addPrivateMagic, getQAssetsRevenueAddress, parsePrivateBoardIdentV2, QDeckCommentsId, QDeckId, stripPrivateMagic, tempQAssetEscrowAccountAddress } from '../constants/qdeckIdentifiers';
-import { loadBoardsIndexMerged, normalizeIndexDoc, saveBoardsIndexWriteThrough } from './qdeckIndexCache';
+import {
+  addPrivateMagic,
+  getQAssetsRevenueAddress,
+  parsePrivateBoardIdentV2,
+  QDeckCommentsId,
+  QDeckId,
+  stripPrivateMagic,
+  tempQAssetEscrowAccountAddress,
+} from '../constants/qdeckIdentifiers';
+import {
+  loadBoardsIndexMerged,
+  normalizeIndexDoc,
+  saveBoardsIndexWriteThrough,
+} from './qdeckIndexCache';
 import { searchSimpleByFullId, searchSimpleByIdPrefixOnly } from './searchSimple';
 import { fileToBase64 } from './data';
 import { guessImageMimeFromBase64 } from './fetchAssetAvatar';
@@ -14,21 +37,22 @@ import { LruTtl } from './cache';
 // import { ThreadComment } from '../types/ThreadedComment';
 
 export type QUserIdentity = {
-  name?: string;        // QDN name (issuer)
-  address?: string;     // Qortal address
-  publicKey?: string;   // base58/pubkey hex per your env
+  name?: string; // QDN name (issuer)
+  address?: string; // Qortal address
+  publicKey?: string; // base58/pubkey hex per your env
 };
 
 type CreateBoardArgs = {
-  issuerName: string;              // QDN issuer to publish under
+  issuerName: string; // QDN issuer to publish under
   title: string;
-  groupsAllowed: number[];         // names (or ids) allowed to edit
-  usersAllowed?: string[];         // optional allowlist
+  groupsAllowed: number[]; // names (or ids) allowed to edit
+  usersAllowed?: string[]; // optional allowlist
   visibility?: 'public' | 'private';
-  privateOpts?: {                  // only needed when visibility === 'private'
+  privateOpts?: {
+    // only needed when visibility === 'private'
     groupId?: number;
     isAdmins?: boolean;
-    mode?: 'group' | 'direct',
+    mode?: 'group' | 'direct';
     recipients?: string[];
   };
   adminOverride?: boolean;
@@ -42,7 +66,6 @@ export function requireName(u: QUserIdentity) {
   if (!u.name) throw new Error('This action requires a QDN name. Please register / select a name.');
   return u.name;
 }
-
 
 export async function loadCardsIndex(
   issuerName: string,
@@ -62,11 +85,7 @@ export async function loadCardsIndex(
   );
 }
 
-export async function saveCardsIndex(
-  issuerName: string,
-  board: QDeckBoard,
-  doc: CardsIndexDoc
-) {
+export async function saveCardsIndex(issuerName: string, board: QDeckBoard, doc: CardsIndexDoc) {
   const identifier = QDeckId.cardsIndex(doc.boardId);
   const payloadBase64 = stripDataUrlPrefix(await objectToBase64(doc));
   if (!payloadBase64) throw new Error('saveCardsIndex: empty payload');
@@ -83,7 +102,8 @@ export async function saveCardsIndex(
 
   const mode = board.privateMeta?.mode ?? 'group';
   if (mode === 'group') {
-    if (!board.privateMeta?.groupId) throw new Error('private board missing groupId for cards index');
+    if (!board.privateMeta?.groupId)
+      throw new Error('private board missing groupId for cards index');
     const enc: string = await qortalRequestWithTimeout(
       {
         action: 'ENCRYPT_QORTAL_GROUP_DATA',
@@ -130,12 +150,11 @@ export async function saveCardsIndex(
   });
 }
 
-
 export async function addCardToIndex(
-  issuerName: string,     // issuer we're writing the index under (usually board.createdBy)
+  issuerName: string, // issuer we're writing the index under (usually board.createdBy)
   board: QDeckBoard,
   cardId: string,
-  publisherName?: string  // the *card's* publisher (defaults to issuerName for legacy)
+  publisherName?: string // the *card's* publisher (defaults to issuerName for legacy)
 ) {
   const doc = (await loadCardsIndex(issuerName, board)) ?? {
     _type: 'QDECK_CARDS_INDEX' as const,
@@ -155,7 +174,7 @@ export async function addCardToIndex(
 
   // new entries
   doc.entries = doc.entries ?? [];
-  if (!doc.entries.some(e => e.name === pub && e.cardId === cardId)) {
+  if (!doc.entries.some((e) => e.name === pub && e.cardId === cardId)) {
     doc.entries.push({ name: pub, cardId });
   }
 
@@ -165,16 +184,17 @@ export async function addCardToIndex(
   await saveCardsIndex(issuerName, board, doc);
 }
 
-
-
-
 export async function removeCardFromIndex(issuerName: string, board: QDeckBoard, cardId: string) {
   const doc = await loadCardsIndex(issuerName, board);
   if (!doc) return;
-  const next = { ...doc, cardIds: doc.cardIds.filter((id) => id !== cardId), updatedAt: Date.now(), seq: (doc.seq ?? 0) + 1 };
+  const next = {
+    ...doc,
+    cardIds: doc.cardIds.filter((id) => id !== cardId),
+    updatedAt: Date.now(),
+    seq: (doc.seq ?? 0) + 1,
+  };
   await saveCardsIndex(issuerName, board, next);
 }
-
 
 // qdeckApi.ts
 export class GroupKeyMissingError extends Error {
@@ -287,10 +307,10 @@ async function fetchPrivate<T>(opts: {
     });
     if (!clear) return null;
     try {
-    return (await base64ToObject(clear)) as T;
-  } catch {
-    return null;
-  }
+      return (await base64ToObject(clear)) as T;
+    } catch {
+      return null;
+    }
   }
 
   // direct
@@ -303,9 +323,6 @@ async function fetchPrivate<T>(opts: {
     return null;
   }
 }
-
-
-
 
 // --- FETCH: parsed JSON for public/private ---
 // name: QDN namespace, service: 'DOCUMENT' | 'DOCUMENT_PRIVATE' (hint for public path only)
@@ -343,14 +360,12 @@ export async function qdeckFetch<T>(
 
   try {
     const obj = await base64ToObject(res);
-    return (obj && typeof obj === 'object') ? (obj as T) : null;
+    return obj && typeof obj === 'object' ? (obj as T) : null;
   } catch {
     // non-JSON = tombstone or opaque
     return null;
   }
 }
-
-
 
 export async function getUserAccountName(): Promise<string> {
   const me = await qortalRequest({ action: 'GET_USER_ACCOUNT' });
@@ -359,15 +374,13 @@ export async function getUserAccountName(): Promise<string> {
   return me.name as string;
 }
 
-
 /** Optional escape hatch for org-owned publishing */
 export async function resolveIssuerName(override?: string): Promise<string> {
-  console.log('Fetching Issuer Name... if override was passed, name will be:  ',override)
+  console.log('Fetching Issuer Name... if override was passed, name will be:  ', override);
   if (override && override.trim()) return encodeURIComponent(override.trim());
-  console.log('override not passed, fetching name from user account... ')
+  console.log('override not passed, fetching name from user account... ');
   return getUserAccountName();
 }
-
 
 // --- publish: route to public or private cleanly ---
 export async function qdeckPublish(
@@ -404,7 +417,6 @@ export async function qdeckPublish(
   });
 }
 
-
 /* --------------------------------- Access --------------------------------- */
 
 // MOVED to qortalApi groups calls.
@@ -422,7 +434,7 @@ export async function repairOwnerIndex(issuer: string) {
   console.log('Before repair', current);
   const fixed = normalizeIndexDoc(current, issuer);
   if (fixed) {
-    console.log('fixed issuer', fixed.issuerName)
+    console.log('fixed issuer', fixed.issuerName);
     await saveBoardsIndex(issuer, fixed);
     console.log('After repair', fixed);
   }
@@ -483,9 +495,7 @@ export async function loadBoardDoc(
   }
 
   // PRIVATE: must be a v2 ident (caller should pass the real ident)
-  const ident = boardIdOrIdent.startsWith(QDeckId.prefixPrivateBoards)
-    ? boardIdOrIdent
-    : null; // don't synthesize a fake v2 ident
+  const ident = boardIdOrIdent.startsWith(QDeckId.prefixPrivateBoards) ? boardIdOrIdent : null; // don't synthesize a fake v2 ident
 
   if (!ident) return null;
 
@@ -504,8 +514,6 @@ export async function loadBoardDoc(
   }
   return qdeckFetch<QDeckBoard>(issuerName, ident, true, undefined, undefined, 'direct');
 }
-
-
 
 // Cards -------------------------
 
@@ -582,16 +590,23 @@ export async function saveCommentsDoc(
   issuerName: string,
   board: QDeckBoard,
   cardId?: string,
-  thread?: CardCommentThread,
+  thread?: CardCommentThread
 ) {
+  const privateMode =
+    board.privateMeta?.mode ?? (board.privateMeta?.groupId ? 'group' : 'direct');
   const identifier =
     board.visibility === 'public'
       ? QDeckId.commentsPublic(board.boardId, cardId!)
-      : QDeckId.commentsPrivate(board.boardId, cardId!, board.privateMeta?.mode!, board.privateMeta?.isAdmins, board.privateMeta?.groupId);
-  
+      : QDeckId.commentsPrivate(
+          board.boardId,
+          cardId!,
+          privateMode,
+          board.privateMeta?.isAdmins,
+          board.privateMeta?.groupId
+        );
 
   if (board.visibility === 'public') {
-    return qdeckPublish(issuerName, identifier , thread!, false);
+    return qdeckPublish(issuerName, identifier, thread!, false);
   }
 
   const mode = board.privateMeta?.mode ?? 'group';
@@ -628,17 +643,19 @@ export async function saveCommentsDoc(
   });
 }
 
-export async function loadCommentsDoc(
-  issuerName: string,
-  board: QDeckBoard,
-  cardId: string
-) {
+export async function loadCommentsDoc(issuerName: string, board: QDeckBoard, cardId: string) {
   const identifier =
     board.visibility === 'public'
       ? QDeckId.commentsPublic(board.boardId, cardId)
-      : QDeckId.commentsPrivate(board.boardId, cardId, board.privateMeta?.mode!, board.privateMeta?.isAdmins, board.privateMeta?.groupId);
+      : QDeckId.commentsPrivate(
+          board.boardId,
+          cardId,
+          board.privateMeta?.mode!,
+          board.privateMeta?.isAdmins,
+          board.privateMeta?.groupId
+        );
 
-      console.log('identifier in loadCommentsDoc', identifier)
+  console.log('identifier in loadCommentsDoc', identifier);
 
   if (board.visibility === 'public') {
     return qdeckFetch<CardCommentThread>(issuerName, identifier, false);
@@ -657,13 +674,11 @@ export async function loadCommentsDoc(
   return fetchPrivate<CardCommentThread>({ identifier, issuerName, mode: 'direct' });
 }
 
-
 export function isGroupKeyMissing(e: unknown): boolean {
   if (!e) return false;
   const msg = (e as any)?.message || (e as any)?.error || '';
   return String(msg).toLowerCase().includes('no group key');
 }
-
 
 export async function discoverComments(
   board: QDeckBoard,
@@ -676,23 +691,17 @@ export async function discoverComments(
           board.boardId,
           cardId,
           board.privateMeta?.groupId ? 'group' : 'direct',
-          board.privateMeta?.groupId, board.privateMeta?.isAdmins 
-      );
+          board.privateMeta?.groupId,
+          board.privateMeta?.isAdmins
+        );
 
-  console.log('ident from discoverComments', ident)
+  console.log('ident from discoverComments', ident);
 
-    const refs = await searchSimpleByFullId(
-    ident,
-    board.visibility === 'private' ? true : false,
-    );
-  console.log('refs from discoverComments', refs)
+  const refs = await searchSimpleByFullId(ident, board.visibility === 'private' ? true : false);
+  console.log('refs from discoverComments', refs);
 
   return refs;
 }
-
-
-
-
 
 // qdeckApi.ts
 export async function canEncryptToGroup(groupId: number, isAdmins?: boolean): Promise<boolean> {
@@ -710,7 +719,6 @@ export async function canEncryptToGroup(groupId: number, isAdmins?: boolean): Pr
   }
 }
 
-
 /* ------------------------------ Owner index doc ----------------------------- */
 
 const INDEX_ID = QDeckId.ownerBoardsIndex();
@@ -724,36 +732,28 @@ export async function saveBoardsIndex(issuerName: string, doc: BoardsIndexDoc) {
   return await qdeckPublish(issuerName, INDEX_ID, doc);
 }
 
-
 export async function createBoardAndIndex(args: CreateBoardArgs) {
-  const {
-    issuerName,
-    title,
-    groupsAllowed,
-    usersAllowed,
-    visibility,
-    privateOpts,
-    adminOverride,
-  } = args;
+  const { issuerName, title, groupsAllowed, usersAllowed, visibility, privateOpts, adminOverride } =
+    args;
 
-  console.log('createBoardAndIndex visibility', visibility)
+  console.log('createBoardAndIndex visibility', visibility);
 
-  let myName = issuerName
-  let my = await qortalRequest({ action: 'GET_USER_ACCOUNT' })
+  let myName = issuerName;
+  let my = await qortalRequest({ action: 'GET_USER_ACCOUNT' });
   if (!myName && my.name) myName = my.name;
-  
-  let myAddress = my.address
+
+  let myAddress = my.address;
   if (!myAddress && myName) {
     const nameData = await qortalRequest({
       action: 'GET_NAME_DATA',
-      name: myName
-    })
-    myAddress = nameData.owner
+      name: myName,
+    });
+    myAddress = nameData.owner;
   }
-  if (!myAddress) throw Error('failed to obtain address in createBoardAndIndex')
-  if (!myName) throw Error('failed to obtain name in createBoardAndIndex')
+  if (!myAddress) throw Error('failed to obtain address in createBoardAndIndex');
+  if (!myName) throw Error('failed to obtain name in createBoardAndIndex');
 
-  console.log('sending this visibility to createBoard', visibility)
+  console.log('sending this visibility to createBoard', visibility);
   // Create the board document (qdeckDefaults.createBoard derives service/isPrivate)
   const board: QDeckBoard = await createBoard({
     title,
@@ -761,19 +761,18 @@ export async function createBoardAndIndex(args: CreateBoardArgs) {
     createdByAddress: myAddress,
     groupsAllowed: groupsAllowed ?? [],
     usersAllowed,
-    visibility,                          // 'public' | 'private'
-    groupId: privateOpts?.groupId,       // used only when private
+    visibility, // 'public' | 'private'
+    groupId: privateOpts?.groupId, // used only when private
     isAdmins: privateOpts?.isAdmins,
     mode: privateOpts?.mode,
     adminOverride,
     // isPrivate/service are inferred inside createBoard from visibility
   });
   if (privateOpts && privateOpts.mode === 'direct' && privateOpts.recipients) {
-
     const { publicKeys, skipped } = await collectRecipientPublicKeys({
-      groupIds: groupsAllowed,                 // direct mode: ignore group encrypt
-      usersAllowed,                       // from board form
-      assignees: [],                      // or card assignees when needed
+      groupIds: groupsAllowed, // direct mode: ignore group encrypt
+      usersAllowed, // from board form
+      assignees: [], // or card assignees when needed
       includeSelf: true,
       me: { name: myName, address: myAddress },
     });
@@ -784,21 +783,18 @@ export async function createBoardAndIndex(args: CreateBoardArgs) {
     board.privateMeta = { mode: 'direct', recipients: publicKeys, isAdmins: false };
   }
 
-
-
   // Publish the board
   await saveBoardDoc(myName, board);
 
   // Merge current index (local+remote) and append/replace this board entry
-  const idx =
-    (await loadBoardsIndexMerged(myName)) ?? {
-      _type: 'QDECK_BOARDS_INDEX' as const,
-      version: 1 as const,
-      issuerName: myName,
-      boards: [],
-      updatedAt: 0,
-      seq: 0,
-    };
+  const idx = (await loadBoardsIndexMerged(myName)) ?? {
+    _type: 'QDECK_BOARDS_INDEX' as const,
+    version: 1 as const,
+    issuerName: myName,
+    boards: [],
+    updatedAt: 0,
+    seq: 0,
+  };
 
   const next = {
     ...idx,
@@ -822,7 +818,6 @@ export async function createBoardAndIndex(args: CreateBoardArgs) {
   return board;
 }
 
-
 // PRIMARY IMAGE FUNCTIONS -----------------------------------------------------------
 
 // helper: strip data URL if fileToBase64 ever includes it (defensive)
@@ -838,7 +833,6 @@ export async function publishPrimaryImageForCard(
   cardId: string,
   file: File
 ): Promise<{ service: 'IMAGE' | 'DOCUMENT_PRIVATE'; identifier: string; isPrivate?: boolean }> {
-
   const identifier =
     board.visibility === 'private'
       ? QDeckId.cardPrimaryImagePrivate(board.boardId, cardId)
@@ -888,7 +882,8 @@ export async function publishPrimaryImageForCard(
           name: issuerName,
         });
         const issuerAddress = issNameData?.owner;
-        if (!issuerAddress) throw new Error('Cannot resolve issuer address for direct image upload');
+        if (!issuerAddress)
+          throw new Error('Cannot resolve issuer address for direct image upload');
 
         const { publicKeys } = await collectRecipientPublicKeys({
           // best-effort: send to allowed users; cards’ assignees are unknown here
@@ -985,19 +980,18 @@ export async function resolvePrimaryImageDataUrl(
   if (mime === 'application/octet-stream') {
     const ext = (ref.identifier.split('.').pop() || '').toLowerCase();
     mime =
-      ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' :
-      ext === 'webp' ? 'image/webp' :
-      ext === 'gif'  ? 'image/gif'  :
-      'image/png';
+      ext === 'jpg' || ext === 'jpeg'
+        ? 'image/jpeg'
+        : ext === 'webp'
+          ? 'image/webp'
+          : ext === 'gif'
+            ? 'image/gif'
+            : 'image/png';
   }
 
   // Always return a proper data URL (previous code accidentally returned just the MIME)
   return `data:${mime};base64,${base64}`;
 }
-
-
-
-
 
 // tombstone related ("DELETE" deck boards, cards, comments, etc.) --------------------------------------------------<DELETE FUNCTIONS> TOMBSTONE FUNCTIONS
 
@@ -1033,23 +1027,14 @@ async function publishTombstone(
   isPrivate: boolean,
   groupId?: number,
   isAdmins?: boolean,
-  recipients?: string[],        // <-- add
+  recipients?: string[], // <-- add
   mode: 'group' | 'direct' = groupId != null ? 'group' : 'direct' // <-- infer
 ) {
   if (!isPrivate) {
     return qdeckPublish(issuerName, identifier, tomb, false);
   }
   // private
-  return qdeckPublish(
-    issuerName,
-    identifier,
-    tomb,
-    true,
-    groupId,
-    isAdmins,
-    mode,
-    recipients
-  );
+  return qdeckPublish(issuerName, identifier, tomb, true, groupId, isAdmins, mode, recipients);
 }
 
 /**
@@ -1076,18 +1061,23 @@ export async function deleteBoard(
   const boardIdent =
     board.visibility === 'public'
       ? QDeckId.boardPublic(board.boardId)
-      : QDeckId.boardPrivate(board.boardId, board.privateMeta?.mode!, board.privateMeta?.isAdmins, board.privateMeta?.groupId);
+      : QDeckId.boardPrivate(
+          board.boardId,
+          board.privateMeta?.mode!,
+          board.privateMeta?.isAdmins,
+          board.privateMeta?.groupId
+        );
 
   await publishTombstone(
-  issuerName,
-  boardIdent,
-  makeTombstone('BOARD', board.boardId, issuerName),
-  isPrivate,
-  gid,
-  isAdmins,
-  board.privateMeta?.recipients,
-  board.privateMeta?.mode
-);
+    issuerName,
+    boardIdent,
+    makeTombstone('BOARD', board.boardId, issuerName),
+    isPrivate,
+    gid,
+    isAdmins,
+    board.privateMeta?.recipients,
+    board.privateMeta?.mode
+  );
   // 2) Optionally cascade cards (and their comments)
   if (cascadeCards && cards && cards.length) {
     for (const c of cards) {
@@ -1105,13 +1095,19 @@ export async function deleteBoard(
         isAdmins,
         board.privateMeta?.recipients,
         board.privateMeta?.mode
-      )
+      );
 
       if (cascadeComments) {
         const commentsIdent =
           board.visibility === 'public'
             ? QDeckId.commentsPublic(board.boardId, c.cardId)
-            : QDeckId.commentsPrivate(board.boardId, c.cardId, board.privateMeta?.mode!, board.privateMeta?.isAdmins, board.privateMeta?.groupId);
+            : QDeckId.commentsPrivate(
+                board.boardId,
+                c.cardId,
+                board.privateMeta?.mode!,
+                board.privateMeta?.isAdmins,
+                board.privateMeta?.groupId
+              );
 
         await publishTombstone(
           issuerName,
@@ -1122,7 +1118,7 @@ export async function deleteBoard(
           isAdmins,
           board.privateMeta?.recipients,
           board.privateMeta?.mode
-        )
+        );
       }
     }
   }
@@ -1135,11 +1131,10 @@ export async function deleteBoard(
       boards: idx.boards.filter((b) => b.boardId !== board.boardId),
       updatedAt: Date.now(),
       seq: (idx.seq ?? 0) + 1,
-    }
-    await saveBoardsIndexWriteThrough(issuerName, next)
+    };
+    await saveBoardsIndexWriteThrough(issuerName, next);
   }
 }
-
 
 export type CardRef = { name: string; cardId: string };
 
@@ -1153,16 +1148,15 @@ export async function discoverCardRefsBySearch(board: QDeckBoard): Promise<CardR
 
   // Extract {name, cardId} for *any* issuer that has matching identifier
   const refs = heads
-    .filter(h => h?.identifier?.startsWith(prefix))
-    .map(h => ({ name: h.name, cardId: h.identifier.slice(prefix.length) }))
+    .filter((h) => h?.identifier?.startsWith(prefix))
+    .map((h) => ({ name: h.name, cardId: h.identifier.slice(prefix.length) }))
     // de-dupe (some nodes can give dup heads)
-    .filter((v, i, a) => a.findIndex(x => x.name === v.name && x.cardId === v.cardId) === i);
+    .filter((v, i, a) => a.findIndex((x) => x.name === v.name && x.cardId === v.cardId) === i);
 
-  console.log('refs from discoverCardRefsBySearch', refs)
+  console.log('refs from discoverCardRefsBySearch', refs);
 
   return refs;
 }
-
 
 // PAYMENTS AND UPVOTES BELOW --------------------------------------------------------------------------------------------------------------
 /* ------------------------------- Payments/Upvotes --------------------------- */
@@ -1173,7 +1167,7 @@ export async function discoverCardRefsBySearch(board: QDeckBoard): Promise<CardR
  */
 export async function appendPaymentLine(
   issuerName: string,
-  board: QDeckBoard,                // pass the board, not just id
+  board: QDeckBoard, // pass the board, not just id
   line: PaymentLine,
   maxRetries = 2
 ) {
@@ -1185,24 +1179,17 @@ export async function appendPaymentLine(
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     // fetch existing (visibility-aware)
-    const existing = await qdeckFetch<PaymentsDoc>(
-      issuerName,
-      id,
-      isPrivate,
-      gid,
-      isAdmins
-    );
+    const existing = await qdeckFetch<PaymentsDoc>(issuerName, id, isPrivate, gid, isAdmins);
 
     // create if missing
-    const doc: PaymentsDoc =
-      existing ?? {
-        _type: 'QDECK_PAYMENTS',
-        version: 1,
-        boardId: board.boardId,
-        lines: [],
-        updatedAt: 0,
-        seq: 0,
-      };
+    const doc: PaymentsDoc = existing ?? {
+      _type: 'QDECK_PAYMENTS',
+      version: 1,
+      boardId: board.boardId,
+      lines: [],
+      updatedAt: 0,
+      seq: 0,
+    };
 
     doc.lines.push(line);
     doc.updatedAt = Date.now();
@@ -1233,19 +1220,19 @@ export async function sendUpvoteSplit({
   isEscrow?: boolean;
   percentSplit?: number;
   qAssetId?: number;
-  }) {
-  const fee = amount * (10 / 100)
-  const remaining = amount - fee
-  const amt1 = remaining * (percentSplit / 100)
-  const amt2 = (remaining - amt1)
-  
+}) {
+  const fee = amount * (10 / 100);
+  const remaining = amount - fee;
+  const amt1 = remaining * (percentSplit / 100);
+  const amt2 = remaining - amt1;
+
   const user = await qortalRequest({
-    action: 'GET_USER_ACCOUNT'
-  })
-  const senderAddress = user.address
-  const senderPublicKey = user.publicKey
-  
-  const appRevenueAddress = await getQAssetsRevenueAddress()
+    action: 'GET_USER_ACCOUNT',
+  });
+  const senderAddress = user.address;
+  const senderPublicKey = user.publicKey;
+
+  const appRevenueAddress = await getQAssetsRevenueAddress();
 
   if (currency === 'QORT') {
     await qortalRequest({
@@ -1253,45 +1240,37 @@ export async function sendUpvoteSplit({
       coin: 'QORT',
       recipient: appRevenueAddress,
       amount: fee,
-    })
+    });
     await qortalRequest({
       action: 'SEND_COIN',
       coin: 'QORT',
       recipient: isEscrow ? tempQAssetEscrowAccountAddress : appRevenueAddress,
       amount: amt1,
-    })
+    });
     await qortalRequest({
       action: 'SEND_COIN',
       coin: 'QORT',
       recipient: isEscrow ? tempQAssetEscrowAccountAddress : projectOwnerAddress,
       amount: amt2,
-    })
+    });
   } else {
-    await transferAsset(
-      senderAddress,
-      senderPublicKey,
-      appRevenueAddress,
-      qAssetId,
-      fee,
-    );
+    await transferAsset(senderAddress, senderPublicKey, appRevenueAddress, qAssetId, fee);
     await transferAsset(
       senderAddress,
       senderPublicKey,
       isEscrow ? tempQAssetEscrowAccountAddress : appRevenueAddress,
       qAssetId,
-      amt1,
+      amt1
     );
     await transferAsset(
       senderAddress,
       senderPublicKey,
       isEscrow ? tempQAssetEscrowAccountAddress : projectOwnerAddress,
       qAssetId,
-      amt2,
-    )
+      amt2
+    );
   }
 }
-
-
 
 // ADMIN functions
 
@@ -1312,8 +1291,6 @@ export function applyAdminOverride(
   };
 }
 
-
-
 // qdeckApi.ts (add helper)
 export async function deleteBoardById(
   issuerName: string,
@@ -1321,15 +1298,22 @@ export async function deleteBoardById(
   opts?: { cascadeCards?: boolean; cascadeComments?: boolean }
 ) {
   const me = await qortalRequest({ action: 'GET_USER_ACCOUNT' }).catch(() => null);
-  console.log('me from deleteBoardById', me)
-  const board = await resolveBoardForRead(issuerName, boardId/*, undefined, me?.address*/).catch(() => null);
-  console.log('board from deleteBoardById after resolveBoardForRead', board)
+  console.log('me from deleteBoardById', me);
+  const board = await resolveBoardForRead(issuerName, boardId /*, undefined, me?.address*/).catch(
+    () => null
+  );
+  console.log('board from deleteBoardById after resolveBoardForRead', board);
 
   if (!board || isTombstone(board)) {
     // prune index as before...
     const idx = await loadBoardsIndexMerged(issuerName).catch(() => null);
     if (idx) {
-      const next = { ...idx, boards: idx.boards.filter(b => b.boardId !== boardId), updatedAt: Date.now(), seq: (idx.seq ?? 0) + 1 };
+      const next = {
+        ...idx,
+        boards: idx.boards.filter((b) => b.boardId !== boardId),
+        updatedAt: Date.now(),
+        seq: (idx.seq ?? 0) + 1,
+      };
       await saveBoardsIndexWriteThrough(issuerName, next);
     }
     return;
@@ -1343,8 +1327,10 @@ export async function deleteBoardById(
   if (opts?.cascadeCards) {
     const idx = await loadCardsIndex(issuerName, board).catch(() => null);
     if (idx?.cardIds?.length) {
-      const docs = await Promise.all(idx.cardIds.map(cid => loadCardDoc(issuerName, board, cid).catch(() => null)));
-      cards = (docs.filter(Boolean) as QDeckCard[]).filter(d => !isTombstone(d));
+      const docs = await Promise.all(
+        idx.cardIds.map((cid) => loadCardDoc(issuerName, board, cid).catch(() => null))
+      );
+      cards = (docs.filter(Boolean) as QDeckCard[]).filter((d) => !isTombstone(d));
     } else {
       cards = [];
     }
@@ -1352,7 +1338,6 @@ export async function deleteBoardById(
 
   await deleteBoard(issuerName, board, cards, opts);
 }
-
 
 // export async function findBoardVisibilityHeads(
 //   issuerName: string,
@@ -1391,14 +1376,14 @@ export async function findBoardVisibilityHeads(
   boardId: string
 ): Promise<'public' | 'private' | null> {
   const [pubHeads, privHeads] = await Promise.all([
-    cachedHeads(QDeckId.prefixPublicBoards,  false),
+    cachedHeads(QDeckId.prefixPublicBoards, false),
     cachedHeads(QDeckId.prefixPrivateBoards, true),
   ]);
 
   const pubId = QDeckId.boardPublic(boardId);
-  if (pubHeads.some(h => h.name === issuerName && h.identifier === pubId)) return 'public';
+  if (pubHeads.some((h) => h.name === issuerName && h.identifier === pubId)) return 'public';
 
-  const mine = privHeads.filter(h => h.name === issuerName);
+  const mine = privHeads.filter((h) => h.name === issuerName);
   for (const h of mine) {
     const p = parsePrivateBoardIdentV2(h.identifier);
     if (p?.boardId === boardId) return 'private';
@@ -1406,15 +1391,12 @@ export async function findBoardVisibilityHeads(
   return null;
 }
 
-
-
-
-const headsCache = new LruTtl<string, any[]>(128, 30_000);      // 30s heads
+const headsCache = new LruTtl<string, any[]>(128, 30_000); // 30s heads
 // const groupsCache = new LruTtl<string, Array<{groupId:number;isAdmin?:boolean}>>(64, 30_000);
 
 // helper: cached heads
 async function cachedHeads(prefix: string, isPrivate: boolean) {
-  const key = `${isPrivate?'priv':'pub'}:${prefix}`;
+  const key = `${isPrivate ? 'priv' : 'pub'}:${prefix}`;
   const hit = headsCache.get(key);
   if (hit) return hit;
   const res = await searchSimpleByIdPrefixOnly(prefix, isPrivate);
@@ -1422,19 +1404,13 @@ async function cachedHeads(prefix: string, isPrivate: boolean) {
   return res || [];
 }
 
-
-
-export type BoardProbe =
-  | {
-      doc: QDeckBoard;
-      visibility: 'public' | 'private';
-      mode?: 'group' | 'direct';    // only for private
-      groupId?: number;             // only for private+group
-      isAdmins?: boolean;           // only for private+group
-    }
-  | null;
-
-
+export type BoardProbe = {
+  doc: QDeckBoard;
+  visibility: 'public' | 'private';
+  mode?: 'group' | 'direct'; // only for private
+  groupId?: number; // only for private+group
+  isAdmins?: boolean; // only for private+group
+} | null;
 
 // qdeckApi.ts
 export async function resolveBoardForRead(
@@ -1463,11 +1439,31 @@ export async function resolveBoardForReadWithMeta(
     if (!p) return null;
     if (p.mode === 'group') {
       const doc = await qdeckFetch<QDeckBoard>(
-        issuer, boardIdOrIdent, true, p.groupId, !!p.isAdmins, 'group'
+        issuer,
+        boardIdOrIdent,
+        true,
+        p.groupId,
+        !!p.isAdmins,
+        'group'
       );
-      return doc ? { doc, visibility: 'private' as const, mode: 'group' as const, groupId: p.groupId, isAdmins: !!p.isAdmins } : null;
+      return doc
+        ? {
+            doc,
+            visibility: 'private' as const,
+            mode: 'group' as const,
+            groupId: p.groupId,
+            isAdmins: !!p.isAdmins,
+          }
+        : null;
     } else {
-      const doc = await qdeckFetch<QDeckBoard>(issuer, boardIdOrIdent, true, undefined, undefined, 'direct');
+      const doc = await qdeckFetch<QDeckBoard>(
+        issuer,
+        boardIdOrIdent,
+        true,
+        undefined,
+        undefined,
+        'direct'
+      );
       return doc ? { doc, visibility: 'private' as const, mode: 'direct' as const } : null;
     }
   }
@@ -1486,8 +1482,8 @@ export async function resolveBoardForReadWithMeta(
   // If caller hints PRIVATE, skip public and discover the v2 ident.
   const discoverPrivateV2 = async () => {
     const privHeads = await searchSimpleByIdPrefixOnly(QDeckId.prefixPrivateBoards, true);
-    const mine = privHeads.filter(h => h.name === issuer);
-    const hit = mine.find(h => {
+    const mine = privHeads.filter((h) => h.name === issuer);
+    const hit = mine.find((h) => {
       const p = parsePrivateBoardIdentV2(h.identifier);
       return p && p.boardId === boardId;
     });
@@ -1496,11 +1492,31 @@ export async function resolveBoardForReadWithMeta(
     const p = parsePrivateBoardIdentV2(hit.identifier)!;
     if (p.mode === 'group') {
       const doc = await qdeckFetch<QDeckBoard>(
-        issuer, hit.identifier, true, p.groupId, !!p.isAdmins, 'group'
+        issuer,
+        hit.identifier,
+        true,
+        p.groupId,
+        !!p.isAdmins,
+        'group'
       );
-      return doc ? { doc, visibility: 'private' as const, mode: 'group' as const, groupId: p.groupId, isAdmins: !!p.isAdmins } : null;
+      return doc
+        ? {
+            doc,
+            visibility: 'private' as const,
+            mode: 'group' as const,
+            groupId: p.groupId,
+            isAdmins: !!p.isAdmins,
+          }
+        : null;
     } else {
-      const doc = await qdeckFetch<QDeckBoard>(issuer, hit.identifier, true, undefined, undefined, 'direct');
+      const doc = await qdeckFetch<QDeckBoard>(
+        issuer,
+        hit.identifier,
+        true,
+        undefined,
+        undefined,
+        'direct'
+      );
       return doc ? { doc, visibility: 'private' as const, mode: 'direct' as const } : null;
     }
   };

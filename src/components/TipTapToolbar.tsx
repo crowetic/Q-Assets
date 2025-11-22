@@ -154,7 +154,8 @@ export function TipTapToolbar({ editor, compact = false }: Props) {
   const applyThemeToken = (token: ThemeColorToken) => {
     editor.chain().focus().unsetColor().run();
     if (typeof (editor.commands as any).setThemeColor === 'function') {
-      (editor.commands as any).setThemeColor(token);
+      const hex = resolveTokenColor(theme, token);
+      (editor.commands as any).setThemeColor(token, hex);
     } else {
       const hex = resolveTokenColor(theme, token);
       editor.chain().focus().setColor(hex).run();

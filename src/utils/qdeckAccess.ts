@@ -40,16 +40,12 @@ export async function canUserEditBoard(
 }
 
 /** VIEW permission rules — ONLY board visibility matters. */
-export async function canUserViewBoard(
-  board: QDeckBoard,
-  viewer: { address?: string }
-) {
+export async function canUserViewBoard(board: QDeckBoard, viewer: { address?: string }) {
   if (board.visibility === 'public') return true;
   // private → must be in the one private group
   if (userInUsersAllowlist(board, viewer.address, viewer.address)) return true;
   return userInAllowedGroups(board, viewer.address);
 }
-
 
 export async function canUserDeleteBoard(
   board: QDeckBoard,
@@ -65,23 +61,23 @@ export async function canUserDeleteBoard(
   if (!addr) return false;
   const groups = await getAccountGroups(addr).catch(() => []);
   const editorSet = new Set(board.groupsAllowed ?? []);
-  return groups.some(g => g.isAdmin && editorSet.has(g.groupId));
+  return groups.some((g) => g.isAdmin && editorSet.has(g.groupId));
 }
 
 type NameOrAddress = string;
 
 export type CollectRecipientsArgs = {
   // one or more groups to expand
-  groupIds?: number[];             // <— plural now
-  adminsOnly?: boolean;            // only include admins from those groups
+  groupIds?: number[]; // <— plural now
+  adminsOnly?: boolean; // only include admins from those groups
 
   // Optional lists to include
-  usersAllowed?: NameOrAddress[];  // board “usersAllowed”
-  assignees?: NameOrAddress[];     // card “assignees”
-  extraAddresses?: NameOrAddress[];// ad-hoc (addresses or names)
+  usersAllowed?: NameOrAddress[]; // board “usersAllowed”
+  assignees?: NameOrAddress[]; // card “assignees”
+  extraAddresses?: NameOrAddress[]; // ad-hoc (addresses or names)
 
   // Include/exclude the current user
-  includeSelf?: boolean;           // default false (exclude self)
+  includeSelf?: boolean; // default false (exclude self)
   me?: { name?: string; address?: string };
 
   // Optional: provide a resolveName→address cache to save roundtrips
@@ -94,14 +90,14 @@ export type RecipientResolution = {
     address: string;
     publicKey: string;
     name?: string;
-    source: 'group'|'usersAllowed'|'assignees'|'extra';
+    source: 'group' | 'usersAllowed' | 'assignees' | 'extra';
   }>;
   skipped: Array<{
     input?: string;
     address?: string;
     name?: string;
-    source?: 'group'|'usersAllowed'|'assignees'|'extra';
-    reason: 'noAddress'|'noPublicKey'|'duplicate'|'selfExcluded'|'error';
+    source?: 'group' | 'usersAllowed' | 'assignees' | 'extra';
+    reason: 'noAddress' | 'noPublicKey' | 'duplicate' | 'selfExcluded' | 'error';
     errorMessage?: string;
   }>;
 };
@@ -126,10 +122,14 @@ async function getAccountPublicKey(address: string): Promise<string | null> {
   return null;
 }
 
-async function resolveGroupMembers(groupId: number): Promise<Array<{ address: string; isAdmin?: boolean }>> {
-  const list: any[] = await fetchGroupMembers(false, groupId );
+async function resolveGroupMembers(
+  groupId: number
+): Promise<Array<{ address: string; isAdmin?: boolean }>> {
+  const list: any[] = await fetchGroupMembers(false, groupId);
   if (!Array.isArray(list)) return [];
-  return list.map((m) => ({ address: m?.address, isAdmin: !!m?.isAdmin })).filter((m) => !!m.address);
+  return list
+    .map((m) => ({ address: m?.address, isAdmin: !!m?.isAdmin }))
+    .filter((m) => !!m.address);
 }
 
 function looksLikeAddress(s: string) {
@@ -182,7 +182,12 @@ export async function collectRecipientPublicKeys({
   }
 
   // 1) Gather raw candidates
-  type Cand = { source: RecipientResolution['included'][number]['source']; id?: string; name?: string; address?: string };
+  type Cand = {
+    source: RecipientResolution['included'][number]['source'];
+    id?: string;
+    name?: string;
+    address?: string;
+  };
   const candidates: Cand[] = [];
 
   // Groups (expand to addresses)
@@ -230,7 +235,11 @@ export async function collectRecipientPublicKeys({
     )
   );
 
-  const addressables = withAddresses.filter(Boolean) as Array<{ source: Cand['source']; name?: string; address: string }>;
+  const addressables = withAddresses.filter(Boolean) as Array<{
+    source: Cand['source'];
+    name?: string;
+    address: string;
+  }>;
 
   // 3) Self filter + address dedupe
   const uniqueByAddress: Array<{ source: Cand['source']; address: string; name?: string }> = [];
@@ -253,7 +262,12 @@ export async function collectRecipientPublicKeys({
       limit(async () => {
         const k = await getAccountPublicKey(c.address);
         if (!k) {
-          skipped.push({ address: c.address, name: c.name, source: c.source, reason: 'noPublicKey' });
+          skipped.push({
+            address: c.address,
+            name: c.name,
+            source: c.source,
+            reason: 'noPublicKey',
+          });
           return null;
         }
         if (seenPublicKeys.has(k)) {
@@ -311,7 +325,6 @@ export async function collectRecipientsForCreateDialogDirect(args: {
   });
 }
 
-
 export async function resolveNameAddress(name: string): Promise<string | undefined> {
   try {
     const data = await qortalRequest({ action: 'GET_NAME_DATA', name });
@@ -354,7 +367,6 @@ export function cardAuthHeaderMatchesPublisher(card: QDeckCard, publisherName?: 
   return card.createdBy === publisherName;
 }
 
-
 export type PrivateBoardProbe =
   | { doc: QDeckBoard; mode: 'group'; groupId: number; isAdmins: boolean }
   | { doc: QDeckBoard; mode: 'direct' }
@@ -367,7 +379,7 @@ export async function tryLoadPrivateBoardDoc(
 ): Promise<PrivateBoardProbe> {
   // 1) GROUP mode — admins first, then members
   if (myGroups?.length) {
-    const admins  = myGroups.filter(g => g.isAdmin);
+    const admins = myGroups.filter((g) => g.isAdmin);
     const members = myGroups;
 
     const tryGroups = async (arr: typeof myGroups) => {
@@ -384,7 +396,9 @@ export async function tryLoadPrivateBoardDoc(
           if (doc && (doc as any)?._type !== 'QDECK_TOMBSTONE') {
             return { doc, mode: 'group' as const, groupId: g.groupId, isAdmins: !!g.isAdmin };
           }
-        } catch { /* next */ }
+        } catch {
+          /* next */
+        }
       }
       return null;
     };
@@ -403,7 +417,9 @@ export async function tryLoadPrivateBoardDoc(
           if (doc && (doc as any)?._type !== 'QDECK_TOMBSTONE') {
             return { doc, mode: 'group' as const, groupId: g.groupId, isAdmins: !!g.isAdmin };
           }
-        } catch { /* next */ }
+        } catch {
+          /* next */
+        }
       }
       return null;
     };
@@ -425,10 +441,9 @@ export async function tryLoadPrivateBoardDoc(
     if (doc && (doc as any)?._type !== 'QDECK_TOMBSTONE') {
       return { doc, mode: 'direct' as const };
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   return null;
 }
-
-
-

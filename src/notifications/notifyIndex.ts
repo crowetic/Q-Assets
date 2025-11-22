@@ -8,26 +8,25 @@ import { getAllAccountNames, getPrimaryAccountName } from '../utils/qortalApi';
 
 /* ------------------------------- Config -------------------------------- */
 const INDEX_PREFIX = 'qassets_notif_index::';
-const INDEX_SERVICE: 'JSON' | 'DOCUMENT' = 'JSON';        // change if you want DOCUMENT
-const INDEX_MAX_ENTRIES = 1000;                            // guardrail
-export const NOTIF_GROUP_ID = 735;                         // <- set your real notifications group id
+const INDEX_SERVICE: 'JSON' | 'DOCUMENT' = 'JSON'; // change if you want DOCUMENT
+const INDEX_MAX_ENTRIES = 1000; // guardrail
+export const NOTIF_GROUP_ID = 735; // <- set your real notifications group id
 
 /* -------------------------------- Types -------------------------------- */
 export interface IndexItem {
-  rid: string;             // e.g. "JSON/<publisher>/<notifId>" (or DOCUMENT/... if you publish documents)
-  createdAt: number;       // ms epoch
+  rid: string; // e.g. "JSON/<publisher>/<notifId>" (or DOCUMENT/... if you publish documents)
+  createdAt: number; // ms epoch
   priority?: 'low' | 'normal' | 'high';
 }
 
 type SearchHit = {
   service: Service;
   identifier: string;
-  name: string;            // publisher name
-  updated?: number;        // ms (prefer updated)
-  created?: number;        // ms
-  timestamp?: number;      // some cores expose timestamp
+  name: string; // publisher name
+  updated?: number; // ms (prefer updated)
+  created?: number; // ms
+  timestamp?: number; // some cores expose timestamp
 };
-
 
 /* ------------------------------ Helpers -------------------------------- */
 
@@ -43,7 +42,7 @@ async function namesForAddress(address: string): Promise<string[]> {
     }
     // de-dupe (case-insensitive), keep first spelling
     const seen = new Set<string>();
-    return list.filter(n => {
+    return list.filter((n) => {
       const k = encodeURIComponent(n.toLowerCase());
       if (seen.has(k)) return false;
       seen.add(k);
@@ -57,24 +56,20 @@ async function namesForAddress(address: string): Promise<string[]> {
 // Build a set of **admin publisher names** for a group
 async function getAdminNameSet(groupId: number): Promise<Set<string>> {
   const rows = await fetchGroupMembers(true, groupId); // onlyAdmins=true
-  const addrs = rows
-    .map(r => String(r.member || r.address || '').trim())
-    .filter(Boolean);
+  const addrs = rows.map((r) => String(r.member || r.address || '').trim()).filter(Boolean);
 
   const limit = pLimit(6);
-  const allNames = (await Promise.all(
-    addrs.map(addr => limit(() => namesForAddress(addr)))
-  )).flat();
+  const allNames = (
+    await Promise.all(addrs.map((addr) => limit(() => namesForAddress(addr))))
+  ).flat();
 
   // set of lower-cased names for filtering
-  return new Set(allNames.map(n => n.toLowerCase()));
+  return new Set(allNames.map((n) => n.toLowerCase()));
 }
 
 // Extract a monotonic timestamp from a hit
 function hitTime(h: SearchHit): number {
-  return (
-    Number(h.updated ?? h.timestamp ?? h.created ?? 0) || 0
-  );
+  return Number(h.updated ?? h.timestamp ?? h.created ?? 0) || 0;
 }
 
 // Pick the latest admin publish for identifier+service
@@ -84,18 +79,23 @@ function pickLatestAdminPublish(
   service: 'JSON' | 'DOCUMENT',
   identifier: string
 ): SearchHit | null {
-  const filtered = hits.filter(h =>
-    h.identifier === identifier &&
-    h.service?.toUpperCase() === service &&
-    h.name &&
-    adminNames.has(h.name.toLowerCase())
+  const filtered = hits.filter(
+    (h) =>
+      h.identifier === identifier &&
+      h.service?.toUpperCase() === service &&
+      h.name &&
+      adminNames.has(h.name.toLowerCase())
   );
   if (!filtered.length) return null;
   return filtered.sort((a, b) => hitTime(b) - hitTime(a))[0];
 }
 
 // Fetch & parse index from a specific publish (admin)
-async function fetchIndexFromPublish(p: { service: Service; identifier: string; name: string }): Promise<IndexItem[]> {
+async function fetchIndexFromPublish(p: {
+  service: Service;
+  identifier: string;
+  name: string;
+}): Promise<IndexItem[]> {
   const res = await qortalRequest({
     action: 'FETCH_QDN_RESOURCE',
     service: p.service,

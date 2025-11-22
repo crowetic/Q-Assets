@@ -1,6 +1,6 @@
 // src/explorerStats/fetchers.ts
-import { TRADE_FETCH_N } from "./types";
-import { searchSimpleByIdentifierPrefix } from "../utils/searchSimple";
+import { TRADE_FETCH_N } from './types';
+import { searchSimpleByIdentifierPrefix } from '../utils/searchSimple';
 // import { assetCommentsPrefix } from "../constants/qdnConstants";
 
 // a) Most recent trade ts (fast)
@@ -8,7 +8,7 @@ export async function fetchLastTradeTs(assetId: number): Promise<number | null> 
   const url = `/assets/trades/recent?assetid=0&otherassetid=${assetId}&limit=0&reverse=true`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`recent trades failed (${res.status})`);
-  const arr = await res.json() as Array<{ timestamp: number }>;
+  const arr = (await res.json()) as Array<{ timestamp: number }>;
   if (!Array.isArray(arr) || arr.length === 0) return null;
   // API already returns newest-first; be defensive anyway:
   const newest = arr.reduce((m, x) => Math.max(m, Number(x.timestamp) || 0), 0);
@@ -25,7 +25,10 @@ type TradeEnvelope = {
   // ... other fields exist, not needed here
 };
 
-export async function fetchQortVolumeLastN(assetId: number, N = TRADE_FETCH_N): Promise<{
+export async function fetchQortVolumeLastN(
+  assetId: number,
+  N = TRADE_FETCH_N
+): Promise<{
   count: number;
   qortSum: number;
   newestTs: number | null; // handy if you want to sanity-check vs (a)
@@ -33,7 +36,7 @@ export async function fetchQortVolumeLastN(assetId: number, N = TRADE_FETCH_N): 
   const url = `/assets/trades/0/${assetId}?limit=${N}&reverse=true`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`last-N trades failed (${res.status})`);
-  const arr = await res.json() as TradeEnvelope[];
+  const arr = (await res.json()) as TradeEnvelope[];
 
   if (!Array.isArray(arr) || arr.length === 0) {
     return { count: 0, qortSum: 0, newestTs: null };
@@ -48,9 +51,7 @@ export async function fetchQortVolumeLastN(assetId: number, N = TRADE_FETCH_N): 
 
     // We always query /trades/0/{asset}, so initiatorAmountAssetId SHOULD be 0 (QORT).
     // Still, be defensive in case Core flips sides on some edge trades.
-    const qort = t.initiatorAmountAssetId === 0
-      ? Number(t.initiatorAmount)
-      : 0;
+    const qort = t.initiatorAmountAssetId === 0 ? Number(t.initiatorAmount) : 0;
 
     if (Number.isFinite(qort)) sum += qort;
 
@@ -70,7 +71,7 @@ export async function fetchQortVolumeLastN(assetId: number, N = TRADE_FETCH_N): 
 export async function fetchGroupMembersCountFromRest(primaryGroupId: number): Promise<{
   memberCount: number;
   adminCount: number;
-  lastJoinTs: number | null;   // newest "joined" timestamp we can see (optional UX chip)
+  lastJoinTs: number | null; // newest "joined" timestamp we can see (optional UX chip)
 }> {
   const res = await fetch(`/groups/members/${primaryGroupId}?limit=0`);
   if (!res.ok) throw new Error(`group members failed (${res.status})`);
@@ -84,7 +85,7 @@ export async function fetchGroupMembersCountFromRest(primaryGroupId: number): Pr
   const data = (await res.json()) as GroupMembersResponse;
 
   const memberCount = Number(data.memberCount ?? 0);
-  const adminCount  = Number(data.adminCount ?? 0);
+  const adminCount = Number(data.adminCount ?? 0);
 
   // Optional: surface "most recent join" for a “growing” signal
   let lastJoinTs: number | null = null;
@@ -109,7 +110,6 @@ export async function fetchGroupMembersCountOnly(groupId: number): Promise<numbe
   }
 }
 
-
 /**
  * Fetches comment count + newest timestamp from QDN using your helper.
  * - Your commentsSection already does: searchSimpleByIdentifierPrefix('DOCUMENT', prefix)
@@ -122,7 +122,7 @@ export async function fetchCommentsSummaryForAsset(assetId: number): Promise<{
   try {
     const prefix = `asset_comment__${assetId}__`;
     const hits = await searchSimpleByIdentifierPrefix('DOCUMENT', prefix) // your existing util
-      .catch(() => ([] as any[]));
+      .catch(() => [] as any[]);
 
     if (!Array.isArray(hits) || hits.length === 0) {
       return { total: 0, lastTs: null };
@@ -140,22 +140,23 @@ export async function fetchCommentsSummaryForAsset(assetId: number): Promise<{
   }
 }
 
-
 export async function fetchTradesSummary(assetId: number): Promise<{
-  total: number;          // trades count in last N
-  lastTs: number | null;  // most recent trade ts (or null)
+  total: number; // trades count in last N
+  lastTs: number | null; // most recent trade ts (or null)
   approximate?: boolean;
 }> {
   try {
     // recent endpoint: 2 most recent trades
-    const recent = await fetch(`/assets/trades/recent?assetid=0&otherassetid=${assetId}&limit=0&reverse=true`)
-      .then(r => r.ok ? r.json() : []);
+    const recent = await fetch(
+      `/assets/trades/recent?assetid=0&otherassetid=${assetId}&limit=0&reverse=true`
+    ).then((r) => (r.ok ? r.json() : []));
     const lastTs = Array.isArray(recent) && recent.length ? Number(recent[0].timestamp) : null;
 
     // last N trades full objects (e.g., limit=1000)
     const N = 1000;
-    const trades = await fetch(`/assets/trades/0/${assetId}?limit=${N}&reverse=true`)
-      .then(r => r.ok ? r.json() : []);
+    const trades = await fetch(`/assets/trades/0/${assetId}?limit=${N}&reverse=true`).then((r) =>
+      r.ok ? r.json() : []
+    );
 
     const total = Array.isArray(trades) ? trades.length : 0;
 

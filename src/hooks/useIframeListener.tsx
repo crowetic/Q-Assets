@@ -45,10 +45,7 @@ export const useIframe = () => {
         navigate(event.data.path); // Navigate directly to the specified path
 
         // Send a response back to the parent window after navigation is handled
-        window.parent.postMessage(
-          { action: 'NAVIGATION_SUCCESS', path: event.data.path },
-          '*'
-        );
+        window.parent.postMessage({ action: 'NAVIGATION_SUCCESS', path: event.data.path }, '*');
       } else if (event.data?.action === 'THEME_CHANGED' && event.data.theme) {
         const themeColor = event.data.theme;
         if (themeColor === 'dark') {
@@ -56,10 +53,7 @@ export const useIframe = () => {
         } else if (themeColor === 'light') {
           setTheme(EnumTheme.LIGHT);
         }
-      } else if (
-        event.data?.action === 'LANGUAGE_CHANGED' &&
-        event.data.language
-      ) {
+      } else if (event.data?.action === 'LANGUAGE_CHANGED' && event.data.language) {
         if (!supportedLanguages?.includes(event.data.language)) return;
         i18n.changeLanguage(event.data.language);
       }

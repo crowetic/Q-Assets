@@ -50,18 +50,19 @@ export default function CardDialog(props: Props) {
   const card = cards[cardId];
   const { address: userAddress, name: userName } = useAuth();
 
-  if (!board || !card) return null;
-
   // --- edit rights ---
   const [isInAllowedGroup, setIsInAllowedGroup] = React.useState(false);
   React.useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        if (!userAddress) return;
+        if (!userAddress || !board) {
+          if (alive) setIsInAllowedGroup(false);
+          return;
+        }
         const ok = await userCanEditBoard(
           userAddress,
-          board.groupsAllowed as Array<string | number>
+          (board.groupsAllowed ?? []) as Array<string | number>,
         );
         if (alive) setIsInAllowedGroup(ok);
       } catch {
@@ -71,34 +72,41 @@ export default function CardDialog(props: Props) {
     return () => {
       alive = false;
     };
-  }, [userAddress, board.groupsAllowed]);
+  }, [userAddress, board?.groupsAllowed]);
 
-  const usersAllowed = board.usersAllowed ?? [];
-  const norm = (x: string) => encodeURIComponent(x ?? '');
+  const usersAllowed = board?.usersAllowed ?? [];
+  const norm = (x?: string | null) => encodeURIComponent(x ?? '');
   const isInUsersAllowlist =
-    usersAllowed.map(norm).includes(norm(userName!)) ||
-    usersAllowed.map(norm).includes(norm(userAddress!));
-  const isPublisher = card.createdBy === userName || card.creatorAddress === userAddress;
-  const canEdit = isPublisher || isInAllowedGroup || isInUsersAllowlist;
+    usersAllowed.map(norm).includes(norm(userName)) ||
+    usersAllowed.map(norm).includes(norm(userAddress));
+  const isPublisher = card?.createdBy === userName || card?.creatorAddress === userAddress;
+  const canEdit = Boolean(card) && (isPublisher || isInAllowedGroup || isInUsersAllowlist);
 
   // --- local state (meta) ---
-  const [title, setTitle] = React.useState(card.title);
-  const [priority, setPriority] = React.useState<Priority>(card.priority);
-  const [tags, setTags] = React.useState<string[]>(card.tags ?? []);
-  const [statusListId, setStatusListId] = React.useState(card.statusListId);
-  const [quick, setQuick] = React.useState(card.quickDescription ?? '');
-  const [html, setHtml] = React.useState(card.descriptionHtml ?? '');
-  const [assignees, setAssignees] = React.useState<string[]>(card.assignees ?? []);
+  const [title, setTitle] = React.useState(() => card?.title ?? '');
+  const [priority, setPriority] = React.useState<Priority>(card?.priority ?? 'NORMAL');
+  const [tags, setTags] = React.useState<string[]>(card?.tags ?? []);
+  const [statusListId, setStatusListId] = React.useState(card?.statusListId ?? '');
+  const [quick, setQuick] = React.useState(card?.quickDescription ?? '');
+  const [html, setHtml] = React.useState(card?.descriptionHtml ?? '');
+  const [assignees, setAssignees] = React.useState<string[]>(card?.assignees ?? []);
   const [assigneeDraft, setAssigneeDraft] = React.useState('');
 
   // ETA
+  const initialEta = (card as any)?.estimatedCompletionTimeMinutes;
   const [etaMinutes, setEtaMinutes] = React.useState<number | ''>(
-    (card as any).estimatedCompletionTimeMinutes ?? ''
+    typeof initialEta === 'number' ? initialEta : '',
   );
 
   // --- primary image ---
   const [imgDataUrl, setImgDataUrl] = React.useState<string | undefined>(undefined);
   const [uploading, setUploading] = React.useState(false);
+
+  // --- payments ---
+  const [upvoteAmount, setUpvoteAmount] = React.useState(1);
+  const [upvoteCurrency, setUpvoteCurrency] = React.useState<'QORT' | 'QASSET'>('QASSET');
+  const [bountyAmount, setBountyAmount] = React.useState(5);
+  const [bountyCurrency, setBountyCurrency] = React.useState<'QORT' | 'QASSET'>('QASSET');
 
   const isXs = useMediaQuery(theme.breakpoints.down('sm'));
   const isMdUp = useMediaQuery(theme.breakpoints.up('md'));
@@ -106,6 +114,10 @@ export default function CardDialog(props: Props) {
   React.useEffect(() => {
     let alive = true;
     (async () => {
+      if (!board || !card) {
+        if (alive) setImgDataUrl(undefined);
+        return;
+      }
       if (!card.primaryImage) {
         if (alive) setImgDataUrl(undefined);
         return;
@@ -114,7 +126,7 @@ export default function CardDialog(props: Props) {
         board.createdBy,
         card.primaryImage,
         board.privateMeta?.groupId,
-        board.privateMeta?.isAdmins
+        board.privateMeta?.isAdmins,
       );
       if (alive) setImgDataUrl(url);
     })();
@@ -122,14 +134,15 @@ export default function CardDialog(props: Props) {
       alive = false;
     };
   }, [
-    card.primaryImage?.identifier,
-    board.createdBy,
-    board.privateMeta?.groupId,
-    board.privateMeta?.isAdmins,
+    card?.primaryImage?.identifier,
+    board?.createdBy,
+    board?.privateMeta?.groupId,
+    board?.privateMeta?.isAdmins,
   ]);
 
   // Reset on card change
   React.useEffect(() => {
+    if (!card) return;
     setTitle(card.title);
     setPriority(card.priority);
     setTags(card.tags ?? []);
@@ -138,7 +151,7 @@ export default function CardDialog(props: Props) {
     setHtml(card.descriptionHtml ?? '');
     setAssignees(card.assignees ?? []);
     setEtaMinutes((card as any).estimatedCompletionTimeMinutes ?? '');
-  }, [cardId, card.seq]);
+  }, [cardId, card?.seq, card]);
 
   // --- helpers ---
   const handleAddTag = (tag: string) => {
@@ -175,7 +188,9 @@ export default function CardDialog(props: Props) {
     let ok = true;
     try {
       ok = await verifyQortalName(nm);
-    } catch {}
+    } catch {
+      /* empty */
+    }
     if (!ok) {
       alert(`Could not verify Qortal name "${nm}". Added anyway—please double check.`);
     }
@@ -183,6 +198,8 @@ export default function CardDialog(props: Props) {
     setAssigneeDraft('');
   };
   const removeAssignee = (nm: string) => setAssignees((prev) => prev.filter((x) => x !== nm));
+
+  if (!board || !card) return null;
 
   // Save
   const handleSave = async () => {
@@ -213,7 +230,7 @@ export default function CardDialog(props: Props) {
         board.createdBy, // publish under board issuer
         board,
         card.cardId,
-        file
+        file,
       );
       const next: QDeckCard = {
         ...card,
@@ -227,19 +244,13 @@ export default function CardDialog(props: Props) {
         board.createdBy,
         ref,
         board.privateMeta?.groupId,
-        board.privateMeta?.isAdmins
+        board.privateMeta?.isAdmins,
       );
       setImgDataUrl(url);
     } finally {
       setUploading(false);
     }
   };
-
-  // Payments
-  const [upvoteAmount, setUpvoteAmount] = React.useState(1);
-  const [upvoteCurrency, setUpvoteCurrency] = React.useState<'QORT' | 'QASSET'>('QASSET');
-  const [bountyAmount, setBountyAmount] = React.useState(5);
-  const [bountyCurrency, setBountyCurrency] = React.useState<'QORT' | 'QASSET'>('QASSET');
 
   const doUpvote = async () => {
     await upvoteCard({

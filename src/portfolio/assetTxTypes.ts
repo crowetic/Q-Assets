@@ -1,18 +1,17 @@
-
 export type Direction = 'IN' | 'OUT';
 
 export interface AssetTxSummary {
-  txId: string;            // signature / id
-  timestamp: number;       // ms epoch
-  assetId: number;         // 0 for QORT
-  amount: number;          // human units (QORT or asset), aggregated for multi
+  txId: string; // signature / id
+  timestamp: number; // ms epoch
+  assetId: number; // 0 for QORT
+  amount: number; // human units (QORT or asset), aggregated for multi
   sender: string;
   recipient: string;
   type: TxType;
-  direction: Direction;    // derived wrt "address" param
+  direction: Direction; // derived wrt "address" param
   confirmations?: number;
   height?: number;
-  feeQort?: number;        // total fee in QORT (optional)
+  feeQort?: number; // total fee in QORT (optional)
 }
 
 // ---------- discriminated union for details (dialog) ----------
@@ -28,19 +27,19 @@ export type TxType =
   | 'JOIN_GROUP'
   | 'LEAVE_GROUP'
   | 'CREATE_GROUP'
-  | 'MESSAGE'              // if you surface messages
+  | 'MESSAGE' // if you surface messages
   | 'UNKNOWN';
 
 interface TxBaseDetail {
   txId: string;
   type: TxType;
-  timestamp: number;       // ms epoch
+  timestamp: number; // ms epoch
   confirmations?: number;
   height?: number;
   feeQort?: number;
   sender?: string;
   recipient?: string;
-  raw?: any;               // always include raw for “view JSON” and future-proofing
+  raw?: any; // always include raw for “view JSON” and future-proofing
 }
 
 // QORT coin
@@ -52,7 +51,7 @@ export interface PaymentDetail extends TxBaseDetail {
 export interface MultiPaymentDetail extends TxBaseDetail {
   type: 'MULTI_PAYMENT';
   payments: Array<{ recipient: string; amountQort: number }>;
-  totalQort: number;       // sum of payments
+  totalQort: number; // sum of payments
 }
 
 // QDN / arbitrary data (minimal first; add fields you care about)
@@ -68,14 +67,14 @@ export interface ArbitraryDetail extends TxBaseDetail {
 export interface TransferAssetDetail extends TxBaseDetail {
   type: 'TRANSFER_ASSET';
   assetId: number;
-  amountAsset: number;     // human units
+  amountAsset: number; // human units
 }
 
 export interface IssueAssetDetail extends TxBaseDetail {
   type: 'ISSUE_ASSET';
   assetId: number;
   name: string;
-  quantity: number;        // human units
+  quantity: number; // human units
   isDivisible: boolean;
 }
 
@@ -90,7 +89,7 @@ export interface CreateAssetOrderDetail extends TxBaseDetail {
   type: 'CREATE_ASSET_ORDER';
   haveAssetId: number;
   wantAssetId: number;
-  amountHave: number;      // human units of haveAssetId
+  amountHave: number; // human units of haveAssetId
   priceQortPerAsset?: number; // if pair involves QORT you can precompute it
 }
 
@@ -100,12 +99,24 @@ export interface CancelAssetOrderDetail extends TxBaseDetail {
 }
 
 // Groups (you can expand later)
-export interface JoinGroupDetail extends TxBaseDetail { type: 'JOIN_GROUP'; groupId?: number; }
-export interface LeaveGroupDetail extends TxBaseDetail { type: 'LEAVE_GROUP'; groupId?: number; }
-export interface CreateGroupDetail extends TxBaseDetail { type: 'CREATE_GROUP'; groupId?: number; name?: string; }
+export interface JoinGroupDetail extends TxBaseDetail {
+  type: 'JOIN_GROUP';
+  groupId?: number;
+}
+export interface LeaveGroupDetail extends TxBaseDetail {
+  type: 'LEAVE_GROUP';
+  groupId?: number;
+}
+export interface CreateGroupDetail extends TxBaseDetail {
+  type: 'CREATE_GROUP';
+  groupId?: number;
+  name?: string;
+}
 
 // Fallback
-export interface UnknownDetail extends TxBaseDetail { type: 'UNKNOWN'; }
+export interface UnknownDetail extends TxBaseDetail {
+  type: 'UNKNOWN';
+}
 
 export type AssetTxDetail =
   | PaymentDetail
@@ -122,19 +133,19 @@ export type AssetTxDetail =
   | UnknownDetail;
 
 export interface AssetTx {
-  txId: string;           // signature / unique id
-  timestamp: number;      // ms epoch
+  txId: string; // signature / unique id
+  timestamp: number; // ms epoch
   assetId: number;
-  amount: number;         // human units (e.g., 12.34 QORT)
+  amount: number; // human units (e.g., 12.34 QORT)
   sender: string;
   recipient: string;
-  type: string;           // PAYMENT, MULTI_PAYMENT, TRANSFER_ASSET, etc.
+  type: string; // PAYMENT, MULTI_PAYMENT, TRANSFER_ASSET, etc.
   confirmations?: number;
 }
 
 export interface FetchAssetTxParams {
-  address: string;        // the wallet we’re viewing (auth user)
-  assetId: number;        // 0 for QORT, >0 for assets
+  address: string; // the wallet we’re viewing (auth user)
+  assetId: number; // 0 for QORT, >0 for assets
   limit?: number;
   offset?: number;
 }
@@ -184,9 +195,17 @@ const get = (o: any, ...keys: string[]) => {
 };
 
 export const CORE_TX_TYPES = [
-  'PAYMENT','MULTI_PAYMENT','ARBITRARY','TRANSFER_ASSET','ISSUE_ASSET',
-  'UPDATE_ASSET','CREATE_ASSET_ORDER','CANCEL_ASSET_ORDER',
-  'JOIN_GROUP','LEAVE_GROUP','CREATE_GROUP',
+  'PAYMENT',
+  'MULTI_PAYMENT',
+  'ARBITRARY',
+  'TRANSFER_ASSET',
+  'ISSUE_ASSET',
+  'UPDATE_ASSET',
+  'CREATE_ASSET_ORDER',
+  'CANCEL_ASSET_ORDER',
+  'JOIN_GROUP',
+  'LEAVE_GROUP',
+  'CREATE_GROUP',
 ] as const;
 
 export type StrictTxType = (typeof CORE_TX_TYPES)[number] | 'UNKNOWN';
@@ -268,22 +287,48 @@ export async function fetchAssetTransactions(
       if (!involvesMe(tx)) continue;
 
       let detail: AssetTxDetail;
-      
+
       switch (type) {
         case 'PAYMENT': {
           const amountQort = human(nnum(tx.amount));
-          detail = { type, txId, timestamp: ts, sender, recipient, amountQort, feeQort, height, confirmations, raw: tx };
+          detail = {
+            type,
+            txId,
+            timestamp: ts,
+            sender,
+            recipient,
+            amountQort,
+            feeQort,
+            height,
+            confirmations,
+            raw: tx,
+          };
           break;
         }
         case 'MULTI_PAYMENT': {
-          const payments: Array<{ recipient?: string; amount?: number | string }> =
-            Array.isArray(tx.payments) ? tx.payments : [];
+          const payments: Array<{ recipient?: string; amount?: number | string }> = Array.isArray(
+            tx.payments
+          )
+            ? tx.payments
+            : [];
           const parsed = payments.map((p) => ({
             recipient: String(p?.recipient ?? ''),
             amountQort: human(nnum(p?.amount)),
           }));
           const totalQort = parsed.reduce((s, p) => s + (p.amountQort || 0), 0);
-          detail = { type, txId, timestamp: ts, sender, recipient, payments: parsed, totalQort, feeQort, height, confirmations, raw: tx };
+          detail = {
+            type,
+            txId,
+            timestamp: ts,
+            sender,
+            recipient,
+            payments: parsed,
+            totalQort,
+            feeQort,
+            height,
+            confirmations,
+            raw: tx,
+          };
           break;
         }
         case 'ARBITRARY': {
@@ -297,14 +342,26 @@ export async function fetchAssetTransactions(
             name: get(tx, 'name'),
             path: get(tx, 'path'),
             dataSize: nnum(get(tx, 'dataLength', 'dataSize')),
-            feeQort, height, confirmations, raw: tx,
+            feeQort,
+            height,
+            confirmations,
+            raw: tx,
           };
           break;
         }
         default: {
           // surface other QORT-using types as UNKNOWN detail
-          detail = { type: 'UNKNOWN', txId, timestamp: ts, sender, recipient, feeQort, height, confirmations, raw: tx };
-
+          detail = {
+            type: 'UNKNOWN',
+            txId,
+            timestamp: ts,
+            sender,
+            recipient,
+            feeQort,
+            height,
+            confirmations,
+            raw: tx,
+          };
         }
       }
 
@@ -313,16 +370,25 @@ export async function fetchAssetTransactions(
         detail.type === 'PAYMENT'
           ? (detail as PaymentDetail).amountQort
           : detail.type === 'MULTI_PAYMENT'
-          ? (sender === address
+            ? sender === address
               ? (detail as MultiPaymentDetail).totalQort
               : (detail as MultiPaymentDetail).payments
                   .filter((p) => p.recipient === address)
-                  .reduce((s, p) => s + (p.amountQort || 0), 0))
-          : 0;
+                  .reduce((s, p) => s + (p.amountQort || 0), 0)
+            : 0;
 
       items.push({
-        txId, timestamp: ts, assetId: 0, amount: amountForSummary,
-        sender, recipient, type: detail.type, direction, confirmations, height, feeQort,
+        txId,
+        timestamp: ts,
+        assetId: 0,
+        amount: amountForSummary,
+        sender,
+        recipient,
+        type: detail.type,
+        direction,
+        confirmations,
+        height,
+        feeQort,
       });
       detailsById[txId] = detail;
       continue;
@@ -336,29 +402,52 @@ export async function fetchAssetTransactions(
       case 'TRANSFER_ASSET': {
         const amountAsset = human(nnum(tx.amount));
         detail = {
-          type, txId, timestamp: ts, sender, recipient,
-          assetId, amountAsset, feeQort, height, confirmations, raw: tx,
+          type,
+          txId,
+          timestamp: ts,
+          sender,
+          recipient,
+          assetId,
+          amountAsset,
+          feeQort,
+          height,
+          confirmations,
+          raw: tx,
         } as TransferAssetDetail;
         break;
       }
       case 'ISSUE_ASSET': {
         detail = {
-          type, txId, timestamp: ts, sender, recipient,
+          type,
+          txId,
+          timestamp: ts,
+          sender,
+          recipient,
           assetId,
           name: String(get(tx, 'assetName', 'name') ?? ''),
           quantity: human(nnum(get(tx, 'quantity', 'amount'))),
           isDivisible: Boolean(get(tx, 'isDivisible', 'divisible')),
-          feeQort, height, confirmations, raw: tx,
+          feeQort,
+          height,
+          confirmations,
+          raw: tx,
         } as IssueAssetDetail;
         break;
       }
       case 'UPDATE_ASSET': {
         detail = {
-          type, txId, timestamp: ts, sender, recipient,
+          type,
+          txId,
+          timestamp: ts,
+          sender,
+          recipient,
           assetId,
           name: String(get(tx, 'assetName', 'name') ?? ''),
           isDivisible: get(tx, 'isDivisible', 'divisible') as boolean | undefined,
-          feeQort, height, confirmations, raw: tx,
+          feeQort,
+          height,
+          confirmations,
+          raw: tx,
         } as UpdateAssetDetail;
         break;
       }
@@ -367,20 +456,48 @@ export async function fetchAssetTransactions(
         const wantAssetId = Number(get(tx, 'wantAssetId', 'initiatingOrder')?.wantAssetId ?? NaN);
         const amountHave = human(nnum(get(tx, 'amount', 'initiatingOrder')?.amount));
         detail = {
-          type, txId, timestamp: ts, sender, recipient,
-          haveAssetId, wantAssetId, amountHave, feeQort, height, confirmations, raw: tx,
+          type,
+          txId,
+          timestamp: ts,
+          sender,
+          recipient,
+          haveAssetId,
+          wantAssetId,
+          amountHave,
+          feeQort,
+          height,
+          confirmations,
+          raw: tx,
         } as CreateAssetOrderDetail;
         break;
       }
       case 'CANCEL_ASSET_ORDER': {
         detail = {
-          type, txId, timestamp: ts, sender, recipient,
-          orderId: String(get(tx, 'orderId') ?? ''), feeQort, height, confirmations, raw: tx,
+          type,
+          txId,
+          timestamp: ts,
+          sender,
+          recipient,
+          orderId: String(get(tx, 'orderId') ?? ''),
+          feeQort,
+          height,
+          confirmations,
+          raw: tx,
         } as CancelAssetOrderDetail;
         break;
       }
       default: {
-        detail = { type: 'UNKNOWN', txId, timestamp: ts, sender, recipient, feeQort, height, confirmations, raw: tx };
+        detail = {
+          type: 'UNKNOWN',
+          txId,
+          timestamp: ts,
+          sender,
+          recipient,
+          feeQort,
+          height,
+          confirmations,
+          raw: tx,
+        };
       }
     }
 
@@ -389,14 +506,20 @@ export async function fetchAssetTransactions(
 
     const direction: Direction = sender === address ? 'OUT' : 'IN';
     const amountForSummary =
-      
-      detail.type === 'TRANSFER_ASSET'
-        ? (detail as TransferAssetDetail).amountAsset
-        : 0;
+      detail.type === 'TRANSFER_ASSET' ? (detail as TransferAssetDetail).amountAsset : 0;
 
     items.push({
-      txId, timestamp: ts, assetId, amount: amountForSummary,
-      sender, recipient, type: detail.type, direction, confirmations, height, feeQort,
+      txId,
+      timestamp: ts,
+      assetId,
+      amount: amountForSummary,
+      sender,
+      recipient,
+      type: detail.type,
+      direction,
+      confirmations,
+      height,
+      feeQort,
     });
     detailsById[txId] = detail;
   }

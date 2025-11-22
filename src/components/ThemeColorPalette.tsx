@@ -31,7 +31,7 @@ export default function ThemeColorPalette({ editor }: Props) {
                 size="small"
                 onClick={() => {
                   if (isActive) editor.commands.unsetThemeColor();
-                  else editor.commands.setThemeColor(token);
+                  else editor.commands.setThemeColor(token, color);
                 }}
                 sx={{
                   width: 24,

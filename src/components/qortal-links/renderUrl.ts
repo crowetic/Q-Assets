@@ -3,7 +3,7 @@
 export function arbitraryToRenderUrl(baseArbitrary: string, path?: string): string {
   let render = baseArbitrary.replace(/^\/arbitrary\//, '/render/');
   if (path) {
-    const segs = path.split('/').map(seg => encodeURIComponent(seg).replace(/#/g, '%23'));
+    const segs = path.split('/').map((seg) => encodeURIComponent(seg).replace(/#/g, '%23'));
     render += '/' + segs.join('/');
   }
   return render;

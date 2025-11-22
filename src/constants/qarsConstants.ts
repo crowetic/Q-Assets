@@ -6,8 +6,7 @@ export const QARS_WEIGHTS_VERSION = 1 as const;
 
 // Prefer to inject via Vite env or a global, but default if not provided.
 export const APP_QARS_CODE_VERSION: string =
-  (typeof import.meta !== 'undefined' &&
-    (import.meta as any)?.env?.VITE_QARS_CODE_VERSION) ||
+  (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.VITE_QARS_CODE_VERSION) ||
   (typeof window !== 'undefined' && (window as any)?._qarsCodeVersion) ||
   '0.1.0';
 
@@ -22,11 +21,8 @@ export const QARS_QDN_SERVICE = 'DOCUMENT' as const;
 
 // Optional: allow an app-owned “official” name context for certain publishes.
 // Leave undefined to publish under the current user’s name.
-export const QASSETS_OWNER_NAME:
-  | string
-  | undefined =
-  (typeof import.meta !== 'undefined' &&
-    (import.meta as any)?.env?.VITE_QASSETS_OWNER_NAME) ||
+export const QASSETS_OWNER_NAME: string | undefined =
+  (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.VITE_QASSETS_OWNER_NAME) ||
   (typeof window !== 'undefined' && (window as any)?._qassetsOwnerName) ||
   undefined;
 
@@ -82,6 +78,5 @@ export function configId(version: number = QARS_WEIGHTS_VERSION) {
   return `${QARS_ID_PREFIX}_config__v${version}`;
 }
 
-
-export const MIN_UPVOTE_QORT = 5
-export const PAYMENT_WINDOW_MIN = 30
+export const MIN_UPVOTE_QORT = 5;
+export const PAYMENT_WINDOW_MIN = 30;

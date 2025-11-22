@@ -55,7 +55,11 @@ export async function locateQdnResource(
       identifier: canonicalIdentifier,
       encoding: 'base64',
     });
-    const located: Located = { service: canonicalService, identifier: canonicalIdentifier, source: 'canonical' };
+    const located: Located = {
+      service: canonicalService,
+      identifier: canonicalIdentifier,
+      source: 'canonical',
+    };
     locateCache.set(key, located);
     return located;
   } catch {
@@ -84,8 +88,11 @@ export async function locateQdnResource(
         prefix: true,
       });
 
-      const candidate = results.find(r => typeof r?.identifier === 'string' &&
-        matchesAssetish(r.identifier, assetName, canonicalIdentifier));
+      const candidate = results.find(
+        (r) =>
+          typeof r?.identifier === 'string' &&
+          matchesAssetish(r.identifier, assetName, canonicalIdentifier)
+      );
 
       if (candidate) {
         // Verify it’s actually fetchable
@@ -96,7 +103,11 @@ export async function locateQdnResource(
           identifier: candidate.identifier,
           encoding: 'base64',
         });
-        const located: Located = { service: svc, identifier: candidate.identifier, source: 'legacySearch' };
+        const located: Located = {
+          service: svc,
+          identifier: candidate.identifier,
+          source: 'legacySearch',
+        };
         locateCache.set(key, located);
         console.warn(`[qdnLocate] Using legacy ${svc}/${candidate.identifier} for ${key}`);
         return located;

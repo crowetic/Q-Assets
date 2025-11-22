@@ -1,15 +1,12 @@
-import type { ThreadComment } from "../types/ThreadedComment";
+import type { ThreadComment } from '../types/ThreadedComment';
 
 export type ThreadNode = ThreadComment & { children: ThreadNode[] };
 export type WithFlags = ThreadNode & { deleted?: boolean };
 
 /** Extract the compact id (“A1B2C3…”) from an identifier like `${prefix}${id}` */
 export function stripPrefixId(fullIdentifier: string, prefix: string): string {
-  return fullIdentifier.startsWith(prefix)
-    ? fullIdentifier.slice(prefix.length)
-    : fullIdentifier;
+  return fullIdentifier.startsWith(prefix) ? fullIdentifier.slice(prefix.length) : fullIdentifier;
 }
-
 
 export function buildCommentForest(input: ThreadComment[]): ThreadNode[] {
   const byId = new Map<string, ThreadNode>();
@@ -50,7 +47,6 @@ export function buildCommentForest(input: ThreadComment[]): ThreadNode[] {
   return roots;
 }
 
-
 function adjustDepth<T extends WithFlags>(node: T, delta: number): T {
   const nextDepth = Math.max(
     0,
@@ -60,7 +56,6 @@ function adjustDepth<T extends WithFlags>(node: T, delta: number): T {
   const adjustedKids = kids.map((c) => adjustDepth(c as WithFlags, delta));
   return { ...(node as any), depth: nextDepth, children: adjustedKids };
 }
-
 
 export function pruneDeletedForest(roots: WithFlags[]): WithFlags[] {
   const out: WithFlags[] = [];

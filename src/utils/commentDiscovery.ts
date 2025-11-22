@@ -1,10 +1,9 @@
 // src/utils/commentsDiscovery.ts
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import pLimit from 'p-limit';
-import { DEV_GROUP_ID, MINTER_GROUP_ID } from '../constants/qdnConstants'
-import { getGroupAddressSetsById } from '../utils/access'; 
+import { DEV_GROUP_ID, MINTER_GROUP_ID } from '../constants/qdnConstants';
+import { getGroupAddressSetsById } from '../utils/access';
 import { getAllAccountNames, getPrimaryAccountName } from '../utils/qortalApi';
-
 
 const limit = pLimit(6);
 
@@ -53,7 +52,7 @@ function normalizeAddrSets(input: any): AddrSets {
 
   return {
     memberAddrs: new Set<string>(mem.map((x: any) => String(x ?? '').trim()).filter(Boolean)),
-    adminAddrs:  new Set<string>(adm.map((x: any) => String(x ?? '').trim()).filter(Boolean)),
+    adminAddrs: new Set<string>(adm.map((x: any) => String(x ?? '').trim()).filter(Boolean)),
   };
 }
 
@@ -73,15 +72,24 @@ export async function discoverEligibleCommentPublishers(opts: {
 
   // Fetch addr sets for all groups in parallel
   const [pagRaw, minterRaw, devRaw] = await Promise.all([
-    getGroupAddressSetsById(primaryGroupId).catch(() => ({ memberAddrs: new Set(), adminAddrs: new Set() })),
-    getGroupAddressSetsById(MINTER_GROUP_ID).catch(() => ({ memberAddrs: new Set(), adminAddrs: new Set() })),
-    getGroupAddressSetsById(DEV_GROUP_ID).catch(() => ({ memberAddrs: new Set(), adminAddrs: new Set() })),
+    getGroupAddressSetsById(primaryGroupId).catch(() => ({
+      memberAddrs: new Set(),
+      adminAddrs: new Set(),
+    })),
+    getGroupAddressSetsById(MINTER_GROUP_ID).catch(() => ({
+      memberAddrs: new Set(),
+      adminAddrs: new Set(),
+    })),
+    getGroupAddressSetsById(DEV_GROUP_ID).catch(() => ({
+      memberAddrs: new Set(),
+      adminAddrs: new Set(),
+    })),
   ]);
 
-  const pag    = normalizeAddrSets(pagRaw);
+  const pag = normalizeAddrSets(pagRaw);
   const minter = normalizeAddrSets(minterRaw);
   const dev = normalizeAddrSets(devRaw);
-  
+
   // console.log('pag', pag);
   // console.log('minter',minter)
   // console.log('dev',dev)
@@ -122,7 +130,11 @@ export async function discoverEligibleCommentPublishers(opts: {
       const key = encodeURIComponent(rec.name);
       const prev = byName.get(key);
       if (!prev) byName.set(key, { name: rec.name, tags: Array.from(new Set(rec.tags)) });
-      else byName.set(key, { name: prev.name, tags: Array.from(new Set([...prev.tags, ...rec.tags])) });
+      else
+        byName.set(key, {
+          name: prev.name,
+          tags: Array.from(new Set([...prev.tags, ...rec.tags])),
+        });
     }
   }
 
@@ -132,12 +144,15 @@ export async function discoverEligibleCommentPublishers(opts: {
     const prev = byName.get(key);
     const issuerTags = ['ASSET ISSUER'];
     if (!prev) byName.set(key, { name: issuerName, tags: issuerTags });
-    else byName.set(key, { name: prev.name, tags: Array.from(new Set([...prev.tags, ...issuerTags])) });
+    else
+      byName.set(key, {
+        name: prev.name,
+        tags: Array.from(new Set([...prev.tags, ...issuerTags])),
+      });
   }
 
   return Array.from(byName.values());
 }
-
 
 type RawRow = { name?: string; identifier?: string; created?: number; updated?: number };
 
@@ -147,7 +162,7 @@ type RawRow = { name?: string; identifier?: string; created?: number; updated?: 
  */
 export async function searchByIdentifierPrefixForPublishers(
   prefix: string,
-  publishers: PublisherWithTags[],
+  publishers: PublisherWithTags[]
 ): Promise<Array<{ name: string; identifier: string; ts: number }>> {
   if (!publishers.length) return [];
 
@@ -158,8 +173,8 @@ export async function searchByIdentifierPrefixForPublishers(
           const res = await qortalRequest({
             action: 'SEARCH_QDN_RESOURCES',
             service: 'DOCUMENT',
-            name: p.name,            // exact name
-            identifier: prefix,      // prefix search
+            name: p.name, // exact name
+            identifier: prefix, // prefix search
             prefix: true,
             mode: 'all',
             prefixOnly: true,
@@ -167,12 +182,11 @@ export async function searchByIdentifierPrefixForPublishers(
           } as any).catch(() => null);
 
           const rows: RawRow[] = Array.isArray(res) ? res : res ? [res as RawRow] : [];
-          return rows
-            .map(r => ({
-              name: p.name,
-              identifier: r.identifier!,
-              ts: Number(r.updated ?? r.created ?? 0) || 0,
-            }));
+          return rows.map((r) => ({
+            name: p.name,
+            identifier: r.identifier!,
+            ts: Number(r.updated ?? r.created ?? 0) || 0,
+          }));
         } catch {
           return [] as Array<{ name: string; identifier: string; ts: number }>;
         }
@@ -181,7 +195,7 @@ export async function searchByIdentifierPrefixForPublishers(
   );
 
   // Flatten and sort oldest→newest (fetcher can re-sort if needed)
-  return perName.flat()
+  return perName.flat();
 }
 
 export async function searchAllByIdentifierPrefix(
@@ -189,7 +203,7 @@ export async function searchAllByIdentifierPrefix(
   opts?: { limit?: number; maxPages?: number; reverse?: boolean }
 ): Promise<Array<{ name: string; identifier: string; created?: number }>> {
   // const limit = Math.max(1, opts?.limit ?? 2000);
-  const limit = 0 
+  const limit = 0;
   const maxPages = Math.max(1, opts?.maxPages ?? 50);
   const reverse = !!opts?.reverse;
 
@@ -204,7 +218,7 @@ export async function searchAllByIdentifierPrefix(
       identifier: prefix,
       limit,
       offset,
-      reverse, 
+      reverse,
       prefix: true,
     } as any);
 
@@ -226,8 +240,11 @@ export async function searchAllByIdentifierPrefix(
   // de-dupe by (name, identifier) pair, keep oldest-first stable
   const seen = new Set<string>();
   const deduped: typeof out = [];
-  for (const h of out.sort((a, b) =>
-    (a.created ?? 0) - (b.created ?? 0) || a.identifier.localeCompare(b.identifier) || a.name.localeCompare(b.name)
+  for (const h of out.sort(
+    (a, b) =>
+      (a.created ?? 0) - (b.created ?? 0) ||
+      a.identifier.localeCompare(b.identifier) ||
+      a.name.localeCompare(b.name)
   )) {
     const key = `${h.name}::${h.identifier}`;
     if (!seen.has(key)) {
@@ -247,9 +264,9 @@ export async function searchAllThenFilterByPublishers(
   pubs: PublisherWithTags[],
   opts?: { limit?: number; maxPages?: number; reverse?: boolean }
 ): Promise<Array<{ name: string; identifier: string; created?: number }>> {
-  const allowed = new Set(pubs.map(p => p.name));
+  const allowed = new Set(pubs.map((p) => p.name));
   const all = await searchAllByIdentifierPrefix(prefix, opts);
-  return all.filter(h => allowed.has(h.name));
+  return all.filter((h) => allowed.has(h.name));
 }
 
 export async function searchByIdentifierPrefixFFSPublishers(
@@ -271,12 +288,12 @@ export async function searchByIdentifierPrefixFFSPublishers(
       const res = await qortalRequest({
         action: 'SEARCH_QDN_RESOURCES',
         service: 'DOCUMENT',
-        name: p.name,                     // <— constrain to this publisher
+        name: p.name, // <— constrain to this publisher
         identifier: prefix,
         prefixOnly: true,
         limit,
         offset,
-        reverse,                          // oldest→newest by default
+        reverse, // oldest→newest by default
       } as any);
 
       const arr = Array.isArray(res) ? res : [];
@@ -290,7 +307,7 @@ export async function searchByIdentifierPrefixFFSPublishers(
         }
       }
 
-      if (arr.length < limit) break;     // no more pages for this publisher
+      if (arr.length < limit) break; // no more pages for this publisher
       offset += limit;
     }
   }
@@ -298,8 +315,8 @@ export async function searchByIdentifierPrefixFFSPublishers(
   // De-dupe across publishers (same identifier can exist in multiple namespaces)
   const seen = new Set<string>();
   const deduped: typeof out = [];
-  for (const h of out.sort((a, b) =>
-    (a.created ?? 0) - (b.created ?? 0) || a.identifier.localeCompare(b.identifier)
+  for (const h of out.sort(
+    (a, b) => (a.created ?? 0) - (b.created ?? 0) || a.identifier.localeCompare(b.identifier)
   )) {
     if (!seen.has(h.identifier)) {
       seen.add(h.identifier);
@@ -308,5 +325,3 @@ export async function searchByIdentifierPrefixFFSPublishers(
   }
   return deduped;
 }
-
-

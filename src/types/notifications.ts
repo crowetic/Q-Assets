@@ -8,7 +8,7 @@ export type NotifScope =
 export type NotifPriority = 'low' | 'normal' | 'high';
 
 export interface NotifPaymentProof {
-  assetId: number;       // 0 = QORT
+  assetId: number; // 0 = QORT
   amount: number;
   txSignature: string;
   blockHeight: number;
@@ -18,7 +18,7 @@ export type NotifRole = 'admin' | 'editor' | 'issuer' | 'user';
 
 export interface NotifV1 {
   version: 1;
-  scope: string;         // serialized scope e.g. "asset:123"
+  scope: string; // serialized scope e.g. "asset:123"
   title: string;
   bodyHtml: string;
   links?: { label: string; href: string }[];

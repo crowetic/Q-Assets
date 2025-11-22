@@ -16,10 +16,7 @@ export const capitalizeEachFirstChar = {
     const core = value
       .trim()
       .split(/\s+/)
-      .map(
-        (word) =>
-          word.charAt(0).toLocaleUpperCase() + word.slice(1).toLocaleLowerCase()
-      )
+      .map((word) => word.charAt(0).toLocaleUpperCase() + word.slice(1).toLocaleLowerCase())
       .join(' ');
 
     return leadingSpaces + core + trailingSpaces;

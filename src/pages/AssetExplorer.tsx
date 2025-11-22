@@ -182,6 +182,9 @@ export function AssetCardStats({ assetId }: StatsProps) {
 }
 
 // ------- Main Explorer -------------------------------------------------------
+const PAGE_SIZE = 60;
+const SCROLL_THRESHOLD_PX = 600;
+
 const AssetExplorer = () => {
   type SortKey = 'name' | 'assetId' | 'circulating' | 'volume';
   type SortDir = 'asc' | 'desc';
@@ -191,6 +194,7 @@ const AssetExplorer = () => {
   const [avatarMap, setAvatarMap] = useState<Record<number, string | null>>({});
   const [sortKey, setSortKey] = useState<SortKey>('volume');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   const theme = useTheme();
   const { address: userAddress } = useAuth();
@@ -251,6 +255,29 @@ const AssetExplorer = () => {
     return copy;
     // include tick so list can update as stats land
   }, [assets, sortKey, sortDir, tick]);
+
+  const displayAssets = useMemo(
+    () => sortedAssets.slice(0, Math.min(visibleCount, sortedAssets.length)),
+    [sortedAssets, visibleCount]
+  );
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [assets.length, sortKey, sortDir]);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const nearBottom =
+        window.innerHeight + window.scrollY >= document.body.offsetHeight - SCROLL_THRESHOLD_PX;
+      if (nearBottom) {
+        setVisibleCount((prev) =>
+          prev >= sortedAssets.length ? prev : Math.min(prev + PAGE_SIZE, sortedAssets.length)
+        );
+      }
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [sortedAssets.length]);
 
   useEffect(() => {
     async function loadAssets() {
@@ -328,7 +355,7 @@ const AssetExplorer = () => {
   }, [userAddress]);
 
   useEffect(() => {
-    if (assets.length === 0) return;
+    if (displayAssets.length === 0) return;
 
     const ctrl = new AbortController();
     const limit = pLimit(6);
@@ -352,7 +379,7 @@ const AssetExplorer = () => {
     const setOne = (id: number, url: string | null) =>
       setAvatarMap((prev) => (prev[id] ? prev : { ...prev, [id]: url }));
 
-    assets.forEach((a) =>
+    displayAssets.forEach((a) =>
       limit(async () => {
         if (aborted || ctrl.signal.aborted) return;
 
@@ -380,7 +407,7 @@ const AssetExplorer = () => {
       aborted = true;
       ctrl.abort();
     };
-  }, [assets]);
+  }, [displayAssets]);
 
   // inside your component render
   return (
@@ -441,7 +468,7 @@ const AssetExplorer = () => {
               gap: 2,
             }}
           >
-            {sortedAssets.map((asset) => {
+            {displayAssets.map((asset) => {
               const balance = balances[asset.assetId] || 0;
               const isOwned = !!userAddress && asset.owner === userAddress;
 
@@ -640,6 +667,25 @@ const AssetExplorer = () => {
               );
             })}
           </Box>
+          {visibleCount < sortedAssets.length && (
+            <Box display="flex" justifyContent="center" mt={2}>
+              <button
+                onClick={() =>
+                  setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, sortedAssets.length))
+                }
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: 8,
+                  border: `1px solid ${theme.palette.divider}`,
+                  background: theme.palette.background.paper,
+                  color: theme.palette.text.primary,
+                  cursor: 'pointer',
+                }}
+              >
+                Load more assets
+              </button>
+            </Box>
+          )}
         </>
       )}
     </Box>

@@ -1,7 +1,7 @@
-// import { useTheme } from '@mui/material/styles';
 import { useNavigate } from 'react-router-dom';
 import HoverPanel from '../components/HoverPanel';
 import { Box } from '@mui/material';
+import QAssetsNewsSection from '../components/news/QAssetsNewsSection';
 // import { Grid } from '@mui/material';
 
 const Home = () => {
@@ -28,13 +28,6 @@ const Home = () => {
         boxSizing: 'border-box',
       }}
     >
-      {/* <Typography variant="h4" sx={{ textAlign: 'center' }}>
-        Create and Manage Qortal Assets - Asset Publications - and More
-      </Typography> */}
-      {/* <Typography sx={{ textAlign: 'center', mt: 1, color: theme.palette.primary.light }}>
-        Be sure to check the INFO page for in-depth information about Qortal Assets.
-      </Typography> */}
-
       <Box
         sx={{
           display: 'flex',
@@ -55,6 +48,9 @@ const Home = () => {
           />
         ))}
       </Box>
+
+      {/* Q-Assets News hub (list/detail toggles live inside this component) */}
+      <QAssetsNewsSection />
     </Box>
   );
 };

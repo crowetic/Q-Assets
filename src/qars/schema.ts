@@ -1,8 +1,8 @@
 // src/qars/schema.ts
-import { z } from "zod";
+import { z } from 'zod';
 
 export const QarsSnapshotSchema = z.object({
-  schema: z.literal("qars-snapshot@1"),
+  schema: z.literal('qars-snapshot@1'),
   assetId: z.number().int().nonnegative(),
   asOfHeight: z.number().int().nonnegative(),
   asOfTimeMs: z.number().int().nonnegative(),
@@ -39,13 +39,13 @@ export const QarsSnapshotSchema = z.object({
     ranges: z.array(
       z.union([
         z.object({
-          name: z.literal("trades"),
+          name: z.literal('trades'),
           fromHeight: z.number().int().nonnegative(),
           toHeight: z.number().int().nonnegative(),
           sha256: z.string(),
         }),
         z.object({
-          name: z.literal("holders"),
+          name: z.literal('holders'),
           asOfHeight: z.number().int().nonnegative(),
           sha256: z.string(),
         }),
@@ -55,10 +55,12 @@ export const QarsSnapshotSchema = z.object({
         }),
       ])
     ),
-    sampleRefs: z.object({
-      trades: z.array(z.string()).optional(),
-      orders: z.array(z.string()).optional(),
-    }).partial(),
+    sampleRefs: z
+      .object({
+        trades: z.array(z.string()).optional(),
+        orders: z.array(z.string()).optional(),
+      })
+      .partial(),
   }),
 
   publisher: z.object({

@@ -13,16 +13,15 @@ type BridgeRes = {
   error?: string;
 };
 
-
 function isBridgeReq(x: any): x is BridgeReq {
   return !!x && x.__qortalBridge === true && typeof x.id === 'string';
 }
 
 const ALLOW_ORIGINS = new Set<string>([
-  window.location.origin,            
-  'http://127.0.0.1:12393', 
-  'http://127.0.0.1:12391',         
-  'https://appnode.qortal.org', 
+  window.location.origin,
+  'http://127.0.0.1:12393',
+  'http://127.0.0.1:12391',
+  'https://appnode.qortal.org',
   'https://ext-node.qortal.link',
   // add others you trust
 ]);
@@ -53,17 +52,22 @@ export function installQortalBridgeHost() {
       port.close();
     } catch (err: any) {
       const res: BridgeRes = {
-        __qortalBridgeRes: true, id: data.id, ok: false,
+        __qortalBridgeRes: true,
+        id: data.id,
+        ok: false,
         error: String(err?.message ?? err),
       };
-      try { port.postMessage(res); } finally { port.close(); }
+      try {
+        port.postMessage(res);
+      } finally {
+        port.close();
+      }
     }
   };
 
   window.addEventListener('message', handler);
   return () => window.removeEventListener('message', handler);
 }
-
 
 // bridgeClient.ts
 function uuid() {
@@ -105,7 +109,9 @@ export function installQortalBridgeClient() {
       p,
       new Promise((_, rej) =>
         setTimeout(() => {
-          try { channel.port1.close(); } catch {}
+          try {
+            channel.port1.close();
+          } catch {}
           rej(new Error('qortal bridge timeout'));
         }, TIMEOUT)
       ),

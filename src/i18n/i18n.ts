@@ -1,10 +1,6 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
-import {
-  capitalizeAll,
-  capitalizeFirstChar,
-  capitalizeFirstWord,
-} from './processors';
+import { capitalizeAll, capitalizeFirstChar, capitalizeFirstWord } from './processors';
 
 // Load all locale JSON files
 const modules = import.meta.glob('./locales/**/*.json', {

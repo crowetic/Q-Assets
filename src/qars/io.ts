@@ -1,10 +1,6 @@
 // src/qars/io.ts
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import {
-  QARS_QDN_SERVICE,
-  weightsId,
-  snapshotHeadId
-} from '../constants/qarsConstants';
+import { QARS_QDN_SERVICE, weightsId, snapshotHeadId } from '../constants/qarsConstants';
 import { DEFAULT_WEIGHTS_V1 } from './defaultWeights';
 import type { QarsWeightsV1 } from '../types/qarsTypes';
 import { base64ToObject, base64ToUtf8 } from '../utils/data';
@@ -22,7 +18,9 @@ function getQortalRequest(): QortalRequestFn {
   // Adjust imports if you have a named import from 'qapp-core'.
   const g = globalThis as any;
   if (typeof g.qortalRequest === 'function') return g.qortalRequest;
-  throw new Error('qortalRequest is not available in global scope. Ensure Q-App runtime or export it from qapp-core.');
+  throw new Error(
+    'qortalRequest is not available in global scope. Ensure Q-App runtime or export it from qapp-core.'
+  );
 }
 
 function sleep(ms: number) {
@@ -44,22 +42,22 @@ function isRateLimitedOrTransient(err: unknown): boolean {
 export type QdnMetadata = {
   title?: string;
   description?: string;
-  tags?: string[];         // kept simple; reader can use them
+  tags?: string[]; // kept simple; reader can use them
   category?: string;
 };
 
 export type PublishArgs = {
-  name?: string;           // QDN name to publish under; undefined => current user
-  service: string;         // e.g., 'DOCUMENT'
-  identifier: string;      // our canonical id
-  data64: string;          // base64 payload
+  name?: string; // QDN name to publish under; undefined => current user
+  service: string; // e.g., 'DOCUMENT'
+  identifier: string; // our canonical id
+  data64: string; // base64 payload
   metadata?: QdnMetadata;
 };
 
 export type PublishOptions = {
-  maxRetries?: number;     // default 5
-  baseDelayMs?: number;    // default 5000
-  backoffFactor?: number;  // default 1.8
+  maxRetries?: number; // default 5
+  baseDelayMs?: number; // default 5000
+  backoffFactor?: number; // default 1.8
   // if you want to auto-slow on TOO_MANY_UNCONFIRMED:
   tooManyUnconfirmedDelayMs?: number; // default 120000
 };
@@ -130,7 +128,9 @@ export async function publishQdnResource(
 }
 
 // Small convenience wrapper specific to QARS snapshots
-export async function publishSnapshotToQdn(args: Omit<PublishArgs, 'service'> & { service?: string }) {
+export async function publishSnapshotToQdn(
+  args: Omit<PublishArgs, 'service'> & { service?: string }
+) {
   return publishQdnResource(
     { ...args, service: args.service || QARS_QDN_SERVICE },
     {
@@ -146,10 +146,10 @@ export async function publishSnapshotToQdn(args: Omit<PublishArgs, 'service'> & 
 // ---------- QDN fetch (weights & generic JSON) -------------------------------
 
 export async function fetchQdnJson<T = unknown>(params: {
-  service?: string;              // default DOCUMENT
+  service?: string; // default DOCUMENT
   identifier: string;
-  name?: string;                 // if weights live under a specific QDN name
-  expectBase64?: boolean;        // set true if your backend returns base64 as data
+  name?: string; // if weights live under a specific QDN name
+  expectBase64?: boolean; // set true if your backend returns base64 as data
 }): Promise<T> {
   const qortalRequest = getQortalRequest();
   const service = params.service || QARS_QDN_SERVICE;
@@ -182,7 +182,9 @@ export async function fetchQdnJson<T = unknown>(params: {
         const s2 = base64ToUtf8(res);
         return JSON.parse(s2) as T;
       } catch (e2) {
-        throw new Error(`FETCH_QDN_RESOURCE returned a string that is not valid JSON${params.expectBase64 ? ' (even after base64 decode)' : ''}.`);
+        throw new Error(
+          `FETCH_QDN_RESOURCE returned a string that is not valid JSON${params.expectBase64 ? ' (even after base64 decode)' : ''}.`
+        );
       }
     }
   }
@@ -197,7 +199,10 @@ export async function fetchQdnJson<T = unknown>(params: {
   throw new Error('FETCH_QDN_RESOURCE returned an unsupported format');
 }
 
-export async function fetchWeights(version?: number, opts?: { name?: string }): Promise<QarsWeightsV1> {
+export async function fetchWeights(
+  version?: number,
+  opts?: { name?: string }
+): Promise<QarsWeightsV1> {
   // If version unspecified, try latest published id you use; else default to local.
   const v = version ?? DEFAULT_WEIGHTS_V1.version;
   const id = weightsId(v);
@@ -251,8 +256,10 @@ export async function fetchCurrentHeight(): Promise<number> {
   throw new Error('Unable to determine current block height via Qortal APIs');
 }
 
-
-async function fetchHeadSnapshotFor(assetId: number, publisherName: string): Promise<QarsSnapshot | null> {
+async function fetchHeadSnapshotFor(
+  assetId: number,
+  publisherName: string
+): Promise<QarsSnapshot | null> {
   try {
     const id = snapshotHeadId(assetId);
     const snap = await fetchQdnJson<QarsSnapshot>({
@@ -280,13 +287,13 @@ export async function listRecentSnapshots(query: RecentSnapshotQuery): Promise<Q
   if (!candidates.length) return [];
 
   // Pull their HEAD snapshots
-  const snaps = await Promise.all(candidates.map(c => fetchHeadSnapshotFor(assetId, c.name)));
+  const snaps = await Promise.all(candidates.map((c) => fetchHeadSnapshotFor(assetId, c.name)));
   const defined = snaps.filter((s): s is QarsSnapshot => !!s);
   if (!defined.length) return [];
 
   const nowHeight = Math.max(...defined.map((s) => s.asOfHeight));
   const recent = defined
-    .filter((s) => (nowHeight - s.asOfHeight) <= maxAgeBlocks)
+    .filter((s) => nowHeight - s.asOfHeight <= maxAgeBlocks)
     .sort((a, b) => b.asOfHeight - a.asOfHeight)
     .slice(0, limit);
 

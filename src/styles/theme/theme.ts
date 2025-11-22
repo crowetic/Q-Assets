@@ -6,39 +6,39 @@ const commonThemeOptions = {
     h1: {
       fontSize: '2.5rem',
       fontWeight: 650,
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron',
     },
     h2: {
       fontSize: '2.25rem',
       fontWeight: 550,
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron',
     },
     h3: {
       fontSize: '2.0rem',
       fontWeight: 520,
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron',
     },
     h4: {
       fontSize: '1.75rem',
       fontWeight: 510,
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron',
     },
     h5: {
       fontSize: '1.5rem',
       fontWeight: 500,
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron',
     },
     h6: {
       fontSize: '1.25rem',
       fontWeight: 475,
-      fontFamily: 'Orbitron'
+      fontFamily: 'Orbitron',
     },
     body1: {
       fontSize: '1rem',
       fontWeight: 425,
       lineHeight: 1.5,
       letterSpacing: '0.5px',
-      fontFamily: 'Exo2'
+      fontFamily: 'Exo2',
     },
 
     body2: {
@@ -46,12 +46,11 @@ const commonThemeOptions = {
       fontWeight: 400,
       lineHeight: 1.4,
       letterSpacing: '0.2px',
-      fontFamily: 'Inter'
+      fontFamily: 'Inter',
     },
     p: {
-      fontFamily: 'Exo2'
+      fontFamily: 'Exo2',
     },
-
   },
   spacing: 8,
   shape: {
@@ -80,7 +79,6 @@ const commonThemeOptions = {
       },
     },
   },
-  
 };
 
 const lightTheme = createTheme({
@@ -91,7 +89,7 @@ const lightTheme = createTheme({
       main: 'rgba(43, 72, 102, 0.76)',
       dark: 'rgb(29, 50, 80)',
       light: 'rgb(158, 158, 158)',
-      contrastText: 'rgba(24, 40, 48, 0.99)'
+      contrastText: 'rgba(24, 40, 48, 0.99)',
     },
     secondary: {
       main: 'rgb(50, 110, 160)',
@@ -110,13 +108,13 @@ const lightTheme = createTheme({
       main: 'rgb(2, 80, 133)',
       light: 'rgb(28, 93, 146)',
       dark: 'rgb(0, 51, 80)',
-      contrastText: 'rgba(128, 211, 250, 0.88)'
+      contrastText: 'rgba(128, 211, 250, 0.88)',
     },
     success: {
       main: 'rgba(7, 44, 18, 0.91) ',
       dark: 'rgba(7, 27, 15, 0.9)',
       light: 'rgb(48, 107, 53)',
-      contrastText: 'rgba(6, 155, 51, 0.9)'
+      contrastText: 'rgba(6, 155, 51, 0.9)',
     },
     warning: {
       main: 'rgb(126, 74, 16)',
@@ -128,28 +126,25 @@ const lightTheme = createTheme({
       main: 'rgb(185, 14, 14)',
       light: 'rgb(197, 56, 56)',
       dark: 'rgb(71, 6, 6)',
-      contrastText: 'rgb(211, 113, 113)'
+      contrastText: 'rgb(211, 113, 113)',
     },
     action: {
-      hover: 'rgba(81, 132, 148, 0.72)' // your choice of light hover
+      hover: 'rgba(81, 132, 148, 0.72)', // your choice of light hover
     },
     link: {
-      main: 'rgb(2, 80, 133)',          // info.main
-      hover: 'rgb(28, 93, 146)',        // info.light
-      visited: 'rgb(31, 31, 31)',       // subtle purple for visited
-      underline: 'rgba(2, 80, 133, .5)' // faint underline color
-    }
-
+      main: 'rgb(2, 80, 133)', // info.main
+      hover: 'rgb(28, 93, 146)', // info.light
+      visited: 'rgb(31, 31, 31)', // subtle purple for visited
+      underline: 'rgba(2, 80, 133, .5)', // faint underline color
+    },
   },
 
   components: {
-    
-
     // Global link defaults (applies to <a>, ProseMirror, your QDN HTML boxes)
     MuiCssBaseline: {
       styleOverrides: (theme) => ({
-        /* global anchors */
-        'a': {
+        /* anchors */
+        a: {
           color: theme.palette.link.main,
           textDecorationColor: theme.palette.link.underline ?? theme.palette.link.main,
           textUnderlineOffset: '2px',
@@ -178,7 +173,7 @@ const lightTheme = createTheme({
           color: theme.palette.link.main,
           textDecorationColor: theme.palette.link.underline ?? theme.palette.link.main,
         },
-      })
+      }),
     },
 
     // Optional: default MUI <Link> to inherit typography and underline-on-hover
@@ -213,7 +208,6 @@ const lightTheme = createTheme({
   },
 });
 
-
 const darkTheme = createTheme({
   ...commonThemeOptions,
   palette: {
@@ -223,7 +217,7 @@ const darkTheme = createTheme({
       dark: 'rgb(15, 24, 36)',
       // light: 'rgb(44, 104, 150)',
       light: 'rgb(53, 54, 56)',
-      contrastText: 'rgba(149, 191, 223, 0.81)'
+      contrastText: 'rgba(149, 191, 223, 0.81)',
     },
     secondary: {
       main: 'rgb(52, 75, 104)',
@@ -264,23 +258,22 @@ const darkTheme = createTheme({
       contrastText: 'rgba(253, 45, 45, 0.75)',
     },
     action: {
-      hover: 'rgba(69, 79, 105, 0.61)', 
-      
+      hover: 'rgba(69, 79, 105, 0.61)',
     },
     link: {
-      main: 'rgb(120, 196, 231)',        // info.light
-      hover: 'rgb(42, 136, 199)',        // info.main (slightly deeper on hover)
-      visited: 'rgb(189, 187, 190)',     // soft violet
-      underline: 'rgba(120, 196, 231, .55)'
-    }
+      main: 'rgb(120, 196, 231)', // info.light
+      hover: 'rgb(42, 136, 199)', // info.main (slightly deeper on hover)
+      visited: 'rgb(189, 187, 190)', // soft violet
+      underline: 'rgba(120, 196, 231, .55)',
+    },
   },
-  
+
   components: {
     MuiDialog: { styleOverrides: { paper: { backgroundImage: 'none' } } },
     MuiPopover: { styleOverrides: { paper: { backgroundImage: 'none' } } },
     MuiCssBaseline: {
       styleOverrides: (theme) => ({
-        'a': {
+        a: {
           color: theme.palette.link.main,
           textDecorationColor: theme.palette.link.underline ?? theme.palette.link.main,
           textUnderlineOffset: '2px',
@@ -301,7 +294,7 @@ const darkTheme = createTheme({
           color: theme.palette.link.main,
           textDecorationColor: theme.palette.link.underline ?? theme.palette.link.main,
         },
-      })
+      }),
     },
     MuiLink: {
       defaultProps: { underline: 'hover', color: 'inherit' },
@@ -331,8 +324,5 @@ const darkTheme = createTheme({
     },
   },
 });
-
-
-
 
 export { lightTheme, darkTheme };

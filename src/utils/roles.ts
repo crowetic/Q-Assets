@@ -4,17 +4,13 @@
 // Adds/updates roleTags on ThreadComment items based on memberships.
 // ------------------------------------------------------------------------------------
 // import { MINTER_GROUP_ID, DEV_GROUP_ID } from "../constants/qdnConstants";
-import type { ThreadComment } from "../types/ThreadedComment";
+import type { ThreadComment } from '../types/ThreadedComment';
+import { Q_ASSETS_MANAGEMENT_GROUP_ID } from '../constants/qdnConstants';
 
 export type RoleMap = Record<number, string>; // groupId -> tag label (e.g., 691: 'MINTER')
 
-
-
-// global in q-app
-declare const qortalRequest: (args: unknown) => Promise<any>;
-
 // --- in-memory caches (session-scoped) -----------------
-const nameAddrCache = new Map<string, string>();    // name(lower) -> address
+const nameAddrCache = new Map<string, string>(); // name(lower) -> address
 const addrGroupsCache = new Map<string, GroupInfo[]>(); // address -> memberships
 
 type GroupInfo = {
@@ -24,19 +20,35 @@ type GroupInfo = {
 };
 
 export interface TaggingInputs {
-  primaryGroupId: number;        // PAG id
+  primaryGroupId: number; // PAG id
   MINTER_GROUP_ID: number;
   DEV_GROUP_ID: number;
-  assetIssuer?: string | null;   // issuer name (optional)
+  assetIssuer?: string | null; // issuer name (optional)
 }
 
 export type RoleTag =
   | 'ASSET ISSUER'
   | 'PAG Admin'
-  | 'M'  // Minter member
+  | 'M' // Minter member
   | 'MA' // Minter admin
-  | 'D'  // Dev member
-  | 'DA' // Dev admin;
+  | 'D' // Dev member
+  | 'DA'; // Dev admin;
+
+export interface UserRoles {
+  loggedIn: boolean;
+  userName?: string;
+  userAddress?: string;
+  isManagement: boolean; // member of Q-Assets-Management group
+  isManagementAdmin: boolean; // admin in Q-Assets-Management group
+  isAssetIssuer: boolean; // has issued at least one asset
+}
+
+const anonymousRoles: UserRoles = {
+  loggedIn: false,
+  isManagement: false,
+  isManagementAdmin: false,
+  isAssetIssuer: false,
+};
 
 // --- fetch helpers ------------------------------------
 async function getAddressForName(name: string): Promise<string | null> {
@@ -81,10 +93,7 @@ async function getGroupsForAddress(address: string): Promise<GroupInfo[]> {
 }
 
 /** Compute role tags for a *name* (using address + groups) according to the rules. */
-export async function addTagsForName(
-  name: string,
-  inputs: TaggingInputs
-): Promise<RoleTag[]> {
+export async function addTagsForName(name: string, inputs: TaggingInputs): Promise<RoleTag[]> {
   const norm = (s?: string | null) => encodeURIComponent(s as string);
   const isIssuer = inputs.assetIssuer && norm(inputs.assetIssuer) === norm(name);
 
@@ -99,15 +108,15 @@ export async function addTagsForName(
   if (!Array.isArray(memberships) || memberships.length === 0) return Array.from(out);
 
   // Primary Asset Group: ONLY tag admins
-  const pag = memberships.find(g => g.groupId === inputs.primaryGroupId);
+  const pag = memberships.find((g) => g.groupId === inputs.primaryGroupId);
   if (pag?.isAdmin) out.add('PAG Admin');
 
   // Minter: M or MA
-  const minter = memberships.find(g => g.groupId === inputs.MINTER_GROUP_ID);
+  const minter = memberships.find((g) => g.groupId === inputs.MINTER_GROUP_ID);
   if (minter) out.add(minter.isAdmin ? 'MA' : 'M');
 
   // Dev: D or DA
-  const dev = memberships.find(g => g.groupId === inputs.DEV_GROUP_ID);
+  const dev = memberships.find((g) => g.groupId === inputs.DEV_GROUP_ID);
   if (dev) out.add(dev.isAdmin ? 'DA' : 'D');
 
   return Array.from(out);
@@ -118,21 +127,62 @@ export async function tagComments(
   inputs: TaggingInputs
 ): Promise<ThreadComment[]> {
   // dedupe names
-  const names = Array.from(new Set(comments.map(c => (c.author || '').trim()).filter(Boolean)));
+  const names = Array.from(new Set(comments.map((c) => (c.author || '').trim()).filter(Boolean)));
 
   // resolve tags per name (these calls should use your cached helpers under the hood)
   const tagsByName = new Map<string, RoleTag[]>();
   await Promise.all(
-    names.map(async n => {
+    names.map(async (n) => {
       const tags = await addTagsForName(n, inputs);
       tagsByName.set(encodeURIComponent(n), tags);
     })
   );
 
   // apply/merge (and correct if previously wrong/missing)
-  return comments.map(c => {
-    const resolved = tagsByName.get((c.author || '')) || [];
+  return comments.map((c) => {
+    const resolved = tagsByName.get(c.author || '') || [];
     const merged = Array.from(new Set([...(c.roleTags ?? []), ...resolved]));
     return { ...c, roleTags: merged };
   });
+}
+
+export async function getUserRoles(): Promise<UserRoles> {
+  const fallback = { ...anonymousRoles };
+
+  let account: any = null;
+  try {
+    account = await qortalRequest({ action: 'GET_USER_ACCOUNT' } as any);
+  } catch {
+    return fallback;
+  }
+
+  const address = account?.address;
+  if (typeof address !== 'string' || !address.startsWith('Q')) {
+    return fallback;
+  }
+
+  const [primaryName, groups, issuedTxs] = await Promise.all([
+    qortalRequest({ action: 'GET_PRIMARY_NAME', address }).catch(() => ''),
+    getGroupsForAddress(address),
+    qortalRequest({
+      action: 'SEARCH_TRANSACTIONS',
+      txGroupId: 0,
+      address,
+      txType: ['ISSUE_ASSET'],
+      confirmationStatus: 'CONFIRMED',
+      limit: 1,
+      offset: 0,
+      reverse: true,
+    }).catch(() => []),
+  ]);
+
+  return {
+    loggedIn: true,
+    userName:
+      typeof primaryName === 'string' && primaryName.trim().length > 0 ? primaryName : undefined,
+    userAddress: address,
+    isManagement: groups.some((g) => g.groupId === Q_ASSETS_MANAGEMENT_GROUP_ID),
+    isManagementAdmin: groups.some((g) => g.groupId === Q_ASSETS_MANAGEMENT_GROUP_ID && g.isAdmin),
+    isAssetIssuer: Array.isArray(issuedTxs) && issuedTxs.length > 0,
+  };
 }

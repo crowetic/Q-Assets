@@ -13,7 +13,7 @@ export interface SimpleHit {
  * /arbitrary/resources/searchsimple?service=DOCUMENT&identifier=<prefix>&prefix=true&limit=0
  */
 export async function searchSimpleByIdentifierPrefix(
-  service: string ,
+  service: string,
   identifierPrefix: string
 ): Promise<SimpleHit[]> {
   const url = `/arbitrary/resources/searchsimple?service=${encodeURIComponent(
@@ -35,10 +35,10 @@ export async function searchSimpleByIdentifierPrefix(
 
 export async function searchSimpleByIdPrefixOnly(
   identifierPrefix: string,
-  isPrivate?: boolean,
+  isPrivate?: boolean
 ): Promise<SimpleHit[]> {
-  const service = isPrivate ? "DOCUMENT_PRIVATE" : "DOCUMENT";
-  
+  const service = isPrivate ? 'DOCUMENT_PRIVATE' : 'DOCUMENT';
+
   const url = `/arbitrary/resources/searchsimple?service=${encodeURIComponent(
     service
   )}&identifier=${encodeURIComponent(identifierPrefix)}&prefix=true&limit=0`;
@@ -59,10 +59,10 @@ export async function searchSimpleByIdPrefixOnly(
 export async function searchSimpleNameIdPrefix(
   identifierPrefix: string,
   name: string,
-  isPrivate?: boolean,
+  isPrivate?: boolean
 ): Promise<SimpleHit[]> {
-  const service = isPrivate ? "DOCUMENT_PRIVATE" : "DOCUMENT";
-  
+  const service = isPrivate ? 'DOCUMENT_PRIVATE' : 'DOCUMENT';
+
   const url = `/arbitrary/resources/searchsimple?service=${encodeURIComponent(
     service
   )}&identifier=${encodeURIComponent(identifierPrefix)}&name=${encodeURIComponent(name)}&caseInsensitive=true&prefix=true&limit=0`;
@@ -82,10 +82,10 @@ export async function searchSimpleNameIdPrefix(
 
 export async function searchSimpleByFullId(
   identifier: string,
-  isPrivate?: boolean,
+  isPrivate?: boolean
 ): Promise<SimpleHit[]> {
-  const service = isPrivate ? "DOCUMENT_PRIVATE" : "DOCUMENT";
-  
+  const service = isPrivate ? 'DOCUMENT_PRIVATE' : 'DOCUMENT';
+
   const url = `/arbitrary/resources/searchsimple?service=${encodeURIComponent(
     service
   )}&identifier=${encodeURIComponent(identifier)}&limit=0`;

@@ -1,6 +1,5 @@
 // src/pages/manage/DataManagement.tsx
-import { Box, Typography, Paper } from '@mui/material';
-import Grid from '@mui/material/Grid'; // ✅ v7 Grid import
+import { Box, Typography, Paper, Button, Stack } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import CloudUploadRoundedIcon from '@mui/icons-material/CloudUploadRounded';
 import LibraryBooksRoundedIcon from '@mui/icons-material/LibraryBooksRounded';
@@ -50,7 +49,6 @@ const panels: Panel[] = [
     description: 'Filter by service/type; search identifiers & versions.',
     to: 'explorer',
     icon: <TravelExploreRoundedIcon fontSize="inherit" />,
-    disabled: true,
   },
   {
     title: 'Archives / Deletions',
@@ -136,17 +134,40 @@ function BigPanel({ p }: { p: Panel }) {
 export default function DataManagement() {
   return (
     <Box sx={{ p: { xs: 1.5, sm: 2 }, mx: 'auto', maxWidth: '1100px' }}>
-      <Typography variant="h4" sx={{ mb: 2, lineHeight: 1.15 }}>
-        Data Management
-      </Typography>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={1}
+        alignItems={{ xs: 'flex-start', sm: 'center' }}
+        justifyContent="space-between"
+        sx={{ mb: 2 }}
+      >
+        <Box>
+          <Typography variant="h4" sx={{ lineHeight: 1.15 }}>
+            Data Management
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Publish and organize everything tied to your Qortal names.
+          </Typography>
+        </Box>
+        <Button component={RouterLink} to="/manage" variant="text">
+          ← Back to Manage
+        </Button>
+      </Stack>
 
-      <Grid container spacing={2.5}>
+      <Box
+        sx={{
+          display: 'grid',
+          gap: { xs: 2, sm: 2.5 },
+          gridTemplateColumns: {
+            xs: 'repeat(1, minmax(0, 1fr))',
+            sm: 'repeat(auto-fit, minmax(260px, 1fr))',
+          },
+        }}
+      >
         {panels.map((p) => (
-          <Grid key={p.title} size={{ xs: 12, sm: 6, md: 4 }}>
-            <BigPanel p={p} />
-          </Grid>
+          <BigPanel key={p.title} p={p} />
         ))}
-      </Grid>
+      </Box>
     </Box>
   );
 }

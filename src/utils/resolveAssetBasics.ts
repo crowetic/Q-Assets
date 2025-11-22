@@ -12,7 +12,12 @@ export async function resolveAssetBasics(assetId: number): Promise<AssetBasics |
   const idx = readAssetsIndexSync();
   const cached = idx?.[assetId];
   if (cached?.name && cached?.owner) {
-    return { assetId, assetName: cached.name, ownerAddress: cached.owner, maxSupply: cached.quantity };
+    return {
+      assetId,
+      assetName: cached.name,
+      ownerAddress: cached.owner,
+      maxSupply: cached.quantity,
+    };
   }
 
   const mini = await ensureAssetMini(assetId);

@@ -25,7 +25,7 @@ async function fetchHoldersCount(assetId: number): Promise<number> {
 
 export async function collectMetrics(params: {
   assetId: number;
-  windowBlocks: number;     // e.g., 2880 (≈ 2 days)
+  windowBlocks: number; // e.g., 2880 (≈ 2 days)
 }): Promise<{ metrics: QarsMetrics; inputsProof: InputsProof }> {
   const { assetId, windowBlocks } = params;
   const height = await fetchCurrentHeight();
@@ -54,8 +54,10 @@ export async function collectMetrics(params: {
     const qty = Number(tr?.targetAmount ?? io?.amount ?? 0);
     if (!(qty > 0)) continue;
     // price QORT/asset
-    const price = io?.price != null ? Number(io.price) :
-      Number(tr?.initiatorAmount ?? 0) / Math.max(1e-12, qty);
+    const price =
+      io?.price != null
+        ? Number(io.price)
+        : Number(tr?.initiatorAmount ?? 0) / Math.max(1e-12, qty);
 
     if (!(price > 0)) continue;
 
@@ -74,45 +76,45 @@ export async function collectMetrics(params: {
   const holdersCount = await fetchHoldersCount(assetId);
 
   const metrics: QarsMetrics = {
-  // Market
-  tradesCount,
-  volAsset,
-  volQort,
-  uniqueTraders: traders.size,
-  bookDiversity: undefined,      // TODO: compute entropy-like diversity if you want
+    // Market
+    tradesCount,
+    volAsset,
+    volQort,
+    uniqueTraders: traders.size,
+    bookDiversity: undefined, // TODO: compute entropy-like diversity if you want
 
-  // Holders
-  holdersCount,
-  holdersDelta: 0,               // TODO: compare to previous epoch snapshot
-  holderRegularity: 0,           // TODO: EWMA across N epochs
+    // Holders
+    holdersCount,
+    holdersDelta: 0, // TODO: compare to previous epoch snapshot
+    holderRegularity: 0, // TODO: EWMA across N epochs
 
-  // Transfers (non-trade)
-  userTransfers: 0,              // TODO: non-issuer transfers (issuer->fresh excluded)
-  transferRegularity: 0,         // TODO: JS-divergence/capped regularity
+    // Transfers (non-trade)
+    userTransfers: 0, // TODO: non-issuer transfers (issuer->fresh excluded)
+    transferRegularity: 0, // TODO: JS-divergence/capped regularity
 
-  // Dividends
-  dividendEvents: 0,             // TODO
-  dividendQortTotal: 0,          // TODO
+    // Dividends
+    dividendEvents: 0, // TODO
+    dividendQortTotal: 0, // TODO
 
-  // Fees / network contribution
-  totalFeesQort: 0,              // TODO: sum tx.fee for tx touching this asset
-  burnsQort: 0,                  // TODO if burn-to-null is implemented
+    // Fees / network contribution
+    totalFeesQort: 0, // TODO: sum tx.fee for tx touching this asset
+    burnsQort: 0, // TODO if burn-to-null is implemented
 
-  // Community/QDN
-  newsPosts: 0,                  // TODO: Q-Assets NEWS tagged posts
-  newsComments: 0,               // TODO
-  paidUpvotes: 0,                // TODO: validated paid upvotes count
-  paidUpvotesQort: 0,            // TODO: QORT routed via upvotes
-  groupMembers: 0,               // TODO: primary group size under rules
-  communityRegularity: 0,        // TODO: cadence of posts/comments
+    // Community/QDN
+    newsPosts: 0, // TODO: Q-Assets NEWS tagged posts
+    newsComments: 0, // TODO
+    paidUpvotes: 0, // TODO: validated paid upvotes count
+    paidUpvotesQort: 0, // TODO: QORT routed via upvotes
+    groupMembers: 0, // TODO: primary group size under rules
+    communityRegularity: 0, // TODO: cadence of posts/comments
 
-  // Issuer/Admin
-  issuerActivityScore: 0,        // TODO: composite issuer/admin/QDN activity
+    // Issuer/Admin
+    issuerActivityScore: 0, // TODO: composite issuer/admin/QDN activity
 
-  // Anti-gaming
-  selfDealPenalty: 0,            // 0..1 (penalty), fill from heuristics
-  sybilPenalty: 0,               // 0..1 (penalty), from address clustering
-};
+    // Anti-gaming
+    selfDealPenalty: 0, // 0..1 (penalty), fill from heuristics
+    sybilPenalty: 0, // 0..1 (penalty), from address clustering
+  };
 
   const inputsProof: InputsProof = {
     nodeInfo: { height, network: 'main' },

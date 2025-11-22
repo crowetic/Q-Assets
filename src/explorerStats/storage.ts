@@ -1,7 +1,7 @@
 // src/explorerStats/storage.ts
-import type {  ExplorerStats } from "./types";
+import type { ExplorerStats } from './types';
 
-const PREFIX = "qassets.explorer.v1.";
+const PREFIX = 'qassets.explorer.v1.';
 const key = (id: number) => `${PREFIX}${id}`;
 
 export function loadStats(id: number): ExplorerStats | null {

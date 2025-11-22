@@ -21,7 +21,9 @@ export function useQars(assetId: number) {
         if (alive) setLoading(false);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [assetId]);
 
   return { data, loading, error: err };

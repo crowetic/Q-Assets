@@ -1,6 +1,6 @@
 // src/qars/builder.ts
-import type { InputsProof, QarsMetrics, QarsSnapshot, QarsWeightsV1 } from "../types/qarsTypes";
-import { scoreEpoch } from "./weights";
+import type { InputsProof, QarsMetrics, QarsSnapshot, QarsWeightsV1 } from '../types/qarsTypes';
+import { scoreEpoch } from './weights';
 
 export interface BuildContext {
   assetId: number;
@@ -36,8 +36,8 @@ export interface MetricsInput {
 // }
 
 export type InputsProofInput = {
-  ranges?: InputsProof["ranges"];         // Array<...> | undefined
-  sampleRefs?: InputsProof["sampleRefs"]; // { trades?: string[]; orders?: string[] } | undefined
+  ranges?: InputsProof['ranges']; // Array<...> | undefined
+  sampleRefs?: InputsProof['sampleRefs']; // { trades?: string[]; orders?: string[] } | undefined
 };
 
 export interface PublisherInput {

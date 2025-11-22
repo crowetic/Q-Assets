@@ -1,5 +1,3 @@
-
-
 /** List known assets (optionally with data) */
 export async function getAllAssets(includeData = true, limit = 0, offset = 0) {
   const res = await fetch(`/assets?includeData=${includeData}&limit=${limit}&offset=${offset}`);
@@ -8,7 +6,7 @@ export async function getAllAssets(includeData = true, limit = 0, offset = 0) {
 }
 
 /** Get info on an asset by ID or name */
-export async function getAssetInfo(params: { assetId?: number, assetName?: string }) {
+export async function getAssetInfo(params: { assetId?: number; assetName?: string }) {
   const q = params.assetId
     ? `assetId=${params.assetId}`
     : `assetName=${encodeURIComponent(params.assetName ?? '')}`;
@@ -19,17 +17,18 @@ export async function getAssetInfo(params: { assetId?: number, assetName?: strin
 
 /** Fetch balances for addresses or asset IDs */
 
-
-export async function getAssetBalances(options: {
-  addresses?: string[];
-  assetIds?: number[];
-  excludeZero?: boolean;
-  limit?: number;
-  offset?: number;
-} = {}) {
+export async function getAssetBalances(
+  options: {
+    addresses?: string[];
+    assetIds?: number[];
+    excludeZero?: boolean;
+    limit?: number;
+    offset?: number;
+  } = {}
+) {
   const params = new URLSearchParams();
-  options.addresses?.forEach(a => params.append('address', a));
-  options.assetIds?.forEach(id => params.append('assetid', id.toString()));
+  options.addresses?.forEach((a) => params.append('address', a));
+  options.assetIds?.forEach((id) => params.append('assetid', id.toString()));
   if (options.excludeZero) params.set('excludeZero', 'true');
   if (options.limit != null) params.set('limit', options.limit.toString());
   if (options.offset != null) params.set('offset', options.offset.toString());
@@ -45,13 +44,12 @@ export async function getAssetBalances(options: {
 }
 
 export function formatAssetAmount(amount: number, isDivisible: boolean): string {
-    const decimals = isDivisible ? 8 : 0;
-    return amount.toLocaleString(undefined, {
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
-    });
-  }
-
+  const decimals = isDivisible ? 8 : 0;
+  return amount.toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
 
 /** Fetch order book or trades, etc. */
 export async function getAssetOrderBook(assetId: number, otherAssetId: number) {

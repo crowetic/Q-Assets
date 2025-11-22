@@ -18,9 +18,11 @@ export type LoadedSection = {
 export type WikiOverrides = {
   version: 1;
   updatedAt: number;
-  overrides: Record<string, { mode: 'latest' } | { mode: 'preferred'; preferred: { publisher: string } }>;
+  overrides: Record<
+    string,
+    { mode: 'latest' } | { mode: 'preferred'; preferred: { publisher: string } }
+  >;
 };
-
 
 type GroupMemberRow = { address?: string; member?: string; isAdmin?: boolean };
 type Role = 'admin' | 'member';
@@ -28,12 +30,9 @@ export type WikiMenuItem = { id: string; title: string; tags?: string[] };
 
 /* --------------------------- Small address cache ------------------------ */
 const CACHE_TTL_MS = 60_000;
-let _addrCache:
-  | { memberAddrs: Set<string>; adminAddrs: Set<string>; at: number }
-  | null = null;
+let _addrCache: { memberAddrs: Set<string>; adminAddrs: Set<string>; at: number } | null = null;
 
 const normAddr = (s?: string) => (s || '').trim();
-
 
 /* ------------------------- Group fetchers (paged) ----------------------- */
 type GroupMembersResponse =
@@ -47,7 +46,7 @@ function parseMembersPayload(json: GroupMembersResponse): GroupMemberRow[] {
 }
 
 async function fetchGroupMembersRaw(groupId: number): Promise<GroupMemberRow[]> {
-  if (!groupId) groupId = WIKI_GROUP_ID
+  if (!groupId) groupId = WIKI_GROUP_ID;
   const url = `/groups/members/${groupId}?limit=0&reverse=true`;
   const res = await fetch(url, { headers: { accept: 'application/json' } });
   if (!res.ok) throw new Error(`Group members fetch failed: ${res.status} ${res.statusText}`);
@@ -60,7 +59,10 @@ async function fetchAllRows(onlyAdmins: boolean): Promise<GroupMemberRow[]> {
   return onlyAdmins ? rows.filter((r) => r.isAdmin === true) : rows;
 }
 
-export async function fetchGroupMembers(onlyAdmins: boolean, groupId: number): Promise<GroupMemberRow[]> {
+export async function fetchGroupMembers(
+  onlyAdmins: boolean,
+  groupId: number
+): Promise<GroupMemberRow[]> {
   const rows = await fetchGroupMembersRaw(groupId);
   return onlyAdmins ? rows.filter((r) => r.isAdmin === true) : rows;
 }
@@ -98,7 +100,10 @@ export async function getGroupAddressSetsById(groupId: number): Promise<{
   }
 
   try {
-    const [adminsRaw, membersRaw] = await Promise.all([fetchGroupMembers(true, groupId), fetchGroupMembers(false, groupId)]);
+    const [adminsRaw, membersRaw] = await Promise.all([
+      fetchGroupMembers(true, groupId),
+      fetchGroupMembers(false, groupId),
+    ]);
     const memberAddrs = new Set(membersRaw.map((r) => normAddr(r.member || r.address)));
     const adminAddrs = new Set(adminsRaw.map((r) => normAddr(r.member || r.address)));
     for (const a of adminAddrs) memberAddrs.add(a); // admins are members too
@@ -130,9 +135,7 @@ async function getAllNamesForAddress(address: string): Promise<string[]> {
     const names = await getAllAccountNames(address).catch(() => null);
 
     const normalizeList = (arr: any): string[] =>
-      (Array.isArray(arr) ? arr : [])
-        .map((s) => encodeURIComponent(s))
-        .filter(Boolean);
+      (Array.isArray(arr) ? arr : []).map((s) => encodeURIComponent(s)).filter(Boolean);
 
     let out = normalizeList(names);
 
@@ -223,17 +226,23 @@ export async function isNameInManagementGroup(name?: string | null): Promise<boo
 export async function isNameAdminInManagementGroup(name?: string | null): Promise<boolean> {
   if (!name) return false;
   const names = await listManagementGroupNames();
-  return names.some((m) => encodeURIComponent(m.name) === encodeURIComponent(name) && m.role === 'admin');
+  return names.some(
+    (m) => encodeURIComponent(m.name) === encodeURIComponent(name) && m.role === 'admin'
+  );
 }
 
 /* --------------------------- Publish eligibility ------------------------ */
 export async function checkPublishEligibility(address?: string | null, name?: string | null) {
   const inGroup = await isAddressInManagementGroup(address);
   if (!inGroup) return { canPublish: false, reason: 'Requires membership in Q-Assets-Management.' };
-  if (!name) return { canPublish: false, reason: 'Your account needs a registered Qortal name to publish.' };
+  if (!name)
+    return { canPublish: false, reason: 'Your account needs a registered Qortal name to publish.' };
   return { canPublish: true as const, reason: '' };
 }
-export async function isUserInManagementGroup(opts: { address?: string | null; name?: string | null }) {
+export async function isUserInManagementGroup(opts: {
+  address?: string | null;
+  name?: string | null;
+}) {
   if (await isAddressInManagementGroup(opts.address)) return true;
   return isNameInManagementGroup(opts.name);
 }
@@ -327,11 +336,11 @@ async function discoverCandidatesStrict(
           const res = await qortalRequest({
             action: 'SEARCH_QDN_RESOURCES',
             service: 'DOCUMENT',
-            name: p.name,           // EXACT name; hyphens preserved
-            identifier,             // EXACT identifier
+            name: p.name, // EXACT name; hyphens preserved
+            identifier, // EXACT identifier
           });
 
-          const rows = Array.isArray(res) ? res : (res ? [res] : []);
+          const rows = Array.isArray(res) ? res : res ? [res] : [];
           if (!rows.length) return null;
 
           // Pick newest row for THIS name + identifier only
@@ -357,12 +366,11 @@ async function discoverCandidatesStrict(
     )
   );
 
-  const hits = (results.filter(Boolean) as Candidate[]);
-  const admins  = hits.filter(h => h.role === 'admin').sort((a,b) => b.ts - a.ts);
-  const members = hits.filter(h => h.role === 'member').sort((a,b) => b.ts - a.ts);
+  const hits = results.filter(Boolean) as Candidate[];
+  const admins = hits.filter((h) => h.role === 'admin').sort((a, b) => b.ts - a.ts);
+  const members = hits.filter((h) => h.role === 'member').sort((a, b) => b.ts - a.ts);
   return admins.concat(members);
 }
-
 
 /* ---------------------- Sections (admin > member) ----------------------- */
 type Candidate = { name: string; role: Role; ts: number };
@@ -428,7 +436,7 @@ export async function loadWikiOverrides(): Promise<WikiOverrides | null> {
     const res = await qortalRequest({
       action: 'FETCH_QDN_RESOURCE',
       service: 'DOCUMENT',
-      identifier: 'wiki_overrides',   // you can also use 'Q-Assets/wiki_overrides'
+      identifier: 'wiki_overrides', // you can also use 'Q-Assets/wiki_overrides'
       name: 'Q-Assets',
       encoding: 'base64',
     });
@@ -441,7 +449,7 @@ export async function loadWikiOverrides(): Promise<WikiOverrides | null> {
 }
 
 // save (admins only)
-export async function saveWikiOverrides(doc: WikiOverrides/*, publisherName: string*/) {
+export async function saveWikiOverrides(doc: WikiOverrides /*, publisherName: string*/) {
   const payload = await objectToBase64(doc);
   // publish under JSON/Q-Assets/wiki_overrides (adjust to your scheme)
   return qortalRequest({
@@ -453,7 +461,6 @@ export async function saveWikiOverrides(doc: WikiOverrides/*, publisherName: str
     // plus any metadata you already attach (e.g., title, category)
   });
 }
-
 
 /* ----------------------------- Menu (TOC) ------------------------------- */
 const WIKI_MENU_IDENTIFIER = `${WIKI_IDENTIFIER_PREFIX}__menu`;
@@ -498,7 +505,7 @@ export async function loadWikiMenu(): Promise<{
     )
   );
 
-  const candidates = (findings.filter(Boolean) as Array<{ name: string; role: Role; ts: number }>);
+  const candidates = findings.filter(Boolean) as Array<{ name: string; role: Role; ts: number }>;
   if (!candidates.length) return null;
 
   const newestAdmin = candidates.filter((c) => c.role === 'admin').sort((a, b) => b.ts - a.ts)[0];
@@ -543,10 +550,7 @@ export async function saveWikiMenu(items: WikiMenuItem[], publisherName: string)
   });
 }
 
-
-export async function findGroupPublishersWithResource(
-  identifier: string
-): Promise<Candidate[]> {
+export async function findGroupPublishersWithResource(identifier: string): Promise<Candidate[]> {
   const publishers = await listManagementGroupNames(); // [{name, role}]
   if (!publishers.length) return [];
 
@@ -557,11 +561,11 @@ export async function findGroupPublishersWithResource(
           const res = await qortalRequest({
             action: 'SEARCH_QDN_RESOURCES',
             service: 'DOCUMENT',
-            name: p.name,           // EXACT name; hyphen-safe
-            identifier,             // EXACT identifier
+            name: p.name, // EXACT name; hyphen-safe
+            identifier, // EXACT identifier
           });
 
-          const rows = Array.isArray(res) ? res : (res ? [res] : []);
+          const rows = Array.isArray(res) ? res : res ? [res] : [];
           if (!rows.length) return null;
 
           const best = rows
@@ -586,30 +590,36 @@ export async function findGroupPublishersWithResource(
     )
   );
 
-  const hits = (results.filter(Boolean) as Candidate[]);
-  const admins  = hits.filter(h => h.role === 'admin').sort((a,b) => b.ts - a.ts);
-  const members = hits.filter(h => h.role === 'member').sort((a,b) => b.ts - a.ts);
+  const hits = results.filter(Boolean) as Candidate[];
+  const admins = hits.filter((h) => h.role === 'admin').sort((a, b) => b.ts - a.ts);
+  const members = hits.filter((h) => h.role === 'member').sort((a, b) => b.ts - a.ts);
   return admins.concat(members);
 }
 
 export async function isNameAdminOfGroupId(name: string, groupId: number): Promise<boolean> {
   try {
     // 1) resolve address for name
-    const address = await qortalRequest({ action: 'GET_ADDRESS_FROM_NAME', name } as any)
-      .catch(() => null);
+    const address = await qortalRequest({ action: 'GET_ADDRESS_FROM_NAME', name } as any).catch(
+      () => null
+    );
     if (!address) return false;
 
     // 2) fetch group admins (adjust to your Core endpoints if different)
     // This endpoint mirrors what you used for wiki: /groups/members/<id>?limit=0
     const res = await fetch(`/groups/members/${groupId}?limit=0&reverse=true`, {
       headers: { accept: 'application/json' },
-    }).then(r => r.json()).catch(() => null);
+    })
+      .then((r) => r.json())
+      .catch(() => null);
 
-    const rows: Array<{ member?: string; address?: string; isAdmin?: boolean }> =
-      Array.isArray(res) ? res : (Array.isArray(res?.members) ? res.members : []);
+    const rows: Array<{ member?: string; address?: string; isAdmin?: boolean }> = Array.isArray(res)
+      ? res
+      : Array.isArray(res?.members)
+        ? res.members
+        : [];
 
     const admins = new Set(
-      rows.filter(r => r.isAdmin).map(r => String(r.member || r.address || '').trim())
+      rows.filter((r) => r.isAdmin).map((r) => String(r.member || r.address || '').trim())
     );
     return admins.has(String(address).trim());
   } catch {
@@ -632,7 +642,9 @@ export async function isNameMemberOfGroupId(
     // 2) Fetch all members of the group
     const res = await fetch(`/groups/members/${groupId}?limit=0&reverse=true`, {
       headers: { accept: 'application/json' },
-    }).then((r) => r.json()).catch(() => null);
+    })
+      .then((r) => r.json())
+      .catch(() => null);
 
     const rows: Array<{ member?: string; address?: string; isAdmin?: boolean }> = Array.isArray(res)
       ? res

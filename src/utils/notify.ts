@@ -1,9 +1,23 @@
-import { qAssetsRevenueAddress } from "../constants/qdeckIdentifiers";
-import { appendToIndex } from "../notifications/notifyIndex";
-import { NotifPaymentProof, NotifPolicyV1, NotifRole, NotifScope, NotifV1 } from "../types/notifications";
-import { objectToBase64 } from "./data";
-import { sendChatMessage } from "./qchat";
-import { getAccount, getTransactionInfoBySignature, transferAsset } from "./qortalApi";
+import { qAssetsRevenueAddress } from '../constants/qdeckIdentifiers';
+import { appendToIndex } from '../notifications/notifyIndex';
+import {
+  NotifPaymentProof,
+  NotifPolicyV1,
+  NotifRole,
+  NotifScope,
+  NotifV1,
+} from '../types/notifications';
+import { objectToBase64 } from './data';
+import { sendChatMessage } from './qchat';
+import { getAccount, getTransactionInfoBySignature, transferAsset } from './qortalApi';
+
+export type NotifPriority = 'low' | 'normal' | 'high';
+export type NotifScopeStr =
+  | 'global'
+  | `asset:${number}`
+  | `group:${number}`
+  | 'system'
+  | `custom:${string}`;
 
 export function quoteNotifFee(policy: NotifPolicyV1, payAssetId: number) {
   if (payAssetId && policy.discount?.assetId === payAssetId) {
@@ -12,10 +26,29 @@ export function quoteNotifFee(policy: NotifPolicyV1, payAssetId: number) {
   return { assetId: 0, amount: policy.basePriceQort }; // 0 = QORT
 }
 
+export function scopeToKey(scope: NotifScope): NotifScopeStr {
+  switch (scope.kind) {
+    case 'global':
+      return 'global';
+    case 'asset':
+      return `asset:${scope.assetId}`;
+    case 'group':
+      return `group:${scope.groupId}`;
+    case 'system':
+      return 'system';
+    case 'custom':
+      return `custom:${scope.key}`;
+    default:
+      return 'global';
+  }
+}
 
-export async function verifyPayment(p: NotifPaymentProof, expected: { assetId: number; amount: string; payer: string }) {
+export async function verifyPayment(
+  p: NotifPaymentProof,
+  expected: { assetId: number; amount: string; payer: string }
+) {
   // Lookup tx; (pseudo) adapt to Core API you use
-  const tx = await getTransactionInfoBySignature( p.txSignature );
+  const tx = await getTransactionInfoBySignature(p.txSignature);
   // Basic invariants
   if (!tx) return false;
   if (tx.creatorAddress !== expected.payer) return false;
@@ -31,60 +64,68 @@ export async function publishNotification(args: {
   bodyHtml: string;
   priority?: NotifPriority;
   links?: { label: string; href: string }[];
-  payAssetId: number;                  // 0 = QORT, or your discounted asset
+  payAssetId: number; // 0 = QORT, or your discounted asset
   policy: NotifPolicyV1;
   publisher: { name?: string; address: string; role?: NotifRole };
-  chatGroupForGlobal?: number;         // optional: group to broadcast a ping
+  chatGroupForGlobal?: number; // optional: group to broadcast a ping
 }) {
   const { payAssetId, policy } = args;
   const { assetId, amount } = quoteNotifFee(policy, payAssetId);
-  const appRevenueAddress = qAssetsRevenueAddress
+  const appRevenueAddress = qAssetsRevenueAddress;
+  const numericAmount = Number(amount) || 0;
+  const shouldCollect = numericAmount > 0;
+  let paymentSignature: string | null = null;
+  let paymentBlockHeight = 0;
 
   // 1) Create and broadcast payment tx
-  let payTx
-  if (assetId === 0) {
-    payTx = await qortalRequest({
-      action: 'SEND_COIN', // or SEND_ASSET
-      coin: 'QORT',
-      amount,
-      recipient: appRevenueAddress, // set this
-    });
-  } else {
-    const senderPublicKey = (await getAccount(args.publisher.address)).publicKey
-    
-    payTx = await transferAsset(
+  if (shouldCollect) {
+    if (assetId === 0) {
+      const payRes = await qortalRequest({
+        action: 'SEND_COIN',
+        coin: 'QORT',
+        amount: numericAmount,
+        recipient: appRevenueAddress,
+      });
+      paymentSignature = payRes?.signature ?? payRes?.txId ?? null;
+    } else {
+      const senderPublicKey = (await getAccount(args.publisher.address)).publicKey;
+      const transferResponse = (await transferAsset(
         args.publisher.address,
         senderPublicKey,
         appRevenueAddress,
         assetId,
-        amount,
-      );
+        numericAmount
+      )) as Response | any;
+      if (typeof transferResponse === 'string') {
+        paymentSignature = transferResponse;
+      } else if (transferResponse && typeof transferResponse === 'object') {
+        paymentSignature = transferResponse.signature ?? transferResponse.txId ?? null;
+        if (!paymentSignature && typeof transferResponse.text === 'function') {
+          try {
+            const txt = await transferResponse.text();
+            paymentSignature = txt || null;
+          } catch {
+            paymentSignature = null;
+          }
+        }
+      }
+    }
+
+    if (!paymentSignature) throw new Error('Failed to determine notification payment signature');
+
+    const confirmed = await waitForConfirm<any>(paymentSignature, {
+      minConfs: 1,
+      timeoutMs: 180_000,
+      onProgress: (p) => {
+        console.log('confirm progress', p);
+      },
+    });
+    paymentBlockHeight = Number(confirmed?.blockHeight ?? 0) || 0;
   }
-
-
-
-  // 2) Wait confirm (or N blocks)
-  await waitForConfirm(payTx.signature, {
-  minConfs: 1,          // or 2-3 if you want extra safety
-  timeoutMs: 180_000,   // 3 minutes
-  onProgress: (p) => {
-    // optional: hook into your useFetchTracker / toast
-    console.log('confirm progress', p);
-  },
-});
 
   // 3) Build Notif JSON
   const createdAt = Date.now();
-  const scopeStr =
-    args.scope.kind === 'global'
-      ? 'global'
-      : args.scope.kind === 'asset'
-      ? `asset:${args.scope.assetId}`
-      : args.scope.kind === 'group'
-      ? `group:${args.scope.groupId}`
-      : args.scope.kind === 'system'
-      ? 'system'
-      : `custom:${args.scope.key}`;
+  const scopeStr = scopeToKey(args.scope);
 
   const notif: NotifV1 = {
     version: 1,
@@ -95,18 +136,20 @@ export async function publishNotification(args: {
     priority: args.priority ?? 'normal',
     createdAt,
     publisher: args.publisher,
-    audit: {
-      payment: {
-        assetId,
-        amount,
-        txSignature: payTx.signature,
-        blockHeight: payTx.blockHeight ?? 0,
-      },
-    },
+    audit: shouldCollect
+      ? {
+          payment: {
+            assetId,
+            amount: numericAmount,
+            txSignature: paymentSignature!,
+            blockHeight: paymentBlockHeight,
+          },
+        }
+      : undefined,
   };
 
   // 4) Publish Notif JSON
-  const id = `qassets_notif::${createdAt.toString(36)}_${Math.random().toString(36).slice(2,8)}`;
+  const id = `qassets_notif::${createdAt.toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
   await qortalRequest({
     action: 'PUBLISH_QDN_RESOURCE',
@@ -117,15 +160,20 @@ export async function publishNotification(args: {
   });
 
   // 5) Append pointer to scope index
-  const scopeKey = scopeStr.startsWith('asset:') || scopeStr.startsWith('group:')
-    ? scopeStr
-    : 'global';
+  const scopeKey =
+    scopeStr.startsWith('asset:') || scopeStr.startsWith('group:') ? scopeStr : 'global';
 
-  await appendToIndex(scopeKey, {
-    rid: `JSON/${args.publisher.name || args.publisher.address}/${id}`,
-    createdAt,
-    priority: notif.priority,
-  });
+  const indexOpts = args.scope.kind === 'group' ? { groupId: args.scope.groupId } : undefined;
+
+  await appendToIndex(
+    scopeKey,
+    {
+      rid: `JSON/${args.publisher.name || args.publisher.address}/${id}`,
+      createdAt,
+      priority: notif.priority,
+    },
+    indexOpts
+  );
 
   // 6) Optional: ping Q-Chat (feeless)
   if (scopeKey === 'global' && args.chatGroupForGlobal) {
@@ -138,12 +186,10 @@ export async function publishNotification(args: {
     });
 
     await sendChatMessage({ groupId: args.chatGroupForGlobal, fullContent: ping });
-
   }
 
   return { id, notif };
 }
-
 
 type NotifItem = NotifV1 & { rid: string };
 
@@ -159,29 +205,62 @@ export function shouldDisplay(n: NotifV1, /*userPrefs: any,*/ policy: NotifPolic
   // 2) For global scope: require valid payment
   if (n.scope === 'global' && !n.audit?.payment) return false;
   // 3) Link allowlist (basic scan)
-  const okLinks = (n.links || []).every(l => policy.linkAllowlist?.some(p => l.href.startsWith(p)));
+  const okLinks = (n.links || []).every((l) =>
+    policy.linkAllowlist?.some((p) => l.href.startsWith(p))
+  );
   if (policy.linkAllowlist?.length && !okLinks) return false;
   // 4) User prefs (asset filters, muted tags, etc)
   return true;
 }
 
-export type NotifPriority = 'low' | 'normal' | 'high';
-export type NotifScopeStr = 'global' | `asset:${number}` | `group:${number}` | `system` | `custom:${string}`;
-
 export interface NotifPingV1 {
   kind: 'notif';
   ver: 1;
-  rid: string;            // "JSON/<publisher>/qassets_notif::<id>"
-  scope: NotifScopeStr;   // "global" | "asset:123" | ...
+  rid: string; // "JSON/<publisher>/qassets_notif::<id>"
+  scope: NotifScopeStr; // "global" | "asset:123" | ...
   priority?: NotifPriority;
-  title?: string;         // optional microcopy for the toast
-  ts: number;             // ms
+  title?: string; // optional microcopy for the toast
+  ts: number; // ms
 }
 
-export function buildNotifPing(params: Omit<NotifPingV1, 'kind' | 'ver' | 'ts'> & { ts?: number }): NotifPingV1 {
+export function buildNotifPing(
+  params: Omit<NotifPingV1, 'kind' | 'ver' | 'ts'> & { ts?: number }
+): NotifPingV1 {
   const { rid, scope, priority, title, ts } = params;
   if (!rid || !scope) throw new Error('buildNotifPing: rid and scope are required');
   return { kind: 'notif', ver: 1, rid, scope, priority, title, ts: ts ?? Date.now() };
+}
+
+type ParsedRid = { service: 'JSON' | 'DOCUMENT'; name: string; identifier: string };
+
+function parseRid(rid: string): ParsedRid | null {
+  if (!rid) return null;
+  const m = rid.match(/^(JSON|DOCUMENT)\/([^/]+)\/(.+)$/i);
+  if (!m) return null;
+  const [, serviceRaw, name, identifier] = m;
+  const service = serviceRaw.toUpperCase() === 'DOCUMENT' ? 'DOCUMENT' : 'JSON';
+  return { service, name, identifier };
+}
+
+export async function fetchNotificationByRid(rid: string): Promise<NotifV1 | null> {
+  const parsed = parseRid(rid);
+  if (!parsed) return null;
+  try {
+    const res = await qortalRequest({
+      action: 'FETCH_QDN_RESOURCE',
+      service: parsed.service,
+      name: parsed.name,
+      identifier: parsed.identifier,
+      encoding: 'base64',
+    });
+    const data64 = res?.data64 ?? res;
+    if (!data64 || typeof data64 !== 'string') return null;
+    const json = atob(data64);
+    const notif = JSON.parse(json) as NotifV1;
+    return notif;
+  } catch {
+    return null;
+  }
 }
 
 // pseudo-code — adapt to your encryption API shape
@@ -193,7 +272,7 @@ export async function sendEncryptedNotifPing(opts: {
   const plaintext = await objectToBase64(opts.ping);
   const { encryptedDataBase64 } = await qortalRequest({
     action: 'ENCRYPT_QORTAL_GROUP_DATA',
-    base64: plaintext ,
+    base64: plaintext,
     groupId: opts.groupId,
     isAdmins: false,
   });
@@ -208,13 +287,17 @@ export async function sendEncryptedNotifPing(opts: {
   });
 }
 
-
 export function parseNotifPing(content: unknown): NotifPingV1 | null {
   if (!content || typeof content !== 'object') return null;
   const c: any = content;
 
   // direct envelope
-  if (c.kind === 'notif' && c.ver === 1 && typeof c.rid === 'string' && typeof c.scope === 'string') {
+  if (
+    c.kind === 'notif' &&
+    c.ver === 1 &&
+    typeof c.rid === 'string' &&
+    typeof c.scope === 'string'
+  ) {
     return {
       kind: 'notif',
       ver: 1,
@@ -234,7 +317,6 @@ export function parseNotifPing(content: unknown): NotifPingV1 | null {
   return null;
 }
 
-
 async function getCurrentBlockHeight(): Promise<number | null> {
   try {
     // @ts-expect-error qortalRequest is app-global in your codebase; import if needed.
@@ -249,7 +331,10 @@ function sleep(ms: number, signal?: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
     const id = setTimeout(resolve, ms);
     if (signal) {
-      const onAbort = () => { clearTimeout(id); reject(new DOMException('Aborted', 'AbortError')); };
+      const onAbort = () => {
+        clearTimeout(id);
+        reject(new DOMException('Aborted', 'AbortError'));
+      };
       if (signal.aborted) onAbort();
       signal.addEventListener('abort', onAbort, { once: true });
     }
@@ -285,11 +370,13 @@ export interface WaitForConfirmOptions {
  * Resolves with the tx object returned by `getTransactionInfoBySignature`.
  * Throws on timeout / abort / explicit rejection status.
  */
-export async function waitForConfirm<TTx extends {
-  signature: string;
-  blockHeight?: number;
-  approvalStatus?: string;
-}>(signature: string, opts: WaitForConfirmOptions = {}): Promise<TTx> {
+export async function waitForConfirm<
+  TTx extends {
+    signature: string;
+    blockHeight?: number;
+    approvalStatus?: string;
+  },
+>(signature: string, opts: WaitForConfirmOptions = {}): Promise<TTx> {
   const {
     minConfs = 1,
     timeoutMs = 120_000,
@@ -308,7 +395,7 @@ export async function waitForConfirm<TTx extends {
     attempts += 1;
 
     // 1) Fetch tx by signature
-    const tx = await getTransactionInfoBySignature(signature) as unknown as TTx | null;
+    const tx = (await getTransactionInfoBySignature(signature)) as unknown as TTx | null;
 
     if (tx) {
       // Some cores expose "REJECTED"/"INVALID" states; bail early if seen.

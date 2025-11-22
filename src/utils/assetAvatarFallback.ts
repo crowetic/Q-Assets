@@ -8,7 +8,7 @@ export function makeAssetFallbackAvatar(assetId: number, name: string, size = 80
 
   const initials = (name || String(assetId))
     .split(/\s+/)
-    .map(s => s[0])
+    .map((s) => s[0])
     .join('')
     .slice(0, 3)
     .toUpperCase();

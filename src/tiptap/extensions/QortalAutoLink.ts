@@ -18,7 +18,6 @@ function sanitizeQortalHref(raw: string): string | null {
   if (!looksLikeQortalHref(raw)) return null;
 
   return raw;
-
 }
 
 function linkifyCurrentBlock(view: EditorView) {

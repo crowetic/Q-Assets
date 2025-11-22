@@ -5,15 +5,20 @@ export class LruTtl<K, V> {
   private map = new Map<K, { v: V; t: number }>();
 
   constructor(max = 64, ttlMs = 30000) {
-    this.max = max; this.ttlMs = ttlMs;
+    this.max = max;
+    this.ttlMs = ttlMs;
   }
 
   get(k: K): V | undefined {
     const e = this.map.get(k);
     if (!e) return;
-    if (Date.now() - e.t > this.ttlMs) { this.map.delete(k); return; }
+    if (Date.now() - e.t > this.ttlMs) {
+      this.map.delete(k);
+      return;
+    }
     // refresh LRU
-    this.map.delete(k); this.map.set(k, { v: e.v, t: e.t });
+    this.map.delete(k);
+    this.map.set(k, { v: e.v, t: e.t });
     return e.v;
   }
 
@@ -26,5 +31,7 @@ export class LruTtl<K, V> {
     }
   }
 
-  clear() { this.map.clear(); }
+  clear() {
+    this.map.clear();
+  }
 }

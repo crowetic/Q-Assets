@@ -22,6 +22,8 @@ import QDeckHome from '../pages/QDeckHome';
 import ManageHome from '../pages/manage/ManageHome';
 import ManageDividends from '../pages/manage/ManageDividends';
 import ManageDividendsAsset from '../pages/manage/ManageDividendsAsset';
+import AdminPanel from '../pages/manage/AdminPanel';
+import PublishAssetNewsPage from '../pages/PublishAssetNews';
 
 // --- Q-Deck (lazy) ---
 const QDeckIndex = React.lazy(() => import('../pages/QDeckMyBoards'));
@@ -98,11 +100,13 @@ export function Routes() {
         { path: 'trade', element: <TradeMarkets /> },
         { path: 'trade/:assetId', element: <TradePair /> },
         { path: 'info', element: <Information /> },
+        { path: 'publish-asset-news', element: <PublishAssetNewsPage /> },
 
         // --- Manage ---
         { path: 'manage', element: <ManageHome /> },
         { path: 'manage/dividends', element: <ManageDividends /> },
         { path: 'manage/dividends/:assetId', element: <ManageDividendsAsset /> },
+        { path: 'manage/admin', element: <AdminPanel /> },
 
         // --- Manage / Data Management (panel + subpages)
         {
