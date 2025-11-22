@@ -62,7 +62,7 @@ export default function CardDialog(props: Props) {
         }
         const ok = await userCanEditBoard(
           userAddress,
-          (board.groupsAllowed ?? []) as Array<string | number>,
+          (board.groupsAllowed ?? []) as Array<string | number>
         );
         if (alive) setIsInAllowedGroup(ok);
       } catch {
@@ -95,7 +95,7 @@ export default function CardDialog(props: Props) {
   // ETA
   const initialEta = (card as any)?.estimatedCompletionTimeMinutes;
   const [etaMinutes, setEtaMinutes] = React.useState<number | ''>(
-    typeof initialEta === 'number' ? initialEta : '',
+    typeof initialEta === 'number' ? initialEta : ''
   );
 
   // --- primary image ---
@@ -126,7 +126,7 @@ export default function CardDialog(props: Props) {
         board.createdBy,
         card.primaryImage,
         board.privateMeta?.groupId,
-        board.privateMeta?.isAdmins,
+        board.privateMeta?.isAdmins
       );
       if (alive) setImgDataUrl(url);
     })();
@@ -230,7 +230,7 @@ export default function CardDialog(props: Props) {
         board.createdBy, // publish under board issuer
         board,
         card.cardId,
-        file,
+        file
       );
       const next: QDeckCard = {
         ...card,
@@ -244,7 +244,7 @@ export default function CardDialog(props: Props) {
         board.createdBy,
         ref,
         board.privateMeta?.groupId,
-        board.privateMeta?.isAdmins,
+        board.privateMeta?.isAdmins
       );
       setImgDataUrl(url);
     } finally {

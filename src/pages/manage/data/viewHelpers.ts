@@ -1,18 +1,8 @@
-import { PRIVATE_SERVICE_FALLBACK } from './constants';
 import type { QdnResource } from '../../../hooks/useQdnResources';
+import { coerceTags, filterUserTags } from '../../../utils/qdnTags';
+import { ensurePrivateService, isPrivateService } from '../../../utils/qdnServices';
 
-const SYSTEM_TAGS = new Set(['qassets-fs', 'qassets-fs-folder']);
-const SYSTEM_TAG_PREFIXES = ['fs-path:', 'fs-name:', 'fs-folder:', 'fs-source-created:'];
-
-const coerceTags = (value: any): string[] =>
-  Array.isArray(value)
-    ? value.filter((tag): tag is string => typeof tag === 'string' && tag.length > 0)
-    : [];
-
-export const isSystemTag = (tag: string) =>
-  SYSTEM_TAGS.has(tag) || SYSTEM_TAG_PREFIXES.some((prefix) => tag.startsWith(prefix));
-
-export const filterUserTags = (tags?: string[]) => coerceTags(tags).filter((tag) => !isSystemTag(tag));
+export { isPrivateService, ensurePrivateService };
 
 export const serviceLabels = (service?: string) => {
   if (!service) return 'Unlabeled';
@@ -48,16 +38,6 @@ export const serviceLabels = (service?: string) => {
   if (upper.includes('THUMBNAIL')) return 'Thumbnails';
   if (upper.includes('AUTO_UPDATE')) return 'Auto Updates';
   return service;
-};
-
-export const isPrivateService = (service?: string) => {
-  if (!service) return false;
-  return service.toUpperCase().includes('PRIVATE');
-};
-
-export const ensurePrivateService = (service?: string) => {
-  if (service && service.toUpperCase().includes('PRIVATE')) return service;
-  return PRIVATE_SERVICE_FALLBACK;
 };
 
 export const formatBytes = (value?: number) => {

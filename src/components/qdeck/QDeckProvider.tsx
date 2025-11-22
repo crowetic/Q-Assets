@@ -46,7 +46,7 @@ type QDeckCtx = {
     issuerName: string,
     boardId: string, // short UUID
     visibility?: 'public' | 'private',
-    opts?: LoadOpts,
+    opts?: LoadOpts
   ) => Promise<void>;
 
   persistBoard: (board: QDeckBoard) => Promise<void>;
@@ -60,7 +60,7 @@ type QDeckCtx = {
     cardId: string,
     commentHtml: string,
     parentId?: string,
-    opts?: { isAdminsThread?: boolean },
+    opts?: { isAdminsThread?: boolean }
   ) => Promise<void>;
 
   loadCommentsForCard: (cardId: string) => Promise<void>;
@@ -159,14 +159,14 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           } catch {
             return null;
           }
-        }),
+        })
       );
 
       const usable = loaded.filter(Boolean) as QDeckCard[];
       const byId = Object.fromEntries(usable.map((c) => [c.cardId, c]));
       setCards(byId);
     },
-    [identity.address, setCards],
+    [identity.address, setCards]
   );
 
   const loadBoardById = useCallback<QDeckCtx['loadBoardById']>(
@@ -231,7 +231,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           console.error('[Q-Deck] resolveBoardForRead error', e);
           return null;
         }),
-        `qdeck:cards:${shortId}`,
+        `qdeck:cards:${shortId}`
       );
 
       if (lastLoadKey.current !== cacheKey) return; // race guard
@@ -247,7 +247,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       console.debug('[Q-Deck] loadBoardById success', { issuer, shortId, title: resolved.title });
     },
-    [board, loadCardsForBoard], // identity.address not used anymore in this body
+    [board, loadCardsForBoard] // identity.address not used anymore in this body
   );
 
   const persistBoard = useCallback<QDeckCtx['persistBoard']>(
@@ -255,7 +255,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       await saveBoardDoc(auth.name!, nextBoard);
       setBoard(nextBoard);
     },
-    [identity.name],
+    [identity.name]
   );
 
   const refreshBoard = useCallback(
@@ -273,10 +273,10 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           groupId: board.privateMeta?.groupId,
           isAdmins: board.privateMeta?.isAdmins,
         }),
-        `qdeck:board:${board.boardId}`,
+        `qdeck:board:${board.boardId}`
       );
     },
-    [board, loadBoardById],
+    [board, loadBoardById]
   );
 
   const createCard = useCallback<QDeckCtx['createCard']>(
@@ -328,7 +328,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       await addCardToIndex(auth.name ? auth.name : identity.name, board, c.cardId);
       return c;
     },
-    [board, identity.name, identity.address],
+    [board, identity.name, identity.address]
   );
 
   const moveCard = useCallback<QDeckCtx['moveCard']>(
@@ -347,7 +347,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setCards((prev) => ({ ...prev, [cardId]: next }));
       await saveCardDoc(auth.name ? auth.name : identity.name, board, next);
     },
-    [board, cards],
+    [board, cards]
   );
 
   const increaseCardSeq = (seq: number) => {
@@ -373,7 +373,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // if (!auth || !auth.name || !identity.name) return;
       await saveCardDoc(auth.name ? auth.name : identity.name, board, card);
     },
-    [board, cards],
+    [board, cards]
   );
 
   const addComment = useCallback<QDeckCtx['addComment']>(
@@ -408,7 +408,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setComments((prev) => ({ ...prev, [cardId]: next }));
       await saveCommentsDoc(auth.name ? auth.name : identity.name, board, cardId, next);
     },
-    [board, comments, identity.name, identity.address],
+    [board, comments, identity.name, identity.address]
   );
 
   // helper: merge N per-issuer threads into one view
@@ -465,7 +465,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               } catch {
                 return null;
               }
-            }),
+            })
           )
         ).filter(Boolean) as CardCommentThread[];
 
@@ -488,11 +488,11 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                   updatedAt: 0,
                   seq: 0,
                 },
-              },
+              }
         );
       }
     },
-    [board],
+    [board]
   );
 
   const recordPayment = useCallback<QDeckCtx['recordPayment']>(
@@ -501,7 +501,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (!auth.name || !identity.name) throw new Error('Authentication Failed');
       await appendPaymentLine(auth.name ? auth.name : identity.name, board, line);
     },
-    [board, identity.name],
+    [board, identity.name]
   );
 
   const deleteBoardImpl = useCallback<QDeckCtx['deleteBoard']>(
@@ -510,7 +510,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (!auth.name || !identity.name) throw new Error('Authentication Failed');
       if (board.createdBy != auth.name || board.createdBy != identity.name)
         throw new Error(
-          'non-publisher delete feature not implemented, you must be the board creator to delete for now.',
+          'non-publisher delete feature not implemented, you must be the board creator to delete for now.'
         );
       const issuer = board.createdBy;
       const allCards = Object.values(cards);
@@ -521,7 +521,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setCards({});
       setComments({});
     },
-    [board, cards],
+    [board, cards]
   );
 
   const value = useMemo<QDeckCtx>(
@@ -556,7 +556,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       loadCommentsForCard,
       recordPayment,
       deleteBoardImpl,
-    ],
+    ]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

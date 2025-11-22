@@ -105,7 +105,7 @@ export const QASSETS_FILE_ID_MAX = FILE_IDENTIFIER_MAX_LEN;
 
 export async function getAssetIdentifiers(
   assetName: string,
-  assetId?: number,
+  assetId?: number
 ): Promise<{
   assetId?: number;
   assetName: string;

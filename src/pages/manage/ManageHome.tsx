@@ -185,11 +185,11 @@ function DataExplorerHero({ tile }: { tile: Tile }) {
   const primaryAccent = lighten(
     theme.palette.primary[theme.palette.mode === 'dark' ? 'light' : 'main'] ||
       theme.palette.primary.light,
-    theme.palette.mode === 'dark' ? 0.05 : 0.25,
+    theme.palette.mode === 'dark' ? 0.05 : 0.25
   );
   const gradient = `linear-gradient(130deg, ${darken(
     primaryBase,
-    theme.palette.mode === 'dark' ? 0.2 : 0.05,
+    theme.palette.mode === 'dark' ? 0.2 : 0.05
   )}, ${primaryAccent})`;
   const componentProps = tile.disabled
     ? {}
@@ -320,11 +320,11 @@ function AdminPanelHero({ tile }: { tile: Tile }) {
   const secondaryAccent = lighten(
     theme.palette.secondary[theme.palette.mode === 'dark' ? 'light' : 'main'] ||
       theme.palette.secondary.light,
-    theme.palette.mode === 'dark' ? 0.05 : 0.3,
+    theme.palette.mode === 'dark' ? 0.05 : 0.3
   );
   const gradient = `linear-gradient(135deg, ${darken(
     secondaryBase,
-    theme.palette.mode === 'dark' ? 0.25 : 0.08,
+    theme.palette.mode === 'dark' ? 0.25 : 0.08
   )}, ${secondaryAccent})`;
   const componentProps = tile.disabled
     ? {}
@@ -468,7 +468,7 @@ export default function ManageHome() {
   const dataTile = visibleTiles.find((tile) => tile.to === '/manage/data/explorer') ?? null;
   const adminTile = visibleTiles.find((tile) => tile.to === '/manage/admin') ?? null;
   const otherTiles = visibleTiles.filter(
-    (tile) => tile.to !== '/manage/data/explorer' && tile.to !== '/manage/admin',
+    (tile) => tile.to !== '/manage/data/explorer' && tile.to !== '/manage/admin'
   );
 
   return (

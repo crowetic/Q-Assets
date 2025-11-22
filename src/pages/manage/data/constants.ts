@@ -58,4 +58,3 @@ export const ALL_QDN_SERVICES: string[] = [
 
 export const SERVICE_PAGE_SIZE = 48;
 export const FOLDER_PAGE_SIZE = 48;
-export const PRIVATE_SERVICE_FALLBACK = 'DOCUMENT_PRIVATE';

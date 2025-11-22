@@ -82,6 +82,8 @@ const deriveLimit = (service: Service): number => {
   return DEFAULT_SERVICE_LIMIT;
 };
 
+export const getServiceLimit = (service: Service): number => deriveLimit(service);
+
 const estimateBase64Bytes = (data64: string) => {
   const padding = data64.endsWith('==') ? 2 : data64.endsWith('=') ? 1 : 0;
   return Math.floor((data64.length * 3) / 4) - padding;

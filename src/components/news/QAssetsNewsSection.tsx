@@ -3,7 +3,7 @@ import { Box, Card, CardContent, Typography, Divider, Skeleton, Chip, Button } f
 import Grid from '@mui/material/Grid';
 import { useNavigate } from 'react-router-dom';
 import { fetchAnnouncements, fetchLatestAssetNews, fetchActivePromotions } from '../../utils/news';
-import { useTheme } from '@mui/material/styles';
+import { useTheme, alpha } from '@mui/material/styles';
 import NewsActionBar from '../../components/news/NewsActionBar';
 
 import type { NewsSummary, NewsType } from '../../types/newsAndPromos';
@@ -36,8 +36,9 @@ function NewsListColumn(props: {
   items: NewsSummary[];
   emptyText: string;
   onClickItem: (item: NewsSummary) => void;
+  variant?: 'announcement' | 'news' | 'promotion';
 }) {
-  const { title, items, emptyText, onClickItem } = props;
+  const { title, items, emptyText, onClickItem, variant = 'news' } = props;
   const theme = useTheme();
   const now = Date.now();
   const isNew = (ts?: number) => !!ts && now - ts < 72 * 3600_000;
@@ -48,6 +49,25 @@ function NewsListColumn(props: {
     return theme.palette.success.main; // assetNews
   };
 
+  const backgroundMap = {
+    announcement: {
+      header: `linear-gradient(90deg, ${theme.palette.info.dark}, ${theme.palette.info.main})`,
+      body: `linear-gradient(180deg, ${alpha(theme.palette.info.light, 0.25)}, ${alpha(theme.palette.info.light, 0.08)})`,
+      hover: alpha(theme.palette.info.light, 0.3),
+    },
+    news: {
+      header: `linear-gradient(90deg, ${theme.palette.success.dark}, ${theme.palette.success.main})`,
+      body: `linear-gradient(180deg, ${alpha(theme.palette.success.light, 0.25)}, ${alpha(theme.palette.success.light, 0.08)})`,
+      hover: alpha(theme.palette.success.light, 0.3),
+    },
+    promotion: {
+      header: `linear-gradient(90deg, ${theme.palette.primary.dark}, ${theme.palette.primary.main})`,
+      body: `linear-gradient(180deg, ${alpha(theme.palette.primary.light, 0.25)}, ${alpha(theme.palette.primary.light, 0.08)})`,
+      hover: alpha(theme.palette.primary.light, 0.35),
+    },
+  } as const;
+  const current = backgroundMap[variant];
+
   return (
     <Card
       sx={{
@@ -57,14 +77,16 @@ function NewsListColumn(props: {
         borderRadius: 3,
         overflow: 'hidden',
         boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
+        background: current.body,
+        border: `1px solid ${alpha(theme.palette.common.white, 0.08)}`,
       }}
     >
       <Box
         sx={{
           px: 2,
           py: 1,
-          background: `linear-gradient(90deg, ${theme.palette.primary.main} 0%, ${theme.palette.secondary.main} 100%)`,
-          color: theme.palette.primary.contrastText,
+          background: current.header,
+          color: theme.palette.getContrastText(theme.palette.primary.main),
           fontWeight: 700,
           textAlign: 'center',
         }}
@@ -88,11 +110,11 @@ function NewsListColumn(props: {
                 position: 'relative',
                 cursor: 'pointer',
                 borderLeft: `4px solid ${typeColor(item.type)}`,
-                backgroundColor: theme.palette.action.hover,
+                backgroundColor: alpha(theme.palette.background.default, 0.6),
                 transition: 'transform 120ms ease, background 120ms ease',
                 '&:hover': {
                   transform: 'translateY(-2px)',
-                  backgroundColor: theme.palette.action.selected,
+                  backgroundColor: current.hover,
                 },
               }}
               onClick={() => onClickItem(item)}
@@ -385,6 +407,7 @@ export default function QAssetsNewsSection() {
               items={announcements ?? []}
               emptyText="No Q-Assets announcements yet."
               onClickItem={handleClickItem}
+              variant="announcement"
             />
           </Grid>
           <Grid size={{ xs: 12, md: 4 }}>
@@ -393,6 +416,7 @@ export default function QAssetsNewsSection() {
               items={assetNews ?? []}
               emptyText="No Assets have not published news yet."
               onClickItem={handleClickItem}
+              variant="news"
             />
           </Grid>
           <Grid size={{ xs: 12, md: 4 }}>
@@ -401,6 +425,7 @@ export default function QAssetsNewsSection() {
               items={promotions ?? []}
               emptyText="No active promotions."
               onClickItem={handleClickItem}
+              variant="promotion"
             />
           </Grid>
         </Grid>
