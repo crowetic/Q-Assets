@@ -85,7 +85,7 @@ export function PublishDialog({
 
   const publishServiceLimitLabel = useMemo(
     () => formatBytes(getServiceLimit(form.service)),
-    [form.service],
+    [form.service]
   );
 
   const handleSelectFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -135,9 +135,7 @@ export function PublishDialog({
             label="Identifier (optional)"
             fullWidth
             value={form.identifier}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, identifier: event.target.value }))
-            }
+            onChange={(event) => setForm((prev) => ({ ...prev, identifier: event.target.value }))}
             helperText="Leave blank to auto-generate."
           />
 
@@ -145,7 +143,9 @@ export function PublishDialog({
             control={
               <Switch
                 checked={form.structured}
-                onChange={(_event, checked) => setForm((prev) => ({ ...prev, structured: checked }))}
+                onChange={(_event, checked) =>
+                  setForm((prev) => ({ ...prev, structured: checked }))
+                }
               />
             }
             label="Track inside Q-Assets file workspace"
