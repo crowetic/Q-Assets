@@ -8,6 +8,7 @@ import SecurityRoundedIcon from '@mui/icons-material/SecurityRounded';
 import AdminPanelSettingsRoundedIcon from '@mui/icons-material/AdminPanelSettingsRounded';
 import { alpha, darken, lighten, useTheme, type Theme } from '@mui/material/styles';
 import { getUserRoles, type UserRoles } from '../../utils/roles';
+import { fetchAccountAvatarDataUrl } from '../../utils/qdnAvatar';
 import { useFetchTracker } from '../../state/global/fetchTracker';
 
 type Tile = {
@@ -179,6 +180,7 @@ function TileCard({ t }: { t: Tile }) {
 
 function DataExplorerHero({ tile }: { tile: Tile }) {
   const theme = useTheme();
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const primaryBase =
     theme.palette.primary[theme.palette.mode === 'dark' ? 'dark' : 'main'] ||
     theme.palette.primary.main;
@@ -194,6 +196,17 @@ function DataExplorerHero({ tile }: { tile: Tile }) {
   const componentProps = tile.disabled
     ? {}
     : { component: RouterLink, to: tile.to, style: { textDecoration: 'none' } };
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const url = await fetchAccountAvatarDataUrl('DataExplorer');
+      if (alive && url) setLogoUrl(url);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   return (
     <Paper
@@ -258,11 +271,26 @@ function DataExplorerHero({ tile }: { tile: Tile }) {
               position: 'absolute',
               inset: 0,
               background: 'linear-gradient(170deg, rgba(255,255,255,0.55), transparent 65%)',
+              pointerEvents: 'none',
             }}
           />
-          <Typography variant="h3" sx={{ letterSpacing: 3, zIndex: 1, fontWeight: 600 }}>
-            DE
-          </Typography>
+          {logoUrl ? (
+            <Box
+              component="img"
+              alt="Data Explorer logo"
+              src={logoUrl}
+              sx={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                zIndex: 1,
+              }}
+            />
+          ) : (
+            <Typography variant="h3" sx={{ letterSpacing: 3, zIndex: 1, fontWeight: 600 }}>
+              DE
+            </Typography>
+          )}
         </Box>
         <Box>
           <Typography variant="h3" className="hero-text" sx={{ fontWeight: 600, lineHeight: 1 }}>

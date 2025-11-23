@@ -28,6 +28,7 @@ import {
   Typography,
   Checkbox,
 } from '@mui/material';
+import FolderOpenRoundedIcon from '@mui/icons-material/FolderOpenRounded';
 import InsertDriveFileRoundedIcon from '@mui/icons-material/InsertDriveFileRounded';
 import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded';
 import ImageRoundedIcon from '@mui/icons-material/ImageRounded';
@@ -38,7 +39,6 @@ import CodeRoundedIcon from '@mui/icons-material/CodeRounded';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
 import PublishRoundedIcon from '@mui/icons-material/PublishRounded';
-import FolderOpenRoundedIcon from '@mui/icons-material/FolderOpenRounded';
 import { useAccountNames } from '../../../hooks/useAccountNames';
 import { useQdnResources, type QdnResource } from '../../../hooks/useQdnResources';
 import {
@@ -48,6 +48,11 @@ import {
   base64ToUint8Array,
 } from '../../../utils/data';
 import { uniqueId6 } from '../../../utils/ids';
+import {
+  addPrivateMagic,
+  stripPrivateMagic,
+  PRIVATE_MAGIC_B64,
+} from '../../../constants/qdeckIdentifiers';
 import { collectRecipientPublicKeys } from '../../../utils/qdeckAccess';
 import { getAccountGroups, type GroupSummary } from '../../../utils/qortalApi';
 import { useAuth } from 'qapp-core';
@@ -70,6 +75,7 @@ import {
   getDisplayTags,
   getResourceCreatedAt,
 } from './viewHelpers';
+import { filterUserTags } from '../../../utils/qdnTags';
 import type {
   FolderDescriptor,
   FolderNode,
@@ -82,34 +88,10 @@ import { ExplorerSidebar } from './components/ExplorerSidebar';
 import { CreateFolderDialog } from './components/CreateFolderDialog';
 import { MoveToNewFolderDialog } from './components/MoveToNewFolderDialog';
 import {
-  PublishDialog,
-  type PublishFormState,
-  type PublishSubmitPayload,
-} from './components/PublishDialog';
-import {
   useQdnBatchPublisher,
   type BatchPublishResource,
 } from '../../../utils/useQdnBatchPublisher';
-import {
-  useResolveResourceBase64,
-  applyPrivateMagicIfNeeded,
-  fetchPrivateBase64,
-  fetchResourceBase64,
-  normalizeData64,
-} from './hooks/useResolveResourceBase64';
-import {
-  sanitizeIdentifier,
-  parseRecipientList,
-  normalizePathSegments,
-  inferStructuredMeta,
-  stripStructuredMetadata,
-  inferFolderDescriptor,
-  dedupeFolderDescriptors,
-  buildFolderMap,
-  getShareTargetMeta,
-  isShareResource,
-  matchesSearch,
-} from '../../../utils/qdnResourceUtils';
+import { PublishDialog, PublishFormState, PublishSubmitPayload } from './components/PublishDialog';
 
 type PreviewStepKey = 'fetch' | 'decrypt' | 'analyze';
 type PreviewStepStatus = 'pending' | 'active' | 'success' | 'error';
@@ -153,6 +135,14 @@ const createPreviewDialogState = (): PreviewDialogState => ({
 const SERVICE_OPTIONS = ALL_QDN_SERVICES;
 const PENDING_FOLDERS_KEY = 'qassets_data_pending_folders_v1';
 const MAX_FILE_IDENTIFIER_LENGTH = QASSETS_FILE_ID_MAX;
+const createPublishDefaults = (folderPath: string, structured: boolean): PublishFormState => ({
+  service: 'DOCUMENT' as Service,
+  identifier: '',
+  folderPath,
+  title: '',
+  description: '',
+  structured,
+});
 
 const isProbablyText = (text: string) => {
   if (!text) return false;
@@ -293,6 +283,20 @@ const detectMimeFromBase64 = (base64: string, fallback: string) => {
   return fallback;
 };
 
+const hasPrivateMagicPrefix = (base64: string) => base64.startsWith(PRIVATE_MAGIC_B64);
+
+const applyPrivateMagicIfNeeded = (base64: string, service?: string) => {
+  if (isPrivateService(service)) return base64;
+  return hasPrivateMagicPrefix(base64) ? base64 : addPrivateMagic(base64);
+};
+
+const stripPrivateMagicIfNeeded = (base64: string, service?: string) => {
+  if (!isPrivateService(service) && hasPrivateMagicPrefix(base64)) {
+    return stripPrivateMagic(base64);
+  }
+  return base64;
+};
+
 const resolveMimeForResource = (
   resource: QdnResource,
   manifestDoc: ManifestDoc | null,
@@ -329,11 +333,397 @@ const hydrateManifestResources = (doc: ManifestDoc | null): QdnResource[] => {
   }));
 };
 
+type GroupDecryptAttempt = {
+  groupId: number;
+  isAdmins: boolean;
+};
+
+const buildGroupDecryptAttempts = (
+  groups: GroupSummary[],
+  priority?: { groupId?: number | null; adminBias?: boolean | null }
+): GroupDecryptAttempt[] => {
+  const attempts: GroupDecryptAttempt[] = [];
+  const seen = new Set<string>();
+  const pushAttempt = (groupId?: number | null, isAdmins = false) => {
+    if (!groupId || !Number.isFinite(groupId)) return;
+    const key = `${groupId}:${isAdmins ? 1 : 0}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    attempts.push({ groupId, isAdmins });
+  };
+
+  if (priority?.groupId) {
+    pushAttempt(priority.groupId, !!priority.adminBias);
+    pushAttempt(priority.groupId, false);
+    pushAttempt(priority.groupId, true);
+  }
+
+  groups.forEach((grp) => {
+    pushAttempt(grp.groupId, false);
+    pushAttempt(grp.groupId, true);
+  });
+
+  return attempts;
+};
+
+const tryGroupDecryptSequence = async (
+  payload: string,
+  attempts: GroupDecryptAttempt[]
+): Promise<string | null> => {
+  for (const attempt of attempts) {
+    try {
+      const clear = await qortalRequest({
+        action: 'DECRYPT_QORTAL_GROUP_DATA',
+        base64: payload,
+        groupId: attempt.groupId,
+        isAdmins: attempt.isAdmins,
+      });
+      if (clear) return clear;
+    } catch {
+      // continue trying other combos
+    }
+  }
+  return null;
+};
+
 type LoadedResourceContent = {
   key: string;
   base64: string;
   mime: string;
 };
+
+const normalizeData64 = (payload: any): string | null => {
+  if (!payload) return null;
+  if (typeof payload === 'string') return payload;
+  if (typeof payload.data64 === 'string') return payload.data64;
+  if (typeof payload.base64 === 'string') return payload.base64;
+  return null;
+};
+
+async function fetchResourceBase64(resource: QdnResource) {
+  const res = await qortalRequest({
+    action: 'FETCH_QDN_RESOURCE',
+    service: resource.service as any,
+    identifier: resource.identifier,
+    name: resource.name,
+    encoding: 'base64',
+  });
+  const data64 = normalizeData64(res);
+  if (!data64) throw new Error('Unable to fetch resource data.');
+  return data64;
+}
+
+async function fetchPrivateBase64(resource: QdnResource): Promise<string> {
+  const res = await qortalRequest({
+    action: 'FETCH_QDN_RESOURCE',
+    name: resource.name,
+    service: resource.service as any,
+    identifier: resource.identifier,
+    encoding: 'base64',
+  });
+  const data64 = normalizeData64(res);
+  if (!data64) throw new Error('Unable to load encrypted resource.');
+  return data64;
+}
+
+async function decryptPrivateBase64(
+  resource: QdnResource,
+  encryptedWithMagic: string,
+  groups: GroupSummary[]
+): Promise<string> {
+  const meta = (resource.metadata || {}) as any;
+  const encryptedMeta = meta.encrypted;
+  const shareTarget = meta.qassetsShareTarget;
+
+  let mode: 'group' | 'direct' | null = null;
+  let groupId: number | null = null;
+  let adminsOnly = false;
+
+  if (encryptedMeta?.mode === 'group') {
+    mode = 'group';
+    groupId = Number(encryptedMeta.groupId);
+    adminsOnly = !!encryptedMeta.adminsOnly;
+  } else if (encryptedMeta?.mode === 'direct') {
+    mode = 'direct';
+  } else if (shareTarget?.type === 'group') {
+    mode = 'group';
+    groupId = Number(shareTarget.groupId);
+  } else if (shareTarget?.type === 'direct') {
+    mode = 'direct';
+  }
+
+  const encryptedPayload = stripPrivateMagicIfNeeded(encryptedWithMagic, resource.service);
+
+  // Always try direct decrypt first (covers NODE-inserted metadata-less items)
+  try {
+    const direct = await qortalRequest({
+      action: 'DECRYPT_DATA',
+      encryptedData: encryptedPayload,
+    });
+    if (direct) return direct;
+  } catch {
+    // ignore; fall through
+  }
+
+  if (mode === 'group') {
+    if (groupId) {
+      const preferredAttempts = buildGroupDecryptAttempts(groups, {
+        groupId,
+        adminBias: adminsOnly,
+      });
+      const clear = await tryGroupDecryptSequence(encryptedPayload, preferredAttempts);
+      if (clear) return clear;
+    }
+  }
+
+  if (mode === 'direct') {
+    const clear = await qortalRequest({
+      action: 'DECRYPT_DATA',
+      encryptedData: encryptedPayload,
+    });
+    if (!clear) throw new Error('Unable to decrypt direct resource.');
+    return clear;
+  }
+
+  const fallbackAttempts = buildGroupDecryptAttempts(groups);
+  const fallbackClear = await tryGroupDecryptSequence(encryptedPayload, fallbackAttempts);
+  if (fallbackClear) return fallbackClear;
+
+  throw new Error('Unable to decrypt this resource with your current keys.');
+}
+
+const sanitizeIdentifier = (value: string) => {
+  if (!value) return '';
+  return value
+    .replace(/[^a-z0-9\-_.]+/gi, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 120)
+    .toLowerCase();
+};
+
+const parseRecipientList = (value: string) =>
+  value
+    .split(',')
+    .map((seg) => seg.trim())
+    .filter(Boolean);
+
+const normalizePathSegments = (input?: string) => {
+  if (!input) return [] as string[];
+  return input
+    .split('/')
+    .map((seg) => seg.trim())
+    .filter(Boolean);
+};
+
+const inferStructuredMeta = (resource: QdnResource): StructuredEntry | null => {
+  const md = resource.metadata || {};
+  const tags: string[] = Array.isArray((md as any).tags) ? (md as any).tags : [];
+
+  let folderSegments: string[] | null = null;
+  let fileName: string | null = null;
+
+  if (tags.some((tag) => tag === 'qassets-fs')) {
+    const pathTag = tags.find((tag) => tag.startsWith('fs-path:'));
+    const nameTag = tags.find((tag) => tag.startsWith('fs-name:'));
+    folderSegments = normalizePathSegments(pathTag?.slice('fs-path:'.length));
+    fileName = nameTag?.slice('fs-name:'.length) || null;
+  }
+
+  if (!folderSegments) {
+    const fsMeta = (md as any).qassetsFs || (md as any).qassetsExplorer || (md as any).qassetsFile;
+    if (fsMeta) {
+      folderSegments = normalizePathSegments(fsMeta.path || fsMeta.folderPath || '');
+      fileName = fsMeta.fileName || null;
+    }
+  }
+
+  if (!folderSegments) return null;
+
+  const fallbackName =
+    fileName || resource.metadata?.title || resource.identifier || `resource-${uniqueId6()}`;
+
+  return {
+    resource,
+    folderSegments,
+    fileName: fallbackName,
+    isPrivate: isPrivateService(resource.service),
+  };
+};
+
+const stripStructuredMetadata = (
+  resource: QdnResource
+): { metadata: Record<string, any>; tags: string[] } => {
+  const metadata = { ...(resource.metadata || {}) };
+  const filteredTags = filterUserTags((metadata as any).tags);
+  if (filteredTags.length) (metadata as any).tags = filteredTags;
+  else delete (metadata as any).tags;
+  delete (metadata as any).qassetsFs;
+  delete (metadata as any).qassetsExplorer;
+  delete (metadata as any).qassetsFile;
+  return { metadata, tags: filteredTags };
+};
+
+const inferFolderDescriptor = (resource: QdnResource): FolderDescriptor | null => {
+  const md = resource.metadata || {};
+  const folderMeta = (md as any).qassetsFsFolder;
+  if (folderMeta) {
+    const segments = normalizePathSegments(
+      folderMeta.path || folderMeta.folderPath || folderMeta.name || ''
+    );
+    const name =
+      folderMeta.name ||
+      segments[segments.length - 1] ||
+      resource.metadata?.title ||
+      resource.identifier;
+    return { segments, name, resource };
+  }
+  const tags: string[] = Array.isArray((md as any).tags) ? (md as any).tags : [];
+  const folderTag = tags.find((tag) => tag.startsWith('fs-folder:'));
+  if (folderTag) {
+    const path = folderTag.slice('fs-folder:'.length);
+    const segments = normalizePathSegments(path);
+    return {
+      segments,
+      name: segments[segments.length - 1] || 'Folder',
+      resource,
+    };
+  }
+  return null;
+};
+
+const dedupeFolderDescriptors = (descriptors: FolderDescriptor[]): FolderDescriptor[] => {
+  const seen = new Set<string>();
+  const result: FolderDescriptor[] = [];
+  descriptors.forEach((desc) => {
+    const key = desc.segments.join('/');
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push(desc);
+  });
+  return result;
+};
+
+const matchesSearch = (resource: QdnResource, query: string) => {
+  if (!query) return true;
+  const lower = query.toLowerCase();
+  const title =
+    typeof resource.metadata?.title === 'string' ? resource.metadata.title.toLowerCase() : '';
+  const desc =
+    typeof resource.metadata?.description === 'string'
+      ? resource.metadata.description.toLowerCase()
+      : '';
+  return (
+    resource.identifier.toLowerCase().includes(lower) ||
+    (resource.service || '').toLowerCase().includes(lower) ||
+    title.includes(lower) ||
+    desc.includes(lower)
+  );
+};
+
+const buildFolderMap = (
+  entries: StructuredEntry[],
+  folders: FolderDescriptor[] = []
+): Map<string, FolderNode> => {
+  const map = new Map<string, FolderNode>();
+
+  const ensureFolder = (segments: string[]): FolderNode => {
+    const key = segments.join('/');
+    if (map.has(key)) return map.get(key)!;
+
+    const parentSegments = segments.slice(0, -1);
+    const parentKey = parentSegments.join('/');
+    const node: FolderNode = {
+      key,
+      name: segments[segments.length - 1] || '/',
+      parentKey: segments.length ? parentKey : null,
+      childKeys: [],
+      files: [],
+    };
+    map.set(key, node);
+
+    if (segments.length) {
+      const parent = ensureFolder(parentSegments);
+      if (!parent.childKeys.includes(key)) parent.childKeys.push(key);
+    }
+    return node;
+  };
+
+  // ensure root
+  ensureFolder([]);
+
+  entries.forEach((entry) => {
+    const folderNode = ensureFolder(entry.folderSegments);
+    folderNode.files.push(entry);
+  });
+
+  folders.forEach((folder) => {
+    const node = ensureFolder(folder.segments);
+    if (folder.name) node.name = folder.name;
+    if (!node.resource) node.resource = folder.resource;
+  });
+
+  return map;
+};
+
+const tryDecryptLegacyBase64 = async (
+  base64: string,
+  groups: GroupSummary[]
+): Promise<string | null> => {
+  const payload = hasPrivateMagicPrefix(base64) ? stripPrivateMagic(base64) : base64;
+  try {
+    const direct = await qortalRequest({
+      action: 'DECRYPT_DATA',
+      encryptedData: payload,
+    });
+    if (direct) return direct;
+  } catch {
+    // ignore direct failure; try groups
+  }
+  const attempts = buildGroupDecryptAttempts(groups);
+  return tryGroupDecryptSequence(payload, attempts);
+};
+
+const useResolveResourceBase64 = (groups: GroupSummary[]) =>
+  useCallback(
+    async (
+      resource: QdnResource,
+      onStep?: (step: PreviewStepKey, status: PreviewStepStatus, message?: string) => void
+    ): Promise<string> => {
+      let base64: string | null = null;
+      try {
+        onStep?.('fetch', 'active');
+        if (isPrivateService(resource.service)) {
+          const encrypted = await fetchPrivateBase64(resource);
+          onStep?.('fetch', 'success');
+          onStep?.('decrypt', 'active');
+          base64 = await decryptPrivateBase64(resource, encrypted, groups);
+          onStep?.('decrypt', 'success');
+        } else {
+          base64 = await fetchResourceBase64(resource);
+          onStep?.('fetch', 'success');
+          if (base64 && hasPrivateMagicPrefix(base64)) {
+            onStep?.('decrypt', 'active');
+            const legacy = await tryDecryptLegacyBase64(base64, groups);
+            if (!legacy) {
+              onStep?.('decrypt', 'error', 'Encrypted resource could not be decrypted.');
+              throw new Error('Encrypted resource could not be decrypted with your keys.');
+            }
+            base64 = legacy;
+            onStep?.('decrypt', 'success');
+          } else {
+            onStep?.('decrypt', 'success');
+          }
+        }
+      } catch (e: any) {
+        if (!base64) onStep?.('fetch', 'error', e?.message || 'Unable to fetch resource.');
+        throw e;
+      }
+      if (!base64) throw new Error('Unable to load resource data.');
+      return base64;
+    },
+    [groups]
+  );
 
 export default function DataExplorer() {
   const { address: userAddress, name: authName, authenticateUser } = useAuth();
@@ -345,20 +735,12 @@ export default function DataExplorer() {
   } = useAccountNames();
   const [activeName, setActiveName] = useState<string | null>(null);
   const [activeService, setActiveService] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<'services' | 'files' | 'shares'>('services');
+  const [activeSection, setActiveSection] = useState<'services' | 'files'>('services');
   const [activeFilePath, setActiveFilePath] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null);
   const [publishAnchor, setPublishAnchor] = useState<null | HTMLElement>(null);
   const [publishMode, setPublishMode] = useState<'immediate' | 'batch'>('immediate');
-  const defaultPublishForm: PublishFormState = {
-    service: 'DOCUMENT' as Service,
-    identifier: '',
-    folderPath: '',
-    title: '',
-    description: '',
-    structured: true,
-  };
   const [publishDialog, setPublishDialog] = useState<{
     open: boolean;
     variant: 'single' | 'multiple';
@@ -366,7 +748,7 @@ export default function DataExplorer() {
   }>({
     open: false,
     variant: 'single',
-    defaults: defaultPublishForm,
+    defaults: createPublishDefaults('', true),
   });
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [folderSelection, setFolderSelection] = useState<
@@ -379,12 +761,6 @@ export default function DataExplorer() {
   const [folderStatus, setFolderStatus] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
-  const resolvePublisherAddress = useCallback(async () => {
-    if (userAddress) return userAddress;
-    const acct = await qortalRequest({ action: 'GET_USER_ACCOUNT' });
-    if (acct?.address) return acct.address;
-    throw new Error('Unable to resolve your account address for encryption.');
-  }, [userAddress]);
   const [servicePage, setServicePage] = useState(1);
   const [folderPage, setFolderPage] = useState(1);
   const [previewDialog, setPreviewDialog] = useState<PreviewDialogState>(
@@ -416,10 +792,12 @@ export default function DataExplorer() {
   const [pendingDeletes, setPendingDeletes] = useState<string[]>([]);
   // const [publishQueue, setPublishQueue] = useState<PublishTask[]>([]);
   const { publish: publishResources } = useQdnBatchPublisher();
-  const [createFolderDialog, setCreateFolderDialog] = useState<{ open: boolean; basePath: string }>(
-    { open: false, basePath: '' }
-  );
-  const [createFolderError, setCreateFolderError] = useState<string | null>(null);
+  const [createFolderDialog, setCreateFolderDialog] = useState<{
+    open: boolean;
+    basePath: string;
+    folderName: string;
+    error: string | null;
+  }>({ open: false, basePath: '', folderName: '', error: null });
   const loadPendingFolders = useCallback((name: string | null) => {
     if (!name || typeof window === 'undefined') return [];
     try {
@@ -471,17 +849,9 @@ export default function DataExplorer() {
     error: string | null;
     entries: StructuredEntry[];
   }>({ open: false, folderPath: '', saving: false, error: null, entries: [] });
-  const [moveToNewFolderDialog, setMoveToNewFolderDialog] = useState<{
-    open: boolean;
-    basePath: string;
-    entries: StructuredEntry[];
-    saving: boolean;
-    error: string | null;
-  }>({ open: false, basePath: '', entries: [], saving: false, error: null });
   const [groups, setGroups] = useState<GroupSummary[]>([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [shareTargets, setShareTargets] = useState<QdnResource[]>([]);
-  const [pendingShareResources, setPendingShareResources] = useState<QdnResource[]>([]);
   const resolveResourceBase64 = useResolveResourceBase64(groups);
   const ensureResourceContent = useCallback(
     async (
@@ -606,116 +976,6 @@ export default function DataExplorer() {
     });
   };
 
-  const buildManifestPayload = useCallback(
-    (overrides?: ManifestOverrides): ManifestDoc => {
-      const removalResources = new Set(overrides?.removeResourceIdentifiers || []);
-      const manifestResourcesPayload = combinedResources
-        .filter((res) => !removalResources.has(res.identifier))
-        .map((res) => ({
-          identifier: res.identifier,
-          service: res.service,
-          name: res.name,
-          created: res.created,
-          size: res.size,
-          metadata: res.metadata ? { ...res.metadata } : undefined,
-          status: res.status ? { ...res.status } : undefined,
-        }));
-      const removalSet = new Set(overrides?.removeStructuredIdentifiers || []);
-      const manifestStructuredPayload = allStructuredEntries
-        .filter((entry) => !removalSet.has(entry.resource.identifier))
-        .map((entry) => {
-          const override = overrides?.structured?.[entry.resource.identifier];
-          const nextPath = override?.path ?? entry.folderSegments.join('/');
-          const nextFileName = override?.fileName ?? entry.fileName;
-          return {
-            identifier: entry.resource.identifier,
-            path: nextPath,
-            fileName: nextFileName,
-            service: entry.resource.service,
-          };
-        });
-      const folderMap = new Map<string, string>();
-      folderSnapshot.forEach((folder) => {
-        const normalized = normalizePathSegments(folder.path).join('/');
-        const folderName = folder.name || normalized.split('/').filter(Boolean).slice(-1)[0] || '/';
-        folderMap.set(normalized, folderName);
-      });
-      overrides?.folders?.forEach(({ path, name }) => {
-        const normalized = normalizePathSegments(path).join('/');
-        const folderName = name || normalized.split('/').filter(Boolean).slice(-1)[0] || '/';
-        folderMap.set(normalized, folderName);
-      });
-      return {
-        version: 1,
-        generatedAt: Date.now(),
-        services: manifestSummary.services,
-        totals: manifestSummary.totals,
-        resourceTypes: detectedTypes,
-        resources: manifestResourcesPayload,
-        structuredFiles: manifestStructuredPayload,
-        folders: Array.from(folderMap.entries()).map(([path, name]) => ({ path, name })),
-        lastSynced: manifestSummary.lastSynced,
-      };
-    },
-    [combinedResources, manifestSummary, detectedTypes, allStructuredEntries, folderSnapshot]
-  );
-
-  const handlePublishManifest = useCallback(
-    async (overrides?: ManifestOverrides) => {
-      if (!activeName) return;
-      setManifestPublishing(true);
-      setManifestError(null);
-      try {
-        const manifestPayload = buildManifestPayload(overrides);
-        const data64 = await objectToBase64(manifestPayload);
-        await publishResources([
-          {
-            name: activeName,
-            service: 'DOCUMENT' as Service,
-            identifier: MANIFEST_IDENTIFIER,
-            data64,
-            title: 'Q-Assets Manifest',
-            description: 'Aggregated service and folder metadata for faster browsing.',
-            tags: ['qassets-manifest'],
-          },
-        ]);
-        setManifestDoc(manifestPayload);
-        setManifestDirty(false);
-      } catch (e: any) {
-        setManifestError(e?.message || 'Manifest publish failed');
-      } finally {
-        setManifestPublishing(false);
-      }
-    },
-    [activeName, buildManifestPayload]
-  );
-
-  const handleMoveToNewFolderOpen = (entries?: StructuredEntry[]) => {
-    const targets = entries ? entries : movableEntries.length ? movableEntries : [];
-    if (!targets.length) {
-      alert('Select structured files to move.');
-      return;
-    }
-    setMoveToNewFolderDialog({
-      open: true,
-      basePath: activeSection === 'files' ? activeFilePath : '',
-      entries: targets,
-      saving: false,
-      error: null,
-    });
-  };
-
-  const handleMoveToNewFolderClose = () => {
-    if (moveToNewFolderDialog.saving) return;
-    setMoveToNewFolderDialog({
-      open: false,
-      basePath: '',
-      entries: [],
-      saving: false,
-      error: null,
-    });
-  };
-
   const handleCreateFolderOpen = () => {
     if (!activeName) {
       alert('Select or register a Qortal name before managing folders.');
@@ -724,23 +984,26 @@ export default function DataExplorer() {
     setCreateFolderDialog({
       open: true,
       basePath: activeSection === 'files' ? activeFilePath : '',
+      folderName: '',
+      error: null,
     });
-    setCreateFolderError(null);
   };
 
   const handleCreateFolderClose = () => {
-    setCreateFolderDialog({ open: false, basePath: '' });
-    setCreateFolderError(null);
+    setCreateFolderDialog({ open: false, basePath: '', folderName: '', error: null });
   };
 
-  const handleCreateFolderSubmit = (folderName: string) => {
-    const name = folderName.trim();
+  const handleCreateFolderSubmit = () => {
+    const name = createFolderDialog.folderName.trim();
     if (!name) {
-      setCreateFolderError('Enter a folder name.');
+      setCreateFolderDialog((prev) => ({ ...prev, error: 'Enter a folder name.' }));
       return;
     }
     if (name.includes('/')) {
-      setCreateFolderError('Create one folder at a time (no slashes).');
+      setCreateFolderDialog((prev) => ({
+        ...prev,
+        error: 'Create one folder at a time (no slashes).',
+      }));
       return;
     }
     const base = normalizePathSegments(createFolderDialog.basePath).join('/');
@@ -748,14 +1011,13 @@ export default function DataExplorer() {
     nextSegments.push(name);
     const targetPath = nextSegments.join('/');
     if (knownFolderPaths.has(targetPath)) {
-      setCreateFolderError('Folder already exists.');
+      setCreateFolderDialog((prev) => ({ ...prev, error: 'Folder already exists.' }));
       return;
     }
     const updater = (prev: string[]) =>
       prev.includes(targetPath) ? prev : prev.concat(targetPath);
     setPendingFolders(updater);
-    setCreateFolderDialog({ open: false, basePath: '' });
-    setCreateFolderError(null);
+    setCreateFolderDialog({ open: false, basePath: '', folderName: '', error: null });
     setActiveSection('files');
     if (base) setActiveFilePath(base);
     if (publishMode === 'immediate') {
@@ -781,180 +1043,6 @@ export default function DataExplorer() {
       error: null,
       resources: [],
     });
-  };
-
-  const handleSaveToFilesSubmit = async () => {
-    const targets =
-      saveToFilesDialog.resources.length > 0
-        ? saveToFilesDialog.resources
-        : selectedResource
-          ? [selectedResource]
-          : [];
-    if (!activeName || !targets.length) {
-      setSaveToFilesDialog((prev) => ({
-        ...prev,
-        error: 'Select at least one resource and Qortal name first.',
-      }));
-      return;
-    }
-    const normalizedFolder = normalizePathSegments(saveToFilesDialog.folderPath).join('/');
-    const folderCheck = ensureFolderPathAllowed(normalizedFolder);
-    if (!folderCheck.ok) {
-      setSaveToFilesDialog((prev) => ({
-        ...prev,
-        error: folderCheck.reason || 'Invalid folder path.',
-      }));
-      return;
-    }
-    const trimmedName = saveToFilesDialog.fileName.trim();
-    if (targets.length === 1 && !trimmedName) {
-      setSaveToFilesDialog((prev) => ({ ...prev, error: 'Enter a file name to save.' }));
-      return;
-    }
-    setSaveToFilesDialog((prev) => ({ ...prev, saving: true, error: null }));
-    try {
-      const publishRequests: BatchPublishResource[] = [];
-      for (const resource of targets) {
-        const entryMeta = allStructuredEntryMap.get(resource.identifier) || null;
-        const targetName =
-          targets.length === 1
-            ? trimmedName
-            : entryMeta?.fileName || resource.metadata?.title || resource.identifier;
-        const rawBase64 = await (isPrivateService(resource.service)
-          ? fetchPrivateBase64(resource)
-          : fetchResourceBase64(resource));
-        if (!rawBase64) throw new Error('Unable to fetch resource data for saving.');
-        const targetPath = normalizedFolder || entryMeta?.folderSegments.join('/') || '';
-        const identifier = buildQassetsFileIdentifier(
-          resource.service as Service,
-          activeName || resource.name
-        );
-        const existingMetadata = { ...(resource.metadata || {}) };
-        const existingTags = Array.isArray((existingMetadata as any).tags)
-          ? ((existingMetadata as any).tags as string[])
-          : [];
-        const tagsSet = new Set<string>(
-          existingTags.filter((tag): tag is string => typeof tag === 'string' && tag.length > 0)
-        );
-        tagsSet.add('qassets-fs');
-        if (targetPath) tagsSet.add(`fs-path:${targetPath}`);
-        tagsSet.add(`fs-name:${targetName}`);
-        if (isPrivateService(resource.service)) tagsSet.add('private');
-        if (resource.created) tagsSet.add(`fs-source-created:${resource.created}`);
-        const tags = Array.from(tagsSet);
-        const metadata: Record<string, any> = {
-          ...existingMetadata,
-          tags,
-          qassetsFs: {
-            path: targetPath,
-            fileName: targetName,
-            version: 1,
-          },
-          qassetsSource: {
-            name: resource.name,
-            service: resource.service,
-            identifier: resource.identifier,
-            created: resource.created,
-            savedAt: Date.now(),
-          },
-          title: (existingMetadata as any)?.title || targetName,
-        };
-        publishRequests.push({
-          name: activeName,
-          service: resource.service as Service,
-          identifier,
-          data64: rawBase64,
-          title: resource.metadata?.title || targetName,
-          description: saveToFilesDialog.description || resource.metadata?.description,
-          tags,
-          metadata,
-        });
-      }
-      setSaveToFilesDialog({
-        open: false,
-        folderPath: '',
-        fileName: '',
-        description: '',
-        saving: false,
-        error: null,
-        resources: [],
-      });
-      await publishResources(publishRequests);
-      await refreshResources();
-    } catch (e: any) {
-      setSaveToFilesDialog((prev) => ({
-        ...prev,
-        error: e?.message || 'Failed to save to files.',
-      }));
-    } finally {
-      setSaveToFilesDialog((prev) => ({ ...prev, saving: false }));
-    }
-  };
-
-  const moveEntriesToFolder = useCallback(
-    async (
-      entries: StructuredEntry[],
-      folderPath: string,
-      options?: { allowCreate?: boolean }
-    ): Promise<{ ok: boolean; reason?: string }> => {
-      if (!entries.length) {
-        return { ok: false, reason: 'Select structured files to move.' };
-      }
-      const normalizedFolder = normalizePathSegments(folderPath).join('/');
-      if (!options?.allowCreate) {
-        const folderCheck = ensureFolderPathAllowed(normalizedFolder);
-        if (!folderCheck.ok) {
-          return {
-            ok: false,
-            reason: folderCheck.reason || 'Nested folder paths must already exist.',
-          };
-        }
-      }
-      const pendingUpdates: Record<string, { path: string; fileName: string }> = {};
-      entries.forEach((entry) => {
-        pendingUpdates[entry.resource.identifier] = {
-          path: normalizedFolder,
-          fileName: entry.fileName,
-        };
-      });
-      if (Object.keys(pendingUpdates).length) {
-        setPendingMoves((prev) => ({ ...prev, ...pendingUpdates }));
-      }
-      try {
-        if (publishMode === 'immediate') {
-          await handlePublishManifest({ structured: pendingUpdates });
-        } else {
-          setManifestDirty(true);
-        }
-        return { ok: true };
-      } catch (e: any) {
-        return { ok: false, reason: e?.message || 'Failed to move files.' };
-      }
-    },
-    [ensureFolderPathAllowed, publishMode, handlePublishManifest]
-  );
-
-  const handleMoveDialogClose = () => {
-    if (moveDialog.saving) return;
-    setMoveDialog({ open: false, folderPath: '', saving: false, error: null, entries: [] });
-  };
-
-  const handleMoveSubmit = async () => {
-    if (!moveDialog.entries.length) {
-      setMoveDialog((prev) => ({ ...prev, error: 'Select structured files to move.' }));
-      return;
-    }
-    setMoveDialog((prev) => ({ ...prev, saving: true, error: null }));
-    const result = await moveEntriesToFolder(moveDialog.entries, moveDialog.folderPath);
-    if (!result.ok) {
-      setMoveDialog((prev) => ({
-        ...prev,
-        saving: false,
-        error: result.reason || 'Failed to move files.',
-      }));
-      return;
-    }
-    setMoveDialog({ open: false, folderPath: '', saving: false, error: null, entries: [] });
   };
 
   useEffect(() => {
@@ -1227,7 +1315,7 @@ export default function DataExplorer() {
 
   useEffect(() => {
     setSelectedResourceId(null);
-    if (activeSection !== 'services') setActiveService(null);
+    if (activeSection === 'files') setActiveService(null);
   }, [activeSection]);
 
   useEffect(() => {
@@ -1249,14 +1337,6 @@ export default function DataExplorer() {
       setPendingFolders(filtered);
     }
   }, [actualFolderPaths, pendingFolders, activeName]);
-
-  useEffect(() => {
-    if (!pendingShareResources.length) return;
-    const existingIds = new Set(combinedResources.map((res) => res.identifier));
-    const hasOverlap = pendingShareResources.some((entry) => existingIds.has(entry.identifier));
-    if (!hasOverlap) return;
-    setPendingShareResources((prev) => prev.filter((entry) => !existingIds.has(entry.identifier)));
-  }, [combinedResources, pendingShareResources]);
 
   useEffect(() => {
     const query = shareNames.split(',').pop()?.trim() ?? '';
@@ -1323,22 +1403,6 @@ export default function DataExplorer() {
     return combinedResources.filter((res) => matchesSearch(res, query));
   }, [combinedResources, searchTerm]);
 
-  const baseShareResources = useMemo(
-    () => combinedResources.filter((res) => isShareResource(res)),
-    [combinedResources]
-  );
-
-  const shareResources = useMemo(
-    () => [...baseShareResources, ...pendingShareResources],
-    [baseShareResources, pendingShareResources]
-  );
-
-  const filteredShareResources = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
-    if (!query) return shareResources;
-    return shareResources.filter((res) => matchesSearch(res, query));
-  }, [shareResources, searchTerm]);
-
   useEffect(() => {
     setSelectedResourceIds((prev) =>
       prev.filter((id) => combinedResources.some((res) => res.identifier === id))
@@ -1399,6 +1463,17 @@ export default function DataExplorer() {
       (a, b) => b.count - a.count || a.label.localeCompare(b.label)
     );
   }, [filteredResources, manifestServiceBuckets]);
+
+  const shareCount = useMemo(
+    () =>
+      filteredResources.filter((resource) => {
+        const tags = getMetadataTags(resource.metadata as Record<string, any>);
+        return tags.some(
+          (tag) => typeof tag === 'string' && (tag === 'qassets-share' || tag.startsWith('share:'))
+        );
+      }).length,
+    [filteredResources]
+  );
 
   const activeResources = useMemo(() => {
     if (!activeService) return [];
@@ -1600,6 +1675,165 @@ export default function DataExplorer() {
     [knownFolderPaths]
   );
 
+  const handleSaveToFilesSubmit = async () => {
+    const targets =
+      saveToFilesDialog.resources.length > 0
+        ? saveToFilesDialog.resources
+        : selectedResource
+          ? [selectedResource]
+          : [];
+    if (!activeName || !targets.length) {
+      setSaveToFilesDialog((prev) => ({
+        ...prev,
+        error: 'Select at least one resource and Qortal name first.',
+      }));
+      return;
+    }
+    const normalizedFolder = normalizePathSegments(saveToFilesDialog.folderPath).join('/');
+    const folderCheck = ensureFolderPathAllowed(normalizedFolder);
+    if (!folderCheck.ok) {
+      setSaveToFilesDialog((prev) => ({
+        ...prev,
+        error: folderCheck.reason || 'Invalid folder path.',
+      }));
+      return;
+    }
+    const trimmedName = saveToFilesDialog.fileName.trim();
+    if (targets.length === 1 && !trimmedName) {
+      setSaveToFilesDialog((prev) => ({ ...prev, error: 'Enter a file name to save.' }));
+      return;
+    }
+    setSaveToFilesDialog((prev) => ({ ...prev, saving: true, error: null }));
+    try {
+      const publishRequests: BatchPublishResource[] = [];
+      for (const resource of targets) {
+        const entryMeta = allStructuredEntryMap.get(resource.identifier) || null;
+        const targetName =
+          targets.length === 1
+            ? trimmedName
+            : entryMeta?.fileName || resource.metadata?.title || resource.identifier;
+        const rawBase64 = await (isPrivateService(resource.service)
+          ? fetchPrivateBase64(resource)
+          : fetchResourceBase64(resource));
+        if (!rawBase64) throw new Error('Unable to fetch resource data for saving.');
+        const targetPath = normalizedFolder || entryMeta?.folderSegments.join('/') || '';
+        const identifier = buildQassetsFileIdentifier(
+          resource.service as Service,
+          activeName || resource.name
+        );
+        const existingMetadata = { ...(resource.metadata || {}) };
+        const existingTags = Array.isArray((existingMetadata as any).tags)
+          ? ((existingMetadata as any).tags as string[])
+          : [];
+        const tagsSet = new Set<string>(
+          existingTags.filter((tag): tag is string => typeof tag === 'string' && tag.length > 0)
+        );
+        tagsSet.add('qassets-fs');
+        if (targetPath) tagsSet.add(`fs-path:${targetPath}`);
+        tagsSet.add(`fs-name:${targetName}`);
+        if (isPrivateService(resource.service)) tagsSet.add('private');
+        if (resource.created) tagsSet.add(`fs-source-created:${resource.created}`);
+        const tags = Array.from(tagsSet);
+        const metadata: Record<string, any> = {
+          ...existingMetadata,
+          tags,
+          qassetsFs: {
+            path: targetPath,
+            fileName: targetName,
+            version: 1,
+          },
+          qassetsSource: {
+            name: resource.name,
+            service: resource.service,
+            identifier: resource.identifier,
+            created: resource.created,
+            savedAt: Date.now(),
+          },
+          title: (existingMetadata as any)?.title || targetName,
+        };
+        publishRequests.push({
+          name: activeName,
+          service: resource.service as Service,
+          identifier,
+          data64: rawBase64,
+          title: resource.metadata?.title || targetName,
+          description: saveToFilesDialog.description || resource.metadata?.description,
+          tags,
+          metadata,
+        });
+      }
+      setSaveToFilesDialog({
+        open: false,
+        folderPath: '',
+        fileName: '',
+        description: '',
+        saving: false,
+        error: null,
+        resources: [],
+      });
+      await publishResources(publishRequests);
+      await refreshResources();
+    } catch (e: any) {
+      setSaveToFilesDialog((prev) => ({
+        ...prev,
+        error: e?.message || 'Failed to save to files.',
+      }));
+    } finally {
+      setSaveToFilesDialog((prev) => ({ ...prev, saving: false }));
+    }
+  };
+
+  const handleMoveDialogClose = () => {
+    if (moveDialog.saving) return;
+    setMoveDialog({ open: false, folderPath: '', saving: false, error: null, entries: [] });
+  };
+
+  const handleMoveSubmit = async () => {
+    if (!moveDialog.entries.length) {
+      setMoveDialog((prev) => ({ ...prev, error: 'Select structured files to move.' }));
+      return;
+    }
+    const normalizedFolder = normalizePathSegments(moveDialog.folderPath).join('/');
+    const folderCheck = ensureFolderPathAllowed(normalizedFolder);
+    if (!folderCheck.ok) {
+      setMoveDialog((prev) => ({
+        ...prev,
+        saving: false,
+        error: folderCheck.reason || 'Nested folder paths must already exist.',
+      }));
+      return;
+    }
+    setMoveDialog((prev) => ({ ...prev, saving: true, error: null }));
+    try {
+      const pendingUpdates: Record<string, { path: string; fileName: string }> = {};
+      for (const entry of moveDialog.entries) {
+        const nextPath = normalizedFolder;
+        const nextFileName = entry.fileName;
+        pendingUpdates[entry.resource.identifier] = {
+          path: nextPath,
+          fileName: nextFileName,
+        };
+      }
+      if (Object.keys(pendingUpdates).length) {
+        setPendingMoves((prev) => ({ ...prev, ...pendingUpdates }));
+      }
+      handleMoveDialogClose();
+      if (publishMode === 'immediate') {
+        await handlePublishManifest({ structured: pendingUpdates });
+      } else {
+        setManifestDirty(true);
+      }
+    } catch (e: any) {
+      setMoveDialog((prev) => ({
+        ...prev,
+        saving: false,
+        error: e?.message || 'Failed to move files.',
+      }));
+    } finally {
+      setMoveDialog((prev) => ({ ...prev, saving: false }));
+    }
+  };
+
   const handleOpenPublishMenu = (event: React.MouseEvent<HTMLButtonElement>) => {
     setPublishAnchor(event.currentTarget);
   };
@@ -1612,21 +1846,6 @@ export default function DataExplorer() {
   };
 
   const handleClearSelection = () => setSelectedResourceIds([]);
-  const handleSelectAllCurrentFolder = useCallback(() => {
-    if (!currentFolder.files.length) return;
-    setSelectedResourceIds((prev) => {
-      const set = new Set(prev);
-      let changed = false;
-      currentFolder.files.forEach((entry) => {
-        const id = entry.resource.identifier;
-        if (!set.has(id)) {
-          set.add(id);
-          changed = true;
-        }
-      });
-      return changed ? Array.from(set) : prev;
-    });
-  }, [currentFolder.files]);
 
   const handleServiceNavigate = (serviceKey: string | null) => {
     setActiveSection('services');
@@ -1640,11 +1859,7 @@ export default function DataExplorer() {
     setSelectedResourceId(null);
   };
 
-  const handleShareNavigate = () => {
-    setActiveSection('shares');
-    setActiveFilePath('');
-    setSelectedResourceId(null);
-  };
+  const handleShareNavigate = useCallback(() => undefined, []);
 
   const handleReload = async () => {
     await refreshResources();
@@ -1668,24 +1883,21 @@ export default function DataExplorer() {
       alert('Select or register a Qortal name before publishing.');
       return;
     }
-    setPublishDialog({
-      open: true,
-      variant,
-      defaults: {
-        service: 'DOCUMENT' as Service,
-        identifier: '',
-        folderPath: activeSection === 'files' ? activeFilePath : '',
-        title: '',
-        description: '',
-        structured: activeSection === 'files',
-      },
-    });
+    const defaults = createPublishDefaults(
+      activeSection === 'files' ? activeFilePath : '',
+      activeSection === 'files'
+    );
+    setPublishDialog({ open: true, variant, defaults });
     setPublishStatus(null);
   };
 
   const handlePublishClose = () => {
     if (publishing) return;
-    setPublishDialog((prev) => ({ ...prev, open: false }));
+    const defaults = createPublishDefaults(
+      activeSection === 'files' ? activeFilePath : '',
+      activeSection === 'files'
+    );
+    setPublishDialog({ open: false, variant: 'single', defaults });
     setPublishStatus(null);
   };
 
@@ -1707,11 +1919,11 @@ export default function DataExplorer() {
     }
 
     const normalizedFolder = normalizePathSegments(form.folderPath).join('/');
+
     setPublishing(true);
     setPublishStatus(null);
     const baseId = sanitizeIdentifier(form.identifier || '');
     try {
-      const publishRequests: BatchPublishResource[] = [];
       const getPublisherAddress = async () => {
         if (userAddress) return userAddress;
         const acct = await qortalRequest({ action: 'GET_USER_ACCOUNT' });
@@ -1719,6 +1931,7 @@ export default function DataExplorer() {
         throw new Error('Unable to resolve your account address for encryption.');
       };
 
+      const publishRequests: BatchPublishResource[] = [];
       for (let i = 0; i < files.length; i += 1) {
         const file = files[i];
         const data64 = await fileToBase64(file);
@@ -1748,7 +1961,7 @@ export default function DataExplorer() {
           metadataExtra: Record<string, any>;
           tagExtra: string[];
         }> => {
-          if (encryptionMode === 'none') {
+          if (encryptionMode === 'none' && !form.service.includes('PRIVATE')) {
             return {
               data64: base64,
               service: form.service,
@@ -1780,8 +1993,7 @@ export default function DataExplorer() {
             };
           }
           const recipients = parseRecipientList(directRecipients);
-          if (!recipients.length)
-            throw new Error('Add at least one recipient for direct encryption.');
+          if (!recipients.length) alert('no recipients, files will be encrypted for you only.');
           const addr = await getPublisherAddress();
           const { publicKeys } = await collectRecipientPublicKeys({
             usersAllowed: recipients,
@@ -1830,21 +2042,14 @@ export default function DataExplorer() {
           service: finalService as Service,
           identifier,
           data64: finalData64,
-          metadata,
-          tags,
           title,
           description,
+          tags,
+          metadata,
         });
       }
 
       await publishResources(publishRequests);
-      if (publishMode === 'immediate') {
-        setManifestDirty(true);
-        await handlePublishManifest({});
-      } else {
-        setManifestDirty(true);
-      }
-      setPublishStatus('Publish queued successfully.');
       await refreshResources();
       handlePublishClose();
     } catch (e: any) {
@@ -1882,9 +2087,8 @@ export default function DataExplorer() {
     }
     setFolderPublishing(true);
     setFolderStatus(null);
-    const baseSegments = normalizePathSegments(folderTargetPath);
-    const folderPathNormalized = baseSegments.join('/');
     try {
+      const baseSegments = normalizePathSegments(folderTargetPath);
       const publishedEntries: Array<{ identifier: string; path: string; fileName: string }> = [];
       const publishRequests: BatchPublishResource[] = [];
       for (const entry of folderSelection) {
@@ -1924,40 +2128,37 @@ export default function DataExplorer() {
         });
         publishedEntries.push({ identifier, path: folderPath, fileName });
       }
+      await publishResources(publishRequests);
+
       const manifest = {
         _type: 'QASSETS_FS_FOLDER',
         version: 1,
         root: folderRootName || '/',
-        folderPath: folderPathNormalized,
+        folderPath: baseSegments.join('/'),
         entries: publishedEntries,
         createdAt: Date.now(),
       };
       const manifestTags = ['qassets-fs-folder'];
       if (manifest.folderPath) manifestTags.push(`fs-folder:${manifest.folderPath}`);
       const manifestData64 = await objectToBase64(manifest);
-      publishRequests.push({
-        name: activeName,
-        service: 'DOCUMENT' as Service,
-        identifier: `qassets-fs-folder-${uniqueId6()}`,
-        data64: manifestData64,
-        title: manifest.root,
-        description: `Folder snapshot (${manifest.folderPath || '/'})`,
-        tags: manifestTags,
-        metadata: {
-          qassetsFsFolder: {
-            path: manifest.folderPath,
-            name: manifest.root,
-            version: 1,
+      await publishResources([
+        {
+          name: activeName,
+          service: 'DOCUMENT' as Service,
+          identifier: `qassets-fs-folder-${uniqueId6()}`,
+          data64: manifestData64,
+          title: manifest.root,
+          description: `Folder snapshot (${manifest.folderPath || '/'})`,
+          tags: manifestTags,
+          metadata: {
+            qassetsFsFolder: {
+              path: manifest.folderPath,
+              name: manifest.root,
+              version: 1,
+            },
           },
         },
-      });
-
-      setPendingFolders((prev) => {
-        if (prev.includes(folderPathNormalized)) return prev;
-        return prev.concat(folderPathNormalized);
-      });
-
-      await publishResources(publishRequests);
+      ]);
 
       await refreshResources();
       handleFolderDialogClose();
@@ -1967,7 +2168,6 @@ export default function DataExplorer() {
         setManifestDirty(true);
       }
     } catch (e: any) {
-      setPendingFolders((prev) => prev.filter((path) => path !== folderPathNormalized));
       setFolderStatus(e?.message || 'Folder publish failed');
     } finally {
       setFolderPublishing(false);
@@ -2153,6 +2353,90 @@ export default function DataExplorer() {
     removeStructuredIdentifiers?: string[];
   };
 
+  const buildManifestPayload = useCallback(
+    (overrides?: ManifestOverrides): ManifestDoc => {
+      const removalResources = new Set(overrides?.removeResourceIdentifiers || []);
+      const manifestResourcesPayload = combinedResources
+        .filter((res) => !removalResources.has(res.identifier))
+        .map((res) => ({
+          identifier: res.identifier,
+          service: res.service,
+          name: res.name,
+          created: res.created,
+          size: res.size,
+          metadata: res.metadata ? { ...res.metadata } : undefined,
+          status: res.status ? { ...res.status } : undefined,
+        }));
+      const removalSet = new Set(overrides?.removeStructuredIdentifiers || []);
+      const manifestStructuredPayload = allStructuredEntries
+        .filter((entry) => !removalSet.has(entry.resource.identifier))
+        .map((entry) => {
+          const override = overrides?.structured?.[entry.resource.identifier];
+          const nextPath = override?.path ?? entry.folderSegments.join('/');
+          const nextFileName = override?.fileName ?? entry.fileName;
+          return {
+            identifier: entry.resource.identifier,
+            path: nextPath,
+            fileName: nextFileName,
+            service: entry.resource.service,
+          };
+        });
+      const folderMap = new Map<string, string>();
+      folderSnapshot.forEach((folder) => {
+        const normalized = normalizePathSegments(folder.path).join('/');
+        const folderName = folder.name || normalized.split('/').filter(Boolean).slice(-1)[0] || '/';
+        folderMap.set(normalized, folderName);
+      });
+      overrides?.folders?.forEach(({ path, name }) => {
+        const normalized = normalizePathSegments(path).join('/');
+        const folderName = name || normalized.split('/').filter(Boolean).slice(-1)[0] || '/';
+        folderMap.set(normalized, folderName);
+      });
+      return {
+        version: 1,
+        generatedAt: Date.now(),
+        services: manifestSummary.services,
+        totals: manifestSummary.totals,
+        resourceTypes: detectedTypes,
+        resources: manifestResourcesPayload,
+        structuredFiles: manifestStructuredPayload,
+        folders: Array.from(folderMap.entries()).map(([path, name]) => ({ path, name })),
+        lastSynced: manifestSummary.lastSynced,
+      };
+    },
+    [combinedResources, manifestSummary, detectedTypes, allStructuredEntries, folderSnapshot]
+  );
+
+  const handlePublishManifest = useCallback(
+    async (overrides?: ManifestOverrides) => {
+      if (!activeName) return;
+      setManifestPublishing(true);
+      setManifestError(null);
+      try {
+        const manifestPayload = buildManifestPayload(overrides);
+        const data64 = await objectToBase64(manifestPayload);
+        await publishResources([
+          {
+            name: activeName,
+            service: 'DOCUMENT' as Service,
+            identifier: MANIFEST_IDENTIFIER,
+            data64,
+            title: 'Q-Assets Manifest',
+            description: 'Aggregated service and folder metadata for faster browsing.',
+            tags: ['qassets-manifest'],
+          },
+        ]);
+        setManifestDoc(manifestPayload);
+        setManifestDirty(false);
+      } catch (e: any) {
+        setManifestError(e?.message || 'Manifest publish failed');
+      } finally {
+        setManifestPublishing(false);
+      }
+    },
+    [activeName, buildManifestPayload]
+  );
+
   const openShareDialogForResources = (resources: QdnResource[]) => {
     if (!resources.length) return;
     setShareTargets(resources);
@@ -2195,8 +2479,6 @@ export default function DataExplorer() {
     }
     setShareLoading(true);
     setShareStatus(null);
-    const pendingEntries: QdnResource[] = [];
-    let appliedPending = false;
     try {
       const privateGroups = shareSelectedGroups.filter((id) => {
         const grp = groups.find((g) => g.groupId === id);
@@ -2234,28 +2516,18 @@ export default function DataExplorer() {
           });
           const service = ensurePrivateService(resource.service);
           const privData = applyPrivateMagicIfNeeded(enc, service);
-          const identifier = `${resource.identifier}-g${gid}-${uniqueId6()}`;
-          const metadata = {
-            ...metadataBase,
-            qassetsShareTarget: { type: 'group', groupId: gid },
-          };
-          const tags = [...tagsBase, 'private', `share:group:${gid}`];
           shareRequests.push({
             name: publisherName,
             service,
-            identifier,
+            identifier: `${resource.identifier}-g${gid}-${uniqueId6()}`,
             data64: privData,
             title: resource.metadata?.title,
             description: resource.metadata?.description,
-            tags,
-            metadata,
-          });
-          pendingEntries.push({
-            name: publisherName,
-            service,
-            identifier,
-            created: Date.now(),
-            metadata,
+            tags: [...tagsBase, 'private', `share:group:${gid}`],
+            metadata: {
+              ...metadataBase,
+              qassetsShareTarget: { type: 'group', groupId: gid },
+            },
           });
         }
 
@@ -2278,48 +2550,29 @@ export default function DataExplorer() {
           });
           const service = ensurePrivateService(resource.service);
           const privData = applyPrivateMagicIfNeeded(enc, service);
-          const identifier = `${resource.identifier}-direct-${uniqueId6()}`;
-          const metadata = {
-            ...metadataBase,
-            qassetsShareTarget: { type: 'direct', groups: publicGroups, names: directRecipients },
-          };
-          const tags = [...tagsBase, 'private', 'share:direct'];
           shareRequests.push({
             name: publisherName,
             service,
-            identifier,
+            identifier: `${resource.identifier}-direct-${uniqueId6()}`,
             data64: privData,
             title: resource.metadata?.title,
             description: resource.metadata?.description,
-            tags,
-            metadata,
-          });
-          pendingEntries.push({
-            name: publisherName,
-            service,
-            identifier,
-            created: Date.now(),
-            metadata,
+            tags: [...tagsBase, 'private', 'share:direct'],
+            metadata: {
+              ...metadataBase,
+              qassetsShareTarget: { type: 'direct', groups: publicGroups, names: directRecipients },
+            },
           });
         }
       }
-      if (!shareRequests.length) {
-        throw new Error('No shareable resources were generated.');
+
+      if (shareRequests.length) {
+        await publishResources(shareRequests);
       }
 
-      setPendingShareResources((prev) => [...pendingEntries, ...prev]);
-      appliedPending = true;
-
-      await publishResources(shareRequests);
       await refreshResources();
       handleShareClose();
     } catch (e: any) {
-      if (appliedPending && pendingEntries.length) {
-        const pendingIds = new Set(pendingEntries.map((entry) => entry.identifier));
-        setPendingShareResources((prev) =>
-          prev.filter((entry) => !pendingIds.has(entry.identifier))
-        );
-      }
       setShareStatus(e?.message || 'Share failed');
     } finally {
       setShareLoading(false);
@@ -2493,117 +2746,6 @@ export default function DataExplorer() {
     }
   };
 
-  const encodeTombstonePayload = useCallback(
-    async (
-      entry: StructuredEntry,
-      base64: string
-    ): Promise<{ data64: string; metadataExtras?: Record<string, any> }> => {
-      console.log('private entry', entry);
-      if (!isPrivateService(entry.resource.service)) return { data64: base64 };
-      const metadata = (entry.resource.metadata || {}) as any;
-      const encryptedMeta = metadata.encrypted;
-      const shareTarget = metadata.qassetsShareTarget;
-      const service = entry.resource.service;
-      const metadataExtras: Record<string, any> = {};
-
-      const encryptForGroup = async (groupId?: number, adminsOnly = false) => {
-        const gid = Number(groupId);
-        if (!gid || Number.isNaN(gid)) {
-          throw new Error('Unable to determine the group for this encrypted resource.');
-        }
-        const enc = await qortalRequest({
-          action: 'ENCRYPT_QORTAL_GROUP_DATA',
-          base64,
-          groupId: gid,
-          isAdmins: adminsOnly,
-        });
-        if (!enc) throw new Error('Failed to encrypt tombstone for the selected resource.');
-        metadataExtras.encrypted = { mode: 'group', groupId: gid, adminsOnly };
-        if (shareTarget?.type === 'group') metadataExtras.qassetsShareTarget = shareTarget;
-        return {
-          data64: applyPrivateMagicIfNeeded(enc, service),
-          metadataExtras,
-        };
-      };
-
-      const encryptDirect = async (options?: {
-        recipients?: string[];
-        groups?: number[];
-        fallback?: boolean;
-      }) => {
-        const addr = await resolvePublisherAddress();
-        const recipientNames =
-          options?.recipients && options.recipients.length
-            ? options.recipients
-            : options?.fallback
-              ? [entry.resource.name]
-              : [];
-        const { publicKeys } = await collectRecipientPublicKeys({
-          groupIds: options?.groups && options.groups.length ? options.groups : undefined,
-          usersAllowed: recipientNames.length ? recipientNames : undefined,
-          extraAddresses:
-            !recipientNames.length && (!options?.groups || !options.groups.length)
-              ? [addr]
-              : undefined,
-          includeSelf: true,
-          me: { name: entry.resource.name, address: addr },
-        });
-        if (!publicKeys.length) {
-          throw new Error('No recipient keys resolved for deleting the selected resource.');
-        }
-        const enc = await qortalRequest({
-          action: 'ENCRYPT_DATA',
-          base64,
-          publicKeys,
-        });
-        if (!enc) throw new Error('Failed to encrypt tombstone for the selected resource.');
-        metadataExtras.encrypted = {
-          mode: 'direct',
-          recipients: recipientNames.length ? recipientNames : [entry.resource.name],
-        };
-        if (shareTarget?.type === 'direct') {
-          metadataExtras.qassetsShareTarget = shareTarget;
-        } else if (options?.fallback) {
-          metadataExtras.qassetsShareTarget = {
-            type: 'direct',
-            names: [entry.resource.name],
-          };
-        }
-        return {
-          data64: applyPrivateMagicIfNeeded(enc, service),
-          metadataExtras,
-        };
-      };
-
-      if (encryptedMeta?.mode === 'group') {
-        return encryptForGroup(encryptedMeta.groupId, !!encryptedMeta.adminsOnly);
-      }
-      if (shareTarget?.type === 'group') {
-        return encryptForGroup(shareTarget.groupId, false);
-      }
-
-      const directRecipients =
-        encryptedMeta?.mode === 'direct' && Array.isArray(encryptedMeta.recipients)
-          ? encryptedMeta.recipients
-          : Array.isArray(shareTarget?.names) && shareTarget.names.length
-            ? shareTarget.names
-            : [];
-      const directGroupIds =
-        shareTarget?.type === 'direct' && Array.isArray(shareTarget.groups)
-          ? shareTarget.groups
-              .map((gid: any) => Number(gid))
-              .filter((gid: any) => Number.isFinite(gid))
-          : [];
-
-      if (directRecipients.length || directGroupIds.length) {
-        return encryptDirect({ recipients: directRecipients, groups: directGroupIds });
-      }
-
-      return encryptDirect({ fallback: true });
-    },
-    [resolvePublisherAddress]
-  );
-
   const handleDeleteFilesCopy = async (entries?: StructuredEntry[]) => {
     const primaryEntry = selectedStructuredEntry;
     const bulkEntries = entries
@@ -2634,11 +2776,9 @@ export default function DataExplorer() {
           identifier: entry.resource.identifier,
           reason: 'user-delete',
         };
-        let data64 = await objectToBase64(tombstone);
-        const { data64: finalData64, metadataExtras } = await encodeTombstonePayload(entry, data64);
-        data64 = finalData64;
+        const data64 = await objectToBase64(tombstone);
         removedIdentifiers.push(entry.resource.identifier);
-        const metadata: Record<string, any> = {
+        const metadata = {
           tags: ['qassets-tombstone'],
           qassetsTombstone: {
             version: 1,
@@ -2649,9 +2789,6 @@ export default function DataExplorer() {
             fileName: entry.fileName,
           },
         };
-        if (metadataExtras) {
-          Object.assign(metadata, metadataExtras);
-        }
         resources.push({
           name: entry.resource.name,
           service: entry.resource.service as Service,
@@ -2782,14 +2919,6 @@ export default function DataExplorer() {
       });
     }
 
-    if (activeSection === 'shares') {
-      crumbs.push(
-        <Typography key="shares-breadcrumb" color="text.primary" fontWeight={600}>
-          Shares
-        </Typography>
-      );
-    }
-
     return crumbs;
   }, [activeName, activeSection, activeService, activeFilePath]);
 
@@ -2797,18 +2926,15 @@ export default function DataExplorer() {
   const showResourceGrid =
     activeSection === 'services' && Boolean(activeName) && Boolean(activeService);
   const showFilesGrid = activeSection === 'files' && Boolean(activeName);
-  const showShareGrid = activeSection === 'shares' && Boolean(activeName);
   const viewingFilesEntry = activeSection === 'files' && Boolean(selectedStructuredEntry);
   const cardTitle =
     activeSection === 'files'
       ? activeFilePath
         ? activeFilePath.split('/').slice(-1)[0] || 'Files workspace'
         : 'Files workspace'
-      : activeSection === 'shares'
-        ? 'Shared resources'
-        : activeService
-          ? serviceLabels(activeService)
-          : activeName || 'Select a name';
+      : activeService
+        ? serviceLabels(activeService)
+        : activeName || 'Select a name';
 
   const serviceTotalPages = Math.max(1, Math.ceil(activeResources.length / SERVICE_PAGE_SIZE));
   const pagedActiveResources = useMemo(() => {
@@ -2821,6 +2947,7 @@ export default function DataExplorer() {
     const start = (folderPage - 1) * FOLDER_PAGE_SIZE;
     return sortedFolderFiles.slice(start, start + FOLDER_PAGE_SIZE);
   }, [sortedFolderFiles, folderPage]);
+
   return (
     <Box sx={{ px: { xs: 1.25, md: 2.5 }, py: { xs: 1.5, md: 3 }, width: '100%' }}>
       <ExplorerHeader
@@ -2847,7 +2974,7 @@ export default function DataExplorer() {
           activeService={activeService}
           activeFilePath={activeFilePath}
           visibleStructuredCount={visibleStructuredEntries.length}
-          shareCount={shareResources.length}
+          shareCount={shareCount}
           folderMap={folderMap}
           onSelectName={setActiveName}
           onReloadNames={reloadNames}
@@ -2877,22 +3004,34 @@ export default function DataExplorer() {
                 )}
               </Box>
               <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                <ToggleButtonGroup
-                  size="small"
-                  value={publishMode}
-                  exclusive
-                  onChange={(_event, value) => value && setPublishMode(value)}
-                >
-                  <ToggleButton value="immediate">Publish immediately</ToggleButton>
-                  <ToggleButton value="batch">Batch publishes</ToggleButton>
-                </ToggleButtonGroup>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <ToggleButtonGroup
+                    size="small"
+                    value={publishMode}
+                    exclusive
+                    onChange={(_event, value) => value && setPublishMode(value)}
+                  >
+                    <ToggleButton value="immediate">Real-Time Update Publishing</ToggleButton>
+                    <ToggleButton value="batch">Queue Update Publishing</ToggleButton>
+                  </ToggleButtonGroup>
+                  {publishMode === 'batch' && (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => void handlePublishManifest()}
+                      disabled={!manifestDirty || manifestPublishing || !activeName}
+                    >
+                      {manifestPublishing ? 'Publishing…' : 'Publish queued changes'}
+                    </Button>
+                  )}
+                </Stack>
                 <Button
                   variant="contained"
                   startIcon={<PublishRoundedIcon />}
                   onClick={handleOpenPublishMenu}
                   disabled={!activeName}
                 >
-                  Publish
+                  Publish Files/Folders
                 </Button>
                 <Tooltip title="Refresh current folder">
                   <span>
@@ -3220,10 +3359,9 @@ export default function DataExplorer() {
             {showFilesGrid && (
               <>
                 <Stack
-                  direction={{ xs: 'column', sm: 'row' }}
-                  alignItems={{ xs: 'flex-start', sm: 'center' }}
+                  direction="row"
+                  alignItems="center"
                   justifyContent="space-between"
-                  spacing={1}
                   sx={{ mb: 1 }}
                 >
                   <Typography variant="subtitle2">
@@ -3231,24 +3369,15 @@ export default function DataExplorer() {
                     {currentFolder.files.length} file
                     {currentFolder.files.length === 1 ? '' : 's'}
                   </Typography>
-                  <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                  {canLoadMore && (
                     <Button
                       size="small"
-                      onClick={handleSelectAllCurrentFolder}
-                      disabled={!currentFolder.files.length}
+                      onClick={handleLoadRemaining}
+                      disabled={resourcesLoading || loadingAllPages}
                     >
-                      Select all
+                      {loadingAllPages ? 'Loading…' : 'Load remaining'}
                     </Button>
-                    {canLoadMore && (
-                      <Button
-                        size="small"
-                        onClick={handleLoadRemaining}
-                        disabled={resourcesLoading || loadingAllPages}
-                      >
-                        {loadingAllPages ? 'Loading…' : 'Load remaining'}
-                      </Button>
-                    )}
-                  </Stack>
+                  )}
                 </Stack>
 
                 <Paper
@@ -3481,105 +3610,6 @@ export default function DataExplorer() {
               </>
             )}
 
-            {showShareGrid && (
-              <>
-                <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                  Shared resources ({filteredShareResources.length})
-                </Typography>
-                <Box
-                  sx={{
-                    display: 'grid',
-                    gridTemplateColumns: {
-                      xs: 'repeat(auto-fit, minmax(240px, 1fr))',
-                      sm: 'repeat(auto-fit, minmax(280px, 1fr))',
-                    },
-                    gap: 1.5,
-                  }}
-                >
-                  {filteredShareResources.map((resource) => {
-                    const shareTarget = getShareTargetMeta(resource);
-                    const isSelected = resource.identifier === selectedResourceId;
-                    const typeLabel =
-                      shareTarget?.type === 'group'
-                        ? `Group #${shareTarget.groupId}`
-                        : shareTarget?.type === 'direct'
-                          ? 'Direct share'
-                          : 'Share';
-                    const directNames =
-                      shareTarget?.type === 'direct'
-                        ? (shareTarget.names || []).filter(Boolean)
-                        : [];
-                    const directGroups =
-                      shareTarget?.type === 'direct'
-                        ? (shareTarget.groups || []).filter(Boolean)
-                        : [];
-                    return (
-                      <Paper
-                        key={resource.identifier}
-                        variant="outlined"
-                        onClick={() => setSelectedResourceId(resource.identifier)}
-                        onDoubleClick={() => handlePreviewResource(resource)}
-                        sx={{
-                          p: 1.5,
-                          borderRadius: 2.5,
-                          cursor: 'pointer',
-                          borderColor: isSelected ? 'primary.main' : undefined,
-                          boxShadow: isSelected ? 4 : undefined,
-                          transition: 'transform 120ms ease, box-shadow 120ms ease',
-                          '&:hover': { transform: 'translateY(-2px)', boxShadow: 4 },
-                        }}
-                      >
-                        <Stack spacing={1}>
-                          <Stack direction="row" spacing={1} alignItems="center">
-                            <Chip size="small" color="primary" label={typeLabel} />
-                            {shareTarget?.type === 'direct' && directNames.length > 0 && (
-                              <Chip
-                                size="small"
-                                variant="outlined"
-                                label={`${directNames.length} name${directNames.length === 1 ? '' : 's'}`}
-                              />
-                            )}
-                            {shareTarget?.type === 'direct' && directGroups.length > 0 && (
-                              <Chip
-                                size="small"
-                                variant="outlined"
-                                label={`${directGroups.length} group${directGroups.length === 1 ? '' : 's'}`}
-                              />
-                            )}
-                          </Stack>
-                          <Typography variant="subtitle2" fontWeight={600}>
-                            {getResourceLabel(resource)}
-                          </Typography>
-                          <Typography variant="body2" color="text.secondary" noWrap>
-                            {resource.identifier}
-                          </Typography>
-                          <Typography variant="body2" color="text.secondary" sx={{ minHeight: 40 }}>
-                            {resource.metadata?.description || 'No description'}
-                          </Typography>
-                          {shareTarget?.type === 'group' && (
-                            <Typography variant="caption" color="text.secondary">
-                              Shared with private group #{shareTarget.groupId}
-                            </Typography>
-                          )}
-                          {shareTarget?.type === 'direct' && (
-                            <Typography variant="caption" color="text.secondary">
-                              Shared with {directNames.length} names and {directGroups.length} group
-                              {directGroups.length === 1 ? '' : 's'}
-                            </Typography>
-                          )}
-                        </Stack>
-                      </Paper>
-                    );
-                  })}
-                  {!filteredShareResources.length && (
-                    <Typography variant="body2" color="text.secondary">
-                      No shared resources yet. Use Share to send private copies.
-                    </Typography>
-                  )}
-                </Box>
-              </>
-            )}
-
             {resourcesLoading && (
               <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 2 }}>
                 <CircularProgress size={18} />
@@ -3748,7 +3778,7 @@ export default function DataExplorer() {
       <CreateFolderDialog
         open={createFolderDialog.open}
         basePath={createFolderDialog.basePath}
-        error={createFolderError}
+        error={createFolderDialog.error}
         onClose={handleCreateFolderClose}
         onSubmit={handleCreateFolderSubmit}
       />
@@ -4038,43 +4068,17 @@ export default function DataExplorer() {
         </DialogActions>
       </Dialog>
 
-      <Dialog open={moveDialog.open} onClose={handleMoveDialogClose} fullWidth maxWidth="sm">
-        <DialogTitle>Move files</DialogTitle>
-        <DialogContent dividers>
-          <Stack spacing={2}>
-            <Typography variant="body2" color="text.secondary">
-              Move {moveDialog.entries.length} structured file
-              {moveDialog.entries.length === 1 ? '' : 's'} to a different folder path.
-            </Typography>
-            <TextField
-              select
-              fullWidth
-              label="Destination folder"
-              value={moveDialog.folderPath}
-              onChange={(event) =>
-                setMoveDialog((prev) => ({ ...prev, folderPath: event.target.value }))
-              }
-              helperText="Select an existing folder (root is '/')."
-            >
-              {folderOptions.map((path) => (
-                <MenuItem key={path || 'root'} value={path}>
-                  {path ? `/${path}` : '/'}
-                </MenuItem>
-              ))}
-            </TextField>
-            {moveDialog.saving && <LinearProgress />}
-            {moveDialog.error && <Alert severity="warning">{moveDialog.error}</Alert>}
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleMoveDialogClose} disabled={moveDialog.saving}>
-            Cancel
-          </Button>
-          <Button onClick={handleMoveSubmit} variant="contained" disabled={moveDialog.saving}>
-            {moveDialog.saving ? 'Moving…' : 'Move'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <MoveToNewFolderDialog
+        open={moveDialog.open}
+        entriesCount={moveDialog.entries.length}
+        folderOptions={folderOptions}
+        folderPath={moveDialog.folderPath}
+        saving={moveDialog.saving}
+        error={moveDialog.error}
+        onClose={handleMoveDialogClose}
+        onSubmit={handleMoveSubmit}
+        onFolderChange={(value) => setMoveDialog((prev) => ({ ...prev, folderPath: value }))}
+      />
 
       <Dialog open={shareDialog.open} onClose={handleShareClose} fullWidth maxWidth="sm">
         <DialogTitle>Share resource</DialogTitle>

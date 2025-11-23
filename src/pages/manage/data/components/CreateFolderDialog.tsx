@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, Stack, TextField } from '@mui/material';
+import {
+  Alert,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Stack,
+  TextField,
+} from '@mui/material';
 import { normalizePathSegments } from '../../../../utils/qdnResourceUtils';
 
 type CreateFolderDialogProps = {
@@ -36,7 +45,12 @@ export function CreateFolderDialog({
       <DialogTitle>Create folder</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2}>
-          <TextField label="Base path" value={displayPath} InputProps={{ readOnly: true }} fullWidth />
+          <TextField
+            label="Base path"
+            value={displayPath}
+            InputProps={{ readOnly: true }}
+            fullWidth
+          />
           <TextField
             label="Folder name"
             fullWidth

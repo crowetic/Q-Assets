@@ -1,70 +1,79 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Dialog, DialogTitle, DialogContent, DialogActions, Button, Stack, TextField, Alert, Typography } from '@mui/material';
-import { normalizePathSegments } from '../../../../utils/qdnResourceUtils';
+import {
+  Alert,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  LinearProgress,
+  Stack,
+  TextField,
+  Typography,
+  Autocomplete,
+} from '@mui/material';
 
-type MoveToNewFolderDialogProps = {
+export type MoveToNewFolderDialogProps = {
   open: boolean;
-  basePath: string;
-  selectionCount: number;
+  entriesCount: number;
+  folderOptions: string[];
+  folderPath: string;
+  saving: boolean;
   error: string | null;
   onClose: () => void;
-  onSubmit: (folderName: string) => void;
+  onSubmit: () => void;
+  onFolderChange: (value: string) => void;
 };
 
 export function MoveToNewFolderDialog({
   open,
-  basePath,
-  selectionCount,
+  entriesCount,
+  folderOptions,
+  folderPath,
+  saving,
   error,
   onClose,
   onSubmit,
+  onFolderChange,
 }: MoveToNewFolderDialogProps) {
-  const [folderName, setFolderName] = useState('');
-
-  useEffect(() => {
-    if (open) {
-      setFolderName('');
-    }
-  }, [open, basePath]);
-
-  const displayPath = useMemo(() => `/${normalizePathSegments(basePath).join('/')}`, [basePath]);
-
-  const handleSubmit = () => {
-    onSubmit(folderName);
-  };
-
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>Move to new folder</DialogTitle>
+      <DialogTitle>Move files</DialogTitle>
       <DialogContent dividers>
         <Stack spacing={2}>
           <Typography variant="body2" color="text.secondary">
-            {selectionCount} item{selectionCount === 1 ? '' : 's'} will move into a new folder under
-            {' '}
-            <strong>{displayPath || '/'}</strong>.
+            Move {entriesCount} structured file{entriesCount === 1 ? '' : 's'} to a different folder
+            path.
           </Typography>
-          <TextField
-            label="New folder name"
-            fullWidth
-            value={folderName}
-            onChange={(event) => setFolderName(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                handleSubmit();
-              }
-            }}
-            helperText="Creates a folder locally and moves the selected files into it."
+          <Autocomplete
+            freeSolo
+            selectOnFocus
+            clearOnBlur
+            handleHomeEndKeys
+            options={folderOptions}
+            value={folderPath}
+            onInputChange={(_event, value) => onFolderChange(value)}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="Destination folder"
+                helperText="Select an existing folder or type a new folder path (root is '/')."
+              />
+            )}
           />
+          {saving && <LinearProgress />}
           {error && <Alert severity="warning">{error}</Alert>}
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
-        <Button variant="contained" onClick={handleSubmit}>
-          Move
+        <Button onClick={onClose} disabled={saving}>
+          Cancel
+        </Button>
+        <Button onClick={onSubmit} variant="contained" disabled={saving}>
+          {saving ? 'Moving…' : 'Move'}
         </Button>
       </DialogActions>
     </Dialog>
   );
 }
+
+export default MoveToNewFolderDialog;
