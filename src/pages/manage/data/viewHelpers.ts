@@ -86,3 +86,16 @@ export const getResourceCreatedAt = (resource: QdnResource) => {
   }
   return resource.created;
 };
+
+export const getResourceUpdatedAt = (resource: QdnResource) => {
+  const meta = (resource.metadata as any) || {};
+  const fromSource = Number(meta.qassetsSource?.updated);
+  if (fromSource) return fromSource;
+  const tags: string[] = coerceTags(meta.tags);
+  const tag = tags.find((t) => t.startsWith('fs-source-updated:'));
+  if (tag) {
+    const ts = Number(tag.slice('fs-source-updated:'.length));
+    if (ts) return ts;
+  }
+  return typeof resource.updated === 'number' ? resource.updated : undefined;
+};

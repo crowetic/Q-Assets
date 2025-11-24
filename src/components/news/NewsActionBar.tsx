@@ -4,7 +4,9 @@ import { useNavigate } from 'react-router-dom';
 import { getUserRoles, UserRoles } from '../../utils/roles';
 import PromotionDialog from './PromotionDialog';
 import AnnouncementDialog from './AnnouncementDialog';
-import OrbitronButton from '../buttons/OrbitronButton';
+import SuccessButton from '../buttons/SuccessButton';
+import InfoButton from '../buttons/InfoButton';
+import PrimaryButton from '../buttons/PrimaryButton';
 
 type Props = {
   treasuryAddress: string; // where promos pay to
@@ -30,13 +32,32 @@ export default function NewsActionBar({ treasuryAddress, defaultPromoPriceQort =
     <Box
       sx={{
         display: 'flex',
-        justifyContent: 'center',
+        justifyContent: 'space-between',
         gap: 1,
         flexWrap: 'wrap',
         mb: 2,
+        width: '100%',
+        maxWidth: '95%',
+        mx: 'auto',
+        alignItems: 'stretch',
       }}
     >
       {/* Submit Promotion: visible to any logged-in user */}
+
+      {/* Add Q-Assets Announcement: management only */}
+      {roles.isManagement && (
+        <InfoButton variant="outlined" onClick={() => setAnnounceOpen(true)}>
+          Add Q-Assets Announcement
+        </InfoButton>
+      )}
+
+      {/* Publish Asset News: issuers only (link to existing flow) */}
+      {roles.isAssetIssuer && (
+        <SuccessButton variant="outlined" onClick={() => navigate('/publish-asset-news')}>
+          Publish Asset News
+        </SuccessButton>
+      )}
+
       <Tooltip
         title={
           roles.loggedIn
@@ -45,29 +66,15 @@ export default function NewsActionBar({ treasuryAddress, defaultPromoPriceQort =
         }
       >
         <span>
-          <OrbitronButton
+          <PrimaryButton
             variant="outlined"
             onClick={() => setPromoOpen(true)}
             disabled={!roles.loggedIn}
           >
             Submit Promotion
-          </OrbitronButton>
+          </PrimaryButton>
         </span>
       </Tooltip>
-
-      {/* Add Q-Assets Announcement: management only */}
-      {roles.isManagement && (
-        <OrbitronButton variant="outlined" onClick={() => setAnnounceOpen(true)}>
-          Add Q-Assets Announcement
-        </OrbitronButton>
-      )}
-
-      {/* Publish Asset News: issuers only (link to existing flow) */}
-      {roles.isAssetIssuer && (
-        <OrbitronButton variant="outlined" onClick={() => navigate('/publish-asset-news')}>
-          Publish Asset News
-        </OrbitronButton>
-      )}
 
       <PromotionDialog
         open={promoOpen}

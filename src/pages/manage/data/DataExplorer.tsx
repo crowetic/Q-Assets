@@ -74,6 +74,7 @@ import {
   getResourceStatus,
   getDisplayTags,
   getResourceCreatedAt,
+  getResourceUpdatedAt,
 } from './viewHelpers';
 import { filterUserTags } from '../../../utils/qdnTags';
 import type {
@@ -138,14 +139,27 @@ const SERVICE_OPTIONS = ALL_QDN_SERVICES;
 const PENDING_FOLDERS_KEY = 'qassets_data_pending_folders_v1';
 const MAX_FILE_IDENTIFIER_LENGTH = QASSETS_FILE_ID_MAX;
 const MANIFEST_SERVICE = ensurePrivateService('DOCUMENT_PRIVATE');
-type ResourceSort = 'name-asc' | 'name-desc' | 'date-desc' | 'date-asc';
+type ResourceSort =
+  | 'name-asc'
+  | 'name-desc'
+  | 'created-desc'
+  | 'created-asc'
+  | 'updated-desc'
+  | 'updated-asc';
 const RESOURCE_SORT_OPTIONS: { value: ResourceSort; label: string }[] = [
-  { value: 'date-desc', label: 'Date (newest first)' },
-  { value: 'date-asc', label: 'Date (oldest first)' },
+  { value: 'updated-desc', label: 'Updated (newest first)' },
+  { value: 'updated-asc', label: 'Updated (oldest first)' },
+  { value: 'created-desc', label: 'Created (newest first)' },
+  { value: 'created-asc', label: 'Created (oldest first)' },
   { value: 'name-asc', label: 'Name (A to Z)' },
   { value: 'name-desc', label: 'Name (Z to A)' },
 ];
-const getResourceSortKey = (resource: QdnResource) => getResourceCreatedAt(resource) || 0;
+const getResourceSortKey = (resource: QdnResource, sort: ResourceSort) => {
+  if (sort.startsWith('updated')) {
+    return getResourceUpdatedAt(resource) || getResourceCreatedAt(resource) || 0;
+  }
+  return getResourceCreatedAt(resource) || 0;
+};
 const compareResourcesBySort = (a: QdnResource, b: QdnResource, sort: ResourceSort) => {
   if (sort.startsWith('name')) {
     const aName = getResourceLabel(a).toLowerCase();
@@ -153,16 +167,18 @@ const compareResourcesBySort = (a: QdnResource, b: QdnResource, sort: ResourceSo
     const result = aName.localeCompare(bName, undefined, { sensitivity: 'base' });
     return sort === 'name-desc' ? -result : result;
   }
-  const diff = getResourceSortKey(b) - getResourceSortKey(a);
-  return sort === 'date-asc' ? -diff : diff;
+  const diff = getResourceSortKey(b, sort) - getResourceSortKey(a, sort);
+  const isAsc = sort.endsWith('asc');
+  return isAsc ? -diff : diff;
 };
 const compareEntriesBySort = (a: StructuredEntry, b: StructuredEntry, sort: ResourceSort) => {
   if (sort.startsWith('name')) {
     const result = a.fileName.localeCompare(b.fileName, undefined, { sensitivity: 'base' });
     return sort === 'name-desc' ? -result : result;
   }
-  const diff = getResourceSortKey(b.resource) - getResourceSortKey(a.resource);
-  return sort === 'date-asc' ? -diff : diff;
+  const diff = getResourceSortKey(b.resource, sort) - getResourceSortKey(a.resource, sort);
+  const isAsc = sort.endsWith('asc');
+  return isAsc ? -diff : diff;
 };
 const createPublishDefaults = (folderPath: string, structured: boolean): PublishFormState => ({
   service: 'DOCUMENT' as Service,
@@ -777,7 +793,7 @@ export default function DataExplorer() {
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null);
   const [publishAnchor, setPublishAnchor] = useState<null | HTMLElement>(null);
   const [publishMode, setPublishMode] = useState<'immediate' | 'batch'>('immediate');
-  const [resourceSort, setResourceSort] = useState<ResourceSort>('date-desc');
+  const [resourceSort, setResourceSort] = useState<ResourceSort>('updated-desc');
   const [publishDialog, setPublishDialog] = useState<{
     open: boolean;
     variant: 'single' | 'multiple';
@@ -839,9 +855,8 @@ export default function DataExplorer() {
   const [createFolderDialog, setCreateFolderDialog] = useState<{
     open: boolean;
     basePath: string;
-    folderName: string;
     error: string | null;
-  }>({ open: false, basePath: '', folderName: '', error: null });
+  }>({ open: false, basePath: '', error: null });
   const loadPendingFolders = useCallback((name: string | null) => {
     if (!name || typeof window === 'undefined') return [];
     try {
@@ -1028,21 +1043,16 @@ export default function DataExplorer() {
     setCreateFolderDialog({
       open: true,
       basePath: activeSection === 'files' ? activeFilePath : '',
-      folderName: '',
       error: null,
     });
   };
 
   const handleCreateFolderClose = () => {
-    setCreateFolderDialog({ open: false, basePath: '', folderName: '', error: null });
+    setCreateFolderDialog({ open: false, basePath: '', error: null });
   };
 
-  const handleCreateFolderNameChange = (value: string) => {
-    setCreateFolderDialog((prev) => ({ ...prev, folderName: value, error: null }));
-  };
-
-  const handleCreateFolderSubmit = () => {
-    const name = createFolderDialog.folderName.trim();
+  const handleCreateFolderSubmit = (folderName: string) => {
+    const name = folderName.trim();
     if (!name) {
       setCreateFolderDialog((prev) => ({ ...prev, error: 'Enter a folder name.' }));
       return;
@@ -1065,7 +1075,7 @@ export default function DataExplorer() {
     const updater = (prev: string[]) =>
       prev.includes(targetPath) ? prev : prev.concat(targetPath);
     setPendingFolders(updater);
-    setCreateFolderDialog({ open: false, basePath: '', folderName: '', error: null });
+    setCreateFolderDialog({ open: false, basePath: '', error: null });
     setActiveSection('files');
     if (base) setActiveFilePath(base);
     if (publishMode === 'immediate') {
@@ -3123,6 +3133,24 @@ export default function DataExplorer() {
     return sortedFolderFiles.slice(start, start + FOLDER_PAGE_SIZE);
   }, [sortedFolderFiles, folderPage]);
 
+  const handleSelectAllVisible = useCallback(() => {
+    const ids =
+      activeSection === 'files'
+        ? sortedFolderFiles.map((entry) => entry.resource.identifier)
+        : activeSection === 'services' && activeService
+          ? pagedActiveResources.map((res) => res.identifier)
+          : activeSection === 'shares'
+            ? pagedShareResources.map((res) => res.identifier)
+            : [];
+    setSelectedResourceIds(ids);
+  }, [
+    activeSection,
+    activeService,
+    sortedFolderFiles,
+    pagedActiveResources,
+    pagedShareResources,
+  ]);
+
   return (
     <Box sx={{ px: { xs: 1.25, md: 2.5 }, py: { xs: 1.5, md: 3 }, width: '100%' }}>
       <ExplorerHeader
@@ -3137,7 +3165,7 @@ export default function DataExplorer() {
       <Stack
         direction={{ xs: 'column', lg: 'row' }}
         spacing={2.5}
-        sx={{ mt: 2, alignItems: 'stretch' }}
+        sx={{ mt: 2, alignItems: 'stretch', minHeight: { lg: 'calc(100vh - 180px)' } }}
       >
         <ExplorerSidebar
           entries={entries}
@@ -3430,6 +3458,9 @@ export default function DataExplorer() {
                       >
                         Delete
                       </Button>
+                      <Button size="small" onClick={handleSelectAllVisible}>
+                        Select all visible
+                      </Button>
                       <Button size="small" onClick={handleClearSelection}>
                         Clear
                       </Button>
@@ -3610,6 +3641,9 @@ export default function DataExplorer() {
                       <Button size="small" onClick={handleBulkDelete}>
                         Delete
                       </Button>
+                      <Button size="small" onClick={handleSelectAllVisible}>
+                        Select all visible
+                      </Button>
                       <Button size="small" onClick={handleClearSelection}>
                         Clear
                       </Button>
@@ -3787,6 +3821,9 @@ export default function DataExplorer() {
                         disabled={!selectedStructuredEntries.length}
                       >
                         Delete
+                      </Button>
+                      <Button size="small" onClick={handleSelectAllVisible}>
+                        Select all visible
                       </Button>
                       <Button size="small" onClick={handleClearSelection}>
                         Clear
@@ -4140,10 +4177,8 @@ export default function DataExplorer() {
       <CreateFolderDialog
         open={createFolderDialog.open}
         basePath={createFolderDialog.basePath}
-        folderName={createFolderDialog.folderName}
         error={createFolderDialog.error}
         onClose={handleCreateFolderClose}
-        onChange={handleCreateFolderNameChange}
         onSubmit={handleCreateFolderSubmit}
       />
 

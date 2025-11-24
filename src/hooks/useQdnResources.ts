@@ -14,6 +14,7 @@ export type QdnResource = {
   status?: QdnStatus;
   size?: number;
   created?: number;
+  updated?: number;
   metadata?: Record<string, any>;
 };
 
@@ -48,6 +49,7 @@ export function useQdnResources(name: string | null) {
         typeof startOffset === 'number' && startOffset >= 0 ? startOffset : offsetRef.current;
       setLoading(true);
       setError(null);
+      console.log(offset);
       try {
         const res = await qortalRequest({
           action: 'LIST_QDN_RESOURCES',

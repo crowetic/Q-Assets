@@ -108,9 +108,10 @@ export const ExplorerSidebar = memo(function ExplorerSidebar({
       sx={{
         flexBasis: { lg: '280px' },
         flexShrink: 0,
+        alignSelf: 'stretch',
         borderRadius: 3,
         p: 2,
-        height: { xs: 'auto', lg: 'calc(100vh - 220px)' },
+        height: { xs: 'auto', lg: '100%' },
         maxHeight: { xs: 'auto', lg: 'calc(100vh - 220px)' },
         overflowY: 'auto',
         overflowX: 'hidden',

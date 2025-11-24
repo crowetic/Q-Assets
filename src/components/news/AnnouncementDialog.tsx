@@ -18,7 +18,8 @@ import { useAuth } from 'qapp-core';
 import TiptapEditor from '../TipTapEditor';
 import { prepareHtmlForPublish } from '../../utils/publicationPublisher';
 import { objectToBase64 } from '../../utils/data';
-import { publishScopedNotification } from '../../utils/notificationPublisher';
+import { sendNotification } from '../../notifications/notificationService';
+import { NOTIF_GROUP_ID } from '../../notifications/notifyIndex';
 
 type Props = {
   open: boolean;
@@ -38,7 +39,8 @@ export default function AnnouncementDialog({
   const theme = useTheme();
   const isXs = useMediaQuery(theme.breakpoints.down('sm'));
   const { name: userName, address, authenticateUser } = useAuth();
-  const [notifySubs, setNotifySubs] = useState(false);
+  const [notifyMail, setNotifyMail] = useState(false);
+  const [notifyChat, setNotifyChat] = useState(false);
 
   async function handlePublish() {
     setErr(null);
@@ -72,25 +74,36 @@ export default function AnnouncementDialog({
         data64: await objectToBase64(blogPayload),
       });
 
-      if (notifySubs && address) {
-        await publishScopedNotification({
+      if ((notifyMail || notifyChat) && address) {
+        await sendNotification({
           scope: { kind: 'global' },
           title,
-          html: prepared,
+          bodyHtml: prepared,
           publisher: { name: userName, address, role: 'admin' },
           qdnResource: { publisher: userName, identifier },
-          sendMail: true,
           links: [
             {
               label: 'View resource',
               href: `qortal://DOCUMENT/${userName}/${identifier}`,
             },
           ],
+          deliveries: {
+            internal: { enabled: true, chatPingGroupId: notifyChat ? NOTIF_GROUP_ID : undefined },
+            qmail: notifyMail
+              ? {
+                  enabled: true,
+                  includeScopeSubscribers: true,
+                  subject: `Q-Assets: ${title}`,
+                }
+              : undefined,
+            chat: notifyChat ? { groups: [NOTIF_GROUP_ID] } : undefined,
+          },
         });
       }
 
       onClose();
-      setNotifySubs(false);
+      setNotifyMail(false);
+      setNotifyChat(false);
       setContentHtml('');
       setTitle('');
     } catch (e: any) {
@@ -128,20 +141,36 @@ export default function AnnouncementDialog({
               <TiptapEditor value={contentHtml} onChange={setContentHtml} />
             </Box>
           </Box>
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={notifySubs}
-                onChange={(e) => setNotifySubs(e.target.checked)}
-                disabled={!userName}
-              />
-            }
-            label={
-              <Tooltip title="Send notifications inside Q-Assets and encrypted Q-Mail copies to the Q-Assets notification list. Each recipient will incur an additional publish fee.">
-                <span>Notify subscribers via Q-Mail</span>
-              </Tooltip>
-            }
-          />
+          <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={notifyMail}
+                  onChange={(e) => setNotifyMail(e.target.checked)}
+                  disabled={!userName}
+                />
+              }
+              label={
+                <Tooltip title="Send encrypted Q-Mail copies to notification subscribers. Each recipient incurs a publish fee.">
+                  <span>Notify via Q-Mail</span>
+                </Tooltip>
+              }
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={notifyChat}
+                  onChange={(e) => setNotifyChat(e.target.checked)}
+                  disabled={!userName}
+                />
+              }
+              label={
+                <Tooltip title="Send a short Q-Chat ping to the Q-Assets notifications group.">
+                  <span>Notify via Q-Chat</span>
+                </Tooltip>
+              }
+            />
+          </Box>
           {err && <Box sx={{ color: 'error.main', fontSize: 13 }}>{err}</Box>}
         </Box>
       </DialogContent>
