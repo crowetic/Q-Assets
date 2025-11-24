@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import {
   Alert,
   Button,
@@ -14,30 +14,26 @@ import { normalizePathSegments } from '../../../../utils/qdnResourceUtils';
 type CreateFolderDialogProps = {
   open: boolean;
   basePath: string;
+  folderName: string;
   error: string | null;
   onClose: () => void;
-  onSubmit: (folderName: string) => void;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
 };
 
 export function CreateFolderDialog({
   open,
   basePath,
+  folderName,
   error,
   onClose,
+  onChange,
   onSubmit,
 }: CreateFolderDialogProps) {
-  const [folderName, setFolderName] = useState('');
-
-  useEffect(() => {
-    if (open) {
-      setFolderName('');
-    }
-  }, [open, basePath]);
-
   const displayPath = useMemo(() => `/${normalizePathSegments(basePath).join('/')}`, [basePath]);
 
   const handleSubmit = () => {
-    onSubmit(folderName);
+    onSubmit();
   };
 
   return (
@@ -55,7 +51,7 @@ export function CreateFolderDialog({
             label="Folder name"
             fullWidth
             value={folderName}
-            onChange={(event) => setFolderName(event.target.value)}
+            onChange={(event) => onChange(event.target.value)}
             helperText="Create one folder at a time."
             onKeyDown={(event) => {
               if (event.key === 'Enter') {

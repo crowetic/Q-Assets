@@ -87,6 +87,8 @@ import { ExplorerHeader } from './components/ExplorerHeader';
 import { ExplorerSidebar } from './components/ExplorerSidebar';
 import { CreateFolderDialog } from './components/CreateFolderDialog';
 import { MoveToNewFolderDialog } from './components/MoveToNewFolderDialog';
+import { sendNotification } from '../../../notifications/notificationService';
+import type { NotificationRecipient } from '../../../utils/notificationRecipients';
 import {
   useQdnBatchPublisher,
   type BatchPublishResource,
@@ -1033,6 +1035,10 @@ export default function DataExplorer() {
 
   const handleCreateFolderClose = () => {
     setCreateFolderDialog({ open: false, basePath: '', folderName: '', error: null });
+  };
+
+  const handleCreateFolderNameChange = (value: string) => {
+    setCreateFolderDialog((prev) => ({ ...prev, folderName: value, error: null }));
   };
 
   const handleCreateFolderSubmit = () => {
@@ -2565,6 +2571,7 @@ export default function DataExplorer() {
       setShareStatus('Select at least one group or name to share with.');
       return;
     }
+    let directNotificationRecipients: NotificationRecipient[] = [];
     setShareLoading(true);
     setShareStatus(null);
     try {
@@ -2624,13 +2631,20 @@ export default function DataExplorer() {
             ? userAddress
             : (await qortalRequest({ action: 'GET_USER_ACCOUNT' }))?.address;
           if (!addr) throw new Error('Unable to resolve your account address for sharing.');
-          const { publicKeys } = await collectRecipientPublicKeys({
+          const { publicKeys, included } = await collectRecipientPublicKeys({
             groupIds: publicGroups,
             usersAllowed: directRecipients,
             includeSelf: true,
             me: { name: publisherName, address: addr },
           });
           if (!publicKeys.length) throw new Error('No recipient keys resolved.');
+          directNotificationRecipients = included
+            .filter((entry) => entry.source === 'usersAllowed' && entry.name && entry.publicKey)
+            .map((entry) => ({
+              name: entry.name as string,
+              address: entry.address,
+              publicKey: entry.publicKey,
+            }));
           const enc = await qortalRequest({
             action: 'ENCRYPT_DATA',
             base64: data64,
@@ -2656,6 +2670,61 @@ export default function DataExplorer() {
 
       if (shareRequests.length) {
         await publishResources(shareRequests);
+      }
+
+      try {
+        const publisherAddress = userAddress || (await resolvePublisherAddress());
+        const uniqueGroups = Array.from(new Set(shareSelectedGroups));
+        const firstIdentifier = targets[0]?.identifier;
+        const shareCount = targets.length;
+        const shareTitle = shareCount > 1 ? 'New private shares' : 'New private share';
+        const publisherLabel = publisherName || publisherAddress || 'A Qortal user';
+        const shareBody = [
+          `<p>${publisherLabel} shared ${shareCount > 1 ? `${shareCount} private resources` : 'a private resource'} with you via Q-Assets.</p>`,
+          '<p>Open Q-Assets → Manage → Data → Shares to view the content.</p>',
+          firstIdentifier ? `<p>Reference: ${firstIdentifier}</p>` : '',
+        ]
+          .filter(Boolean)
+          .join('');
+        const notificationPublisher = {
+          name: publisherName || undefined,
+          address: publisherAddress,
+        };
+        const notificationTasks: Promise<unknown>[] = [];
+        uniqueGroups.forEach((groupId) => {
+          notificationTasks.push(
+            sendNotification({
+              scope: { kind: 'group', groupId },
+              title: shareTitle,
+              bodyHtml: shareBody,
+              publisher: notificationPublisher,
+              deliveries: { internal: { enabled: true } },
+            })
+          );
+        });
+        if (directNotificationRecipients.length) {
+          notificationTasks.push(
+            sendNotification({
+              scope: { kind: 'custom', key: `share-direct-${Date.now()}` },
+              title: shareTitle,
+              bodyHtml: shareBody,
+              publisher: notificationPublisher,
+              deliveries: {
+                internal: { enabled: false },
+                qmail: {
+                  enabled: true,
+                  recipients: directNotificationRecipients,
+                  subject: `Q-Assets: ${shareCount > 1 ? 'New shares' : 'New share'} from ${publisherLabel}`,
+                },
+              },
+            })
+          );
+        }
+        if (notificationTasks.length) {
+          await Promise.all(notificationTasks);
+        }
+      } catch (notificationError) {
+        console.warn('Share notifications failed', notificationError);
       }
 
       await refreshResources();
@@ -3041,10 +3110,7 @@ export default function DataExplorer() {
     return activeResources.slice(start, start + SERVICE_PAGE_SIZE);
   }, [activeResources, servicePage]);
 
-  const shareTotalPages = Math.max(
-    1,
-    Math.ceil(filteredShareResources.length / SERVICE_PAGE_SIZE)
-  );
+  const shareTotalPages = Math.max(1, Math.ceil(filteredShareResources.length / SERVICE_PAGE_SIZE));
   const safeSharePage = Math.min(sharePage, shareTotalPages);
   const pagedShareResources = useMemo(() => {
     const start = (safeSharePage - 1) * SERVICE_PAGE_SIZE;
@@ -4074,8 +4140,10 @@ export default function DataExplorer() {
       <CreateFolderDialog
         open={createFolderDialog.open}
         basePath={createFolderDialog.basePath}
+        folderName={createFolderDialog.folderName}
         error={createFolderDialog.error}
         onClose={handleCreateFolderClose}
+        onChange={handleCreateFolderNameChange}
         onSubmit={handleCreateFolderSubmit}
       />
 

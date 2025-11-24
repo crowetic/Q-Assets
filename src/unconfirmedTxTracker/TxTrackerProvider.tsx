@@ -73,7 +73,9 @@ export const TxTrackerProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const next = updater(prev);
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch {}
+      } catch {
+        /* empty */
+      }
       return next;
     });
   }, []);
