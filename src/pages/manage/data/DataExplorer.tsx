@@ -135,6 +135,32 @@ const createPreviewDialogState = (): PreviewDialogState => ({
 const SERVICE_OPTIONS = ALL_QDN_SERVICES;
 const PENDING_FOLDERS_KEY = 'qassets_data_pending_folders_v1';
 const MAX_FILE_IDENTIFIER_LENGTH = QASSETS_FILE_ID_MAX;
+type ResourceSort = 'name-asc' | 'name-desc' | 'date-desc' | 'date-asc';
+const RESOURCE_SORT_OPTIONS: { value: ResourceSort; label: string }[] = [
+  { value: 'date-desc', label: 'Date (newest first)' },
+  { value: 'date-asc', label: 'Date (oldest first)' },
+  { value: 'name-asc', label: 'Name (A to Z)' },
+  { value: 'name-desc', label: 'Name (Z to A)' },
+];
+const getResourceSortKey = (resource: QdnResource) => getResourceCreatedAt(resource) || 0;
+const compareResourcesBySort = (a: QdnResource, b: QdnResource, sort: ResourceSort) => {
+  if (sort.startsWith('name')) {
+    const aName = getResourceLabel(a).toLowerCase();
+    const bName = getResourceLabel(b).toLowerCase();
+    const result = aName.localeCompare(bName, undefined, { sensitivity: 'base' });
+    return sort === 'name-desc' ? -result : result;
+  }
+  const diff = getResourceSortKey(b) - getResourceSortKey(a);
+  return sort === 'date-asc' ? -diff : diff;
+};
+const compareEntriesBySort = (a: StructuredEntry, b: StructuredEntry, sort: ResourceSort) => {
+  if (sort.startsWith('name')) {
+    const result = a.fileName.localeCompare(b.fileName, undefined, { sensitivity: 'base' });
+    return sort === 'name-desc' ? -result : result;
+  }
+  const diff = getResourceSortKey(b.resource) - getResourceSortKey(a.resource);
+  return sort === 'date-asc' ? -diff : diff;
+};
 const createPublishDefaults = (folderPath: string, structured: boolean): PublishFormState => ({
   service: 'DOCUMENT' as Service,
   identifier: '',
@@ -741,6 +767,7 @@ export default function DataExplorer() {
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null);
   const [publishAnchor, setPublishAnchor] = useState<null | HTMLElement>(null);
   const [publishMode, setPublishMode] = useState<'immediate' | 'batch'>('immediate');
+  const [resourceSort, setResourceSort] = useState<ResourceSort>('date-desc');
   const [publishDialog, setPublishDialog] = useState<{
     open: boolean;
     variant: 'single' | 'multiple';
@@ -1400,8 +1427,9 @@ export default function DataExplorer() {
 
   const filteredResources = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
-    return combinedResources.filter((res) => matchesSearch(res, query));
-  }, [combinedResources, searchTerm]);
+    const matched = combinedResources.filter((res) => matchesSearch(res, query));
+    return matched.sort((a, b) => compareResourcesBySort(a, b, resourceSort));
+  }, [combinedResources, searchTerm, resourceSort]);
 
   useEffect(() => {
     setSelectedResourceIds((prev) =>
@@ -1414,8 +1442,8 @@ export default function DataExplorer() {
       filteredResources
         .map((res) => allStructuredEntryMap.get(res.identifier) || null)
         .filter((entry): entry is StructuredEntry => Boolean(entry))
-        .sort((a, b) => a.fileName.localeCompare(b.fileName, undefined, { sensitivity: 'base' })),
-    [filteredResources, allStructuredEntryMap]
+        .sort((a, b) => compareEntriesBySort(a, b, resourceSort)),
+    [filteredResources, allStructuredEntryMap, resourceSort]
   );
 
   const selectedResourceSet = useMemo(() => new Set(selectedResourceIds), [selectedResourceIds]);
@@ -1574,11 +1602,8 @@ export default function DataExplorer() {
 
   const currentFolderFiles = currentFolder.files;
   const sortedFolderFiles = useMemo(
-    () =>
-      [...currentFolderFiles].sort((a, b) =>
-        a.fileName.localeCompare(b.fileName, undefined, { sensitivity: 'base' })
-      ),
-    [currentFolderFiles]
+    () => [...currentFolderFiles].sort((a, b) => compareEntriesBySort(a, b, resourceSort)),
+    [currentFolderFiles, resourceSort]
   );
 
   const manifestSummary = useMemo(() => {
@@ -3058,6 +3083,20 @@ export default function DataExplorer() {
                 }}
                 sx={{ flex: 1 }}
               />
+              <TextField
+                select
+                size="small"
+                label="Sort"
+                value={resourceSort}
+                onChange={(event) => setResourceSort(event.target.value as ResourceSort)}
+                sx={{ minWidth: { xs: '100%', md: 190 } }}
+              >
+                {RESOURCE_SORT_OPTIONS.map((option) => (
+                  <MenuItem key={option.value} value={option.value}>
+                    {option.label}
+                  </MenuItem>
+                ))}
+              </TextField>
               {activeSection === 'files' && (
                 <TextField
                   size="small"
