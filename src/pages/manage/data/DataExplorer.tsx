@@ -135,6 +135,7 @@ const createPreviewDialogState = (): PreviewDialogState => ({
 const SERVICE_OPTIONS = ALL_QDN_SERVICES;
 const PENDING_FOLDERS_KEY = 'qassets_data_pending_folders_v1';
 const MAX_FILE_IDENTIFIER_LENGTH = QASSETS_FILE_ID_MAX;
+const MANIFEST_SERVICE = ensurePrivateService('DOCUMENT_PRIVATE');
 type ResourceSort = 'name-asc' | 'name-desc' | 'date-desc' | 'date-asc';
 const RESOURCE_SORT_OPTIONS: { value: ResourceSort; label: string }[] = [
   { value: 'date-desc', label: 'Date (newest first)' },
@@ -222,6 +223,13 @@ const getMetadataTags = (metadata: Record<string, any> | undefined) => {
   if (!metadata) return [] as string[];
   const tags = (metadata as any).tags;
   return Array.isArray(tags) ? tags : [];
+};
+
+const isShareResource = (resource: QdnResource) => {
+  const tags = getMetadataTags(resource.metadata as Record<string, any>);
+  return tags.some(
+    (tag) => typeof tag === 'string' && (tag === 'qassets-share' || tag.startsWith('share:'))
+  );
 };
 
 const isTombstoneResource = (resource: QdnResource): boolean => {
@@ -761,7 +769,7 @@ export default function DataExplorer() {
   } = useAccountNames();
   const [activeName, setActiveName] = useState<string | null>(null);
   const [activeService, setActiveService] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<'services' | 'files'>('services');
+  const [activeSection, setActiveSection] = useState<'services' | 'files' | 'shares'>('services');
   const [activeFilePath, setActiveFilePath] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null);
@@ -788,8 +796,15 @@ export default function DataExplorer() {
   const [folderStatus, setFolderStatus] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
+  const resolvePublisherAddress = useCallback(async () => {
+    if (userAddress) return userAddress;
+    const acct = await qortalRequest({ action: 'GET_USER_ACCOUNT' });
+    if (acct?.address) return acct.address;
+    throw new Error('Unable to resolve your account address for encryption.');
+  }, [userAddress]);
   const [servicePage, setServicePage] = useState(1);
   const [folderPage, setFolderPage] = useState(1);
+  const [sharePage, setSharePage] = useState(1);
   const [previewDialog, setPreviewDialog] = useState<PreviewDialogState>(
     createPreviewDialogState()
   );
@@ -1103,16 +1118,34 @@ export default function DataExplorer() {
 
   const fetchManifestDoc = useCallback(async (): Promise<ManifestDoc | null> => {
     if (!activeName) return null;
-    const res = await qortalRequest({
-      action: 'FETCH_QDN_RESOURCE',
-      name: activeName,
-      service: 'DOCUMENT' as Service,
-      identifier: MANIFEST_IDENTIFIER,
-      encoding: 'base64',
-    });
-    const data64 = normalizeData64(res);
-    if (!data64) return null;
-    return JSON.parse(base64ToUtf8(data64));
+    const fetchAndMaybeDecrypt = async (service: Service, decrypt: boolean) => {
+      const res = await qortalRequest({
+        action: 'FETCH_QDN_RESOURCE',
+        name: activeName,
+        service,
+        identifier: MANIFEST_IDENTIFIER,
+        encoding: 'base64',
+      });
+      const data64 = normalizeData64(res);
+      if (!data64) return null;
+      if (!decrypt) return JSON.parse(base64ToUtf8(data64));
+      const payload = stripPrivateMagicIfNeeded(data64, service);
+      const clear = await qortalRequest({
+        action: 'DECRYPT_DATA',
+        encryptedData: payload,
+      });
+      if (!clear) throw new Error('Unable to decrypt manifest.');
+      return JSON.parse(base64ToUtf8(clear));
+    };
+    try {
+      return await fetchAndMaybeDecrypt(MANIFEST_SERVICE as Service, true);
+    } catch {
+      try {
+        return await fetchAndMaybeDecrypt('DOCUMENT' as Service, false);
+      } catch {
+        return null;
+      }
+    }
   }, [activeName]);
 
   const refreshManifestDoc = useCallback(async () => {
@@ -1342,7 +1375,7 @@ export default function DataExplorer() {
 
   useEffect(() => {
     setSelectedResourceId(null);
-    if (activeSection === 'files') setActiveService(null);
+    if (activeSection !== 'services') setActiveService(null);
   }, [activeSection]);
 
   useEffect(() => {
@@ -1352,6 +1385,10 @@ export default function DataExplorer() {
   useEffect(() => {
     setFolderPage(1);
   }, [activeFilePath, activeSection]);
+
+  useEffect(() => {
+    setSharePage(1);
+  }, [activeName, activeSection, resourceSort, searchTerm]);
 
   useEffect(() => {
     setSystemSaveStatus(null);
@@ -1425,11 +1462,27 @@ export default function DataExplorer() {
     return map;
   }, [allStructuredEntries]);
 
+  const regularResources = useMemo(
+    () => combinedResources.filter((res) => !isShareResource(res)),
+    [combinedResources]
+  );
+
+  const sharedResources = useMemo(
+    () => combinedResources.filter((res) => isShareResource(res)),
+    [combinedResources]
+  );
+
   const filteredResources = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
-    const matched = combinedResources.filter((res) => matchesSearch(res, query));
+    const matched = regularResources.filter((res) => matchesSearch(res, query));
     return matched.sort((a, b) => compareResourcesBySort(a, b, resourceSort));
-  }, [combinedResources, searchTerm, resourceSort]);
+  }, [regularResources, searchTerm, resourceSort]);
+
+  const filteredShareResources = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    const matched = sharedResources.filter((res) => matchesSearch(res, query));
+    return matched.sort((a, b) => compareResourcesBySort(a, b, resourceSort));
+  }, [sharedResources, searchTerm, resourceSort]);
 
   useEffect(() => {
     setSelectedResourceIds((prev) =>
@@ -1492,16 +1545,7 @@ export default function DataExplorer() {
     );
   }, [filteredResources, manifestServiceBuckets]);
 
-  const shareCount = useMemo(
-    () =>
-      filteredResources.filter((resource) => {
-        const tags = getMetadataTags(resource.metadata as Record<string, any>);
-        return tags.some(
-          (tag) => typeof tag === 'string' && (tag === 'qassets-share' || tag.startsWith('share:'))
-        );
-      }).length,
-    [filteredResources]
-  );
+  const shareCount = sharedResources.length;
 
   const activeResources = useMemo(() => {
     if (!activeService) return [];
@@ -1884,7 +1928,14 @@ export default function DataExplorer() {
     setSelectedResourceId(null);
   };
 
-  const handleShareNavigate = useCallback(() => undefined, []);
+  const handleShareNavigate = () => {
+    setActiveSection('shares');
+    setActiveService(null);
+    setActiveFilePath('');
+    setSelectedResourceId(null);
+    setSelectedResourceIds([]);
+    setSharePage(1);
+  };
 
   const handleReload = async () => {
     await refreshResources();
@@ -1949,13 +2000,6 @@ export default function DataExplorer() {
     setPublishStatus(null);
     const baseId = sanitizeIdentifier(form.identifier || '');
     try {
-      const getPublisherAddress = async () => {
-        if (userAddress) return userAddress;
-        const acct = await qortalRequest({ action: 'GET_USER_ACCOUNT' });
-        if (acct?.address) return acct.address;
-        throw new Error('Unable to resolve your account address for encryption.');
-      };
-
       const publishRequests: BatchPublishResource[] = [];
       for (let i = 0; i < files.length; i += 1) {
         const file = files[i];
@@ -2019,7 +2063,7 @@ export default function DataExplorer() {
           }
           const recipients = parseRecipientList(directRecipients);
           if (!recipients.length) alert('no recipients, files will be encrypted for you only.');
-          const addr = await getPublisherAddress();
+          const addr = await resolvePublisherAddress();
           const { publicKeys } = await collectRecipientPublicKeys({
             usersAllowed: recipients,
             includeSelf: true,
@@ -2440,15 +2484,34 @@ export default function DataExplorer() {
       try {
         const manifestPayload = buildManifestPayload(overrides);
         const data64 = await objectToBase64(manifestPayload);
+        const publisherAddress = await resolvePublisherAddress();
+        const { publicKeys } = await collectRecipientPublicKeys({
+          includeSelf: true,
+          extraAddresses: [publisherAddress],
+          usersAllowed: [],
+          me: { name: activeName || authName || undefined, address: publisherAddress },
+        });
+        if (!publicKeys.length) throw new Error('Unable to resolve your public key.');
+        const encrypted = await qortalRequest({
+          action: 'ENCRYPT_DATA',
+          base64: data64,
+          publicKeys,
+        });
+        const privateData64 = applyPrivateMagicIfNeeded(encrypted, MANIFEST_SERVICE);
+        const metadata = {
+          qassetsManifest: { version: 1, visibility: 'private' },
+          encrypted: { mode: 'direct', recipients: [publisherAddress] },
+        };
         await publishResources([
           {
             name: activeName,
-            service: 'DOCUMENT' as Service,
+            service: MANIFEST_SERVICE as Service,
             identifier: MANIFEST_IDENTIFIER,
-            data64,
+            data64: privateData64,
             title: 'Q-Assets Manifest',
             description: 'Aggregated service and folder metadata for faster browsing.',
-            tags: ['qassets-manifest'],
+            tags: ['qassets-manifest', 'private', 'encrypted:direct'],
+            metadata,
           },
         ]);
         setManifestDoc(manifestPayload);
@@ -2459,7 +2522,7 @@ export default function DataExplorer() {
         setManifestPublishing(false);
       }
     },
-    [activeName, buildManifestPayload]
+    [activeName, authName, buildManifestPayload, publishResources, resolvePublisherAddress]
   );
 
   const openShareDialogForResources = (resources: QdnResource[]) => {
@@ -2944,12 +3007,21 @@ export default function DataExplorer() {
       });
     }
 
+    if (activeSection === 'shares') {
+      crumbs.push(
+        <Typography key="shares" color="text.primary" fontWeight={600}>
+          Shares
+        </Typography>
+      );
+    }
+
     return crumbs;
   }, [activeName, activeSection, activeService, activeFilePath]);
 
   const showServiceGrid = activeSection === 'services' && Boolean(activeName) && !activeService;
   const showResourceGrid =
     activeSection === 'services' && Boolean(activeName) && Boolean(activeService);
+  const showShareGrid = activeSection === 'shares' && Boolean(activeName);
   const showFilesGrid = activeSection === 'files' && Boolean(activeName);
   const viewingFilesEntry = activeSection === 'files' && Boolean(selectedStructuredEntry);
   const cardTitle =
@@ -2957,15 +3029,27 @@ export default function DataExplorer() {
       ? activeFilePath
         ? activeFilePath.split('/').slice(-1)[0] || 'Files workspace'
         : 'Files workspace'
-      : activeService
-        ? serviceLabels(activeService)
-        : activeName || 'Select a name';
+      : activeSection === 'shares'
+        ? 'Shared resources'
+        : activeService
+          ? serviceLabels(activeService)
+          : activeName || 'Select a name';
 
   const serviceTotalPages = Math.max(1, Math.ceil(activeResources.length / SERVICE_PAGE_SIZE));
   const pagedActiveResources = useMemo(() => {
     const start = (servicePage - 1) * SERVICE_PAGE_SIZE;
     return activeResources.slice(start, start + SERVICE_PAGE_SIZE);
   }, [activeResources, servicePage]);
+
+  const shareTotalPages = Math.max(
+    1,
+    Math.ceil(filteredShareResources.length / SERVICE_PAGE_SIZE)
+  );
+  const safeSharePage = Math.min(sharePage, shareTotalPages);
+  const pagedShareResources = useMemo(() => {
+    const start = (safeSharePage - 1) * SERVICE_PAGE_SIZE;
+    return filteredShareResources.slice(start, start + SERVICE_PAGE_SIZE);
+  }, [filteredShareResources, safeSharePage]);
 
   const folderTotalPages = Math.max(1, Math.ceil(sortedFolderFiles.length / FOLDER_PAGE_SIZE));
   const pagedFolderFiles = useMemo(() => {
@@ -3388,6 +3472,179 @@ export default function DataExplorer() {
                     count={serviceTotalPages}
                     page={Math.min(servicePage, serviceTotalPages)}
                     onChange={(_event, page) => setServicePage(page)}
+                    size="small"
+                    sx={{ mt: 1.5 }}
+                  />
+                )}
+              </>
+            )}
+
+            {showShareGrid && (
+              <>
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  justifyContent="space-between"
+                  sx={{ mb: 1 }}
+                >
+                  <Typography variant="subtitle2">
+                    {filteredShareResources.length} shared item
+                    {filteredShareResources.length === 1 ? '' : 's'}
+                  </Typography>
+                  {canLoadMore && (
+                    <Button
+                      size="small"
+                      onClick={handleLoadRemaining}
+                      disabled={resourcesLoading || loadingAllPages}
+                    >
+                      {loadingAllPages ? 'Loading…' : 'Load remaining'}
+                    </Button>
+                  )}
+                </Stack>
+
+                <Paper
+                  variant="outlined"
+                  sx={{
+                    borderRadius: 2,
+                    p: 1.5,
+                    mb: 1.5,
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 1,
+                    alignItems: 'center',
+                  }}
+                >
+                  {selectedResourceIds.length > 0 ? (
+                    <>
+                      <Typography variant="body2">{selectedResourceIds.length} selected</Typography>
+                      <Button
+                        size="small"
+                        onClick={handleBulkSaveToSystem}
+                        disabled={!selectedResourceIds.length}
+                      >
+                        Save to system
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={handleBulkMove}
+                        disabled={!movableEntries.length}
+                      >
+                        Move
+                      </Button>
+                      <Button size="small" onClick={handleBulkPreview}>
+                        Preview
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={handleBulkShare}
+                        disabled={!bulkSelectedResources.length}
+                      >
+                        Share
+                      </Button>
+                      <Button size="small" onClick={handleBulkDelete}>
+                        Delete
+                      </Button>
+                      <Button size="small" onClick={handleClearSelection}>
+                        Clear
+                      </Button>
+                    </>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      Select shared resources to enable bulk actions.
+                    </Typography>
+                  )}
+                </Paper>
+
+                <Box
+                  sx={{
+                    display: 'grid',
+                    gridTemplateColumns: {
+                      xs: 'repeat(auto-fit, minmax(220px, 1fr))',
+                      sm: 'repeat(auto-fit, minmax(260px, 1fr))',
+                    },
+                    gap: 1.25,
+                  }}
+                >
+                  {pagedShareResources.map((resource) => {
+                    const isSelected = resource.identifier === selectedResourceId;
+                    const isChecked = selectedResourceSet.has(resource.identifier);
+                    const mime = resolveMimeForResource(resource, manifestDoc, detectedTypes);
+                    const icon = getIconForMime(mime);
+                    const displayTags = getDisplayTags(resource);
+                    const createdAt = getResourceCreatedAt(resource);
+                    return (
+                      <Paper
+                        key={resource.identifier}
+                        variant="outlined"
+                        onClick={() => setSelectedResourceId(resource.identifier)}
+                        onDoubleClick={(event) => {
+                          event.stopPropagation();
+                          handlePreviewResource(resource);
+                        }}
+                        onContextMenu={(event) => handleContextMenuOpen(event, resource)}
+                        sx={{
+                          p: 1.5,
+                          borderRadius: 2.5,
+                          cursor: 'pointer',
+                          borderColor: isSelected ? 'primary.main' : 'divider',
+                          boxShadow: isSelected ? 6 : 1,
+                          transition: 'border 120ms ease, box-shadow 120ms ease',
+                          position: 'relative',
+                        }}
+                      >
+                        <Checkbox
+                          checked={isChecked}
+                          onChange={(event) => {
+                            event.stopPropagation();
+                            handleToggleSelection(resource.identifier);
+                          }}
+                          sx={{ position: 'absolute', top: 4, right: 4 }}
+                        />
+                        <Stack spacing={1}>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            {icon}
+                            <Typography variant="subtitle2" noWrap>
+                              {getResourceLabel(resource)}
+                            </Typography>
+                          </Stack>
+                          <Typography variant="caption" color="text.secondary" noWrap>
+                            {resource.identifier}
+                          </Typography>
+                          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                            <Chip size="small" label={serviceLabels(resource.service)} />
+                            <Chip
+                              size="small"
+                              label={getResourceStatus(resource)}
+                              color="success"
+                              variant="outlined"
+                            />
+                            <Chip size="small" label="Shared" color="info" variant="outlined" />
+                          </Stack>
+                          <Typography variant="caption" color="text.secondary">
+                            {formatBytes(resource.size)} • {formatDate(createdAt)}
+                          </Typography>
+                          {displayTags.length > 0 && (
+                            <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                              {displayTags.map((tag) => (
+                                <Chip key={tag} size="small" label={tag} variant="outlined" />
+                              ))}
+                            </Stack>
+                          )}
+                        </Stack>
+                      </Paper>
+                    );
+                  })}
+                  {!filteredShareResources.length && !resourcesLoading && (
+                    <Typography variant="body2" color="text.secondary">
+                      No shared resources match the current search.
+                    </Typography>
+                  )}
+                </Box>
+                {shareTotalPages > 1 && (
+                  <Pagination
+                    count={shareTotalPages}
+                    page={safeSharePage}
+                    onChange={(_event, page) => setSharePage(page)}
                     size="small"
                     sx={{ mt: 1.5 }}
                   />
