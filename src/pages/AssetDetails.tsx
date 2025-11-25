@@ -61,13 +61,7 @@ import SectionCard from '../components/layout/SectionCard';
 import ActionsToolbar from '../components/asset/ActionsToolbar';
 import PublishedHtmlRenderer from '../components/PublishedHtmlRenderer';
 import { useAlert } from '../components/alerts';
-import {
-  updateAsset,
-  getAccount,
-  getAccountGroups,
-  type GroupSummary,
-  getGroupById,
-} from '../utils/qortalApi';
+import { updateAsset, getAccountGroups, type GroupSummary, getGroupById } from '../utils/qortalApi';
 // import { getAssetInfo } from '../utils/qortalAssetRequests';
 
 type Enriched = {
@@ -88,7 +82,7 @@ export default function AssetDetail() {
   const [avatar, setAvatar] = useState<string | null>(null);
   const [assetPub, setAssetPub] = useState<AssetPublication | null>(null);
   const [html, setHtml] = useState('');
-  const { address: userAddress, name: userName } = useAuth();
+  const { address: userAddress, name: userName, publicKey: userPublicKey } = useAuth();
   const [issuerName, setIssuerName] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const editorRef = useRef<HTMLDivElement | null>(null);
@@ -1340,14 +1334,18 @@ export default function AssetDetail() {
 
                 savingDescRef.current = true;
 
-                // Need the owner public key for signing
-                const acct = await getAccount(asset.owner);
-                const ownerPubKey = acct?.publicKey;
-                if (!ownerPubKey) throw new Error('Owner public key unavailable');
+                if (!userAddress || !userPublicKey) {
+                  setDescErr('Please authenticate in Qortal UI before updating this asset.');
+                  return;
+                }
+                if (asset.owner !== userAddress) {
+                  setDescErr('Only the asset owner can update the on-chain description.');
+                  return;
+                }
 
                 await updateAsset(
-                  asset.owner,
-                  ownerPubKey,
+                  userAddress,
+                  userPublicKey,
                   asset.assetId,
                   { newDescription },
                   { fee: 0.01, txGroupId: 0 }

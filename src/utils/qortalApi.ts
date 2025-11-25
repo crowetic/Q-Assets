@@ -15,7 +15,11 @@ export async function signAndBroadcast(rawTx: string): Promise<object> {
   });
 
   console.log('finalResponse', res);
-  if (!res.ok) throw new Error();
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    const reason = text?.trim();
+    throw new Error(reason || `Failed to broadcast transaction (${res.status} ${res.statusText})`);
+  }
 
   return res;
 }
@@ -40,7 +44,7 @@ export interface GroupSummary {
 // Low-level call to REST endpoint
 export async function getAccountGroups(
   address: string,
-  opts?: { signal?: AbortSignal },
+  opts?: { signal?: AbortSignal }
 ): Promise<GroupSummary[]> {
   if (!address) throw new Error('address is required');
   const url = `/groups/member/${encodeURIComponent(address)}`;
@@ -53,7 +57,7 @@ export async function getAccountGroups(
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(
-      `GET ${url} failed: ${res.status} ${res.statusText}${text ? ` — ${text}` : ''}`,
+      `GET ${url} failed: ${res.status} ${res.statusText}${text ? ` — ${text}` : ''}`
     );
   }
 
@@ -80,7 +84,7 @@ export async function getAccountGroups(
 
 export async function getGroupById(
   groupId: number,
-  opts?: { signal?: AbortSignal },
+  opts?: { signal?: AbortSignal }
 ): Promise<GroupSummary | null> {
   const id = Number(groupId);
   if (!Number.isFinite(id)) throw new Error('groupId must be a number');
@@ -126,7 +130,7 @@ export async function getAdminGroupIds(address: string): Promise<number[]> {
 // predicate for “can edit this board” based on groupsAllowed
 export async function userCanEditBoard(
   address: string,
-  groupsAllowed: Array<string | number>,
+  groupsAllowed: Array<string | number>
 ): Promise<boolean> {
   const myIds = new Set(await getAccountGroupIds(address));
   // groupsAllowed might be strings; coerce to number where possible
@@ -168,7 +172,7 @@ export async function createTransferAssetTransaction(
   opts?: {
     fee?: number; // default 0.01
     txGroupId?: number; // default 0
-  },
+  }
 ): Promise<string> {
   const account = await getAccount(senderAddress);
   const recipientAddress = await resolveRecipientToAddress(recipient);
@@ -198,7 +202,7 @@ export async function createTransferAssetTransaction(
   const unsigned = await res.text();
   if (!(await isValidQortalTx(unsigned, 'TRANSFER_ASSET'))) {
     throw new Error(
-      `Response from /assets/transfer doesn't look like a TRANSFER_ASSET; got: ${unsigned.slice(0, 16)}…`,
+      `Response from /assets/transfer doesn't look like a TRANSFER_ASSET; got: ${unsigned.slice(0, 16)}…`
     );
   }
 
@@ -213,7 +217,7 @@ export async function transferAsset(
   recipient: string, // name or address
   assetId: number,
   amount: number,
-  opts?: { fee?: number; txGroupId?: number },
+  opts?: { fee?: number; txGroupId?: number }
 ): Promise<object> {
   const unsigned = await createTransferAssetTransaction(
     senderAddress,
@@ -221,7 +225,7 @@ export async function transferAsset(
     recipient,
     assetId,
     amount,
-    opts,
+    opts
   );
 
   return await signAndBroadcast(unsigned);
@@ -331,7 +335,7 @@ export async function createIssueAssetTransaction(
   quantity: number,
   data?: string,
   divisible: boolean = true,
-  unspendable: boolean = false,
+  unspendable: boolean = false
 ): Promise<string> {
   const account = await getAccount(issuerAddress);
   const txBody = {
@@ -376,7 +380,7 @@ export async function issueAsset(
   quantity: number,
   data?: string,
   divisible: boolean = true,
-  unspendable: boolean = false,
+  unspendable: boolean = false
 ): Promise<object> {
   const unsigned = await createIssueAssetTransaction(
     issuerAddress,
@@ -386,7 +390,7 @@ export async function issueAsset(
     quantity,
     data,
     divisible,
-    unspendable,
+    unspendable
   );
 
   console.log('unsignedTx', unsigned);
@@ -422,14 +426,14 @@ export async function createUpdateAssetTransaction(
   opts?: {
     fee?: number; // default 0.01
     txGroupId?: number; // default 0
-  },
+  }
 ): Promise<string> {
   if (
     !changes ||
     (!changes.newOwner && !changes.newDescription && typeof changes.newData === 'undefined')
   ) {
     throw new Error(
-      'Nothing to update: provide at least one of newOwner, newDescription, or newData',
+      'Nothing to update: provide at least one of newOwner, newDescription, or newData'
     );
   }
 
@@ -445,19 +449,23 @@ export async function createUpdateAssetTransaction(
     ownerPublicKey,
   };
 
-  if (typeof changes.newOwner === 'string' && changes.newOwner.trim().length > 0) {
-    // Accept Qortal name or address
-    txBody.newOwner = await resolveRecipientToAddress(changes.newOwner.trim());
-  }
+  const requestedNewOwner = typeof changes.newOwner === 'string' ? changes.newOwner.trim() : '';
+  const targetOwner = requestedNewOwner || ownerAddress;
+  txBody.newOwner = await resolveRecipientToAddress(targetOwner);
 
   if (typeof changes.newDescription === 'string') {
     txBody.newDescription = changes.newDescription;
   }
 
-  if (typeof changes.newData !== 'undefined') {
-    txBody.newData =
-      typeof changes.newData === 'string' ? changes.newData : JSON.stringify(changes.newData);
-  }
+  const newDataPayload =
+    typeof changes.newData !== 'undefined'
+      ? typeof changes.newData === 'string'
+        ? changes.newData
+        : JSON.stringify(changes.newData)
+      : await fetchExistingAssetDataString(assetId);
+  txBody.newData = newDataPayload;
+
+  console.log('[createUpdateAssetTransaction] payload', txBody);
 
   const res = await fetch('/assets/update', {
     method: 'POST',
@@ -467,6 +475,7 @@ export async function createUpdateAssetTransaction(
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
+    console.error('[createUpdateAssetTransaction] payload rejected', txBody, text);
     throw new Error(`Update asset failed: ${res.status} ${res.statusText} ${text}`);
   }
 
@@ -475,11 +484,25 @@ export async function createUpdateAssetTransaction(
   // Qortal type guard (mirrors your other helpers)
   if (!(await isValidQortalTx(unsigned, 'UPDATE_ASSET'))) {
     throw new Error(
-      `Response from /assets/update doesn't look like UPDATE_ASSET; got: ${unsigned.slice(0, 16)}…`,
+      `Response from /assets/update doesn't look like UPDATE_ASSET; got: ${unsigned.slice(0, 16)}…`
     );
   }
 
   return unsigned;
+}
+
+async function fetchExistingAssetDataString(assetId: number): Promise<string> {
+  try {
+    const res = await fetch(`/assets/info?assetId=${assetId}`);
+    if (!res.ok) throw new Error();
+    const info = await res.json();
+    const dataField = info?.data;
+    if (typeof dataField === 'string' && dataField.length > 0) return dataField;
+    if (dataField && typeof dataField === 'object') return JSON.stringify(dataField);
+  } catch (e) {
+    console.warn('[fetchExistingAssetDataString] failed, defaulting to "None"', e);
+  }
+  return 'None';
 }
 
 // --- convenience: build → sign → broadcast ---
@@ -496,14 +519,14 @@ export async function updateAsset(
     newDescription?: string;
     newData?: string | object;
   },
-  opts?: { fee?: number; txGroupId?: number },
+  opts?: { fee?: number; txGroupId?: number }
 ): Promise<object> {
   const unsigned = await createUpdateAssetTransaction(
     ownerAddress,
     ownerPublicKey,
     assetId,
     changes,
-    opts,
+    opts
   );
 
   return await signAndBroadcast(unsigned);
