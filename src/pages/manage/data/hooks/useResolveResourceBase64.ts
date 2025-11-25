@@ -17,11 +17,8 @@ export const applyPrivateMagicIfNeeded = (base64: string, service?: string) => {
   return hasPrivateMagicPrefix(base64) ? base64 : addPrivateMagic(base64);
 };
 
-export const stripPrivateMagicIfNeeded = (base64: string, service?: string) => {
-  if (!isPrivateService(service) && hasPrivateMagicPrefix(base64)) {
-    return stripPrivateMagic(base64);
-  }
-  return base64;
+export const stripPrivateMagicIfNeeded = (base64: string, _service?: string) => {
+  return stripPrivateMagic(base64);
 };
 
 type GroupDecryptAttempt = {

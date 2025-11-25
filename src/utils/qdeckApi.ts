@@ -647,13 +647,15 @@ export async function loadCommentsDoc(issuerName: string, board: QDeckBoard, car
   const identifier =
     board.visibility === 'public'
       ? QDeckId.commentsPublic(board.boardId, cardId)
-      : QDeckId.commentsPrivate(
-          board.boardId,
-          cardId,
-          board.privateMeta?.mode!,
-          board.privateMeta?.isAdmins,
-          board.privateMeta?.groupId
-        );
+      : board.privateMeta
+        ? QDeckId.commentsPrivate(
+            board.boardId,
+            cardId,
+            board.privateMeta.mode ?? 'group',
+            board.privateMeta.isAdmins,
+            board.privateMeta.groupId
+          )
+        : QDeckId.commentsPrivate(board.boardId, cardId, 'group', undefined, undefined);
 
   console.log('identifier in loadCommentsDoc', identifier);
 
@@ -1061,12 +1063,14 @@ export async function deleteBoard(
   const boardIdent =
     board.visibility === 'public'
       ? QDeckId.boardPublic(board.boardId)
-      : QDeckId.boardPrivate(
-          board.boardId,
-          board.privateMeta?.mode!,
-          board.privateMeta?.isAdmins,
-          board.privateMeta?.groupId
-        );
+      : board.privateMeta
+        ? QDeckId.boardPrivate(
+            board.boardId,
+            board.privateMeta.mode ?? 'group',
+            board.privateMeta.isAdmins,
+            board.privateMeta.groupId
+          )
+        : QDeckId.boardPrivate(board.boardId, 'group');
 
   await publishTombstone(
     issuerName,
@@ -1101,13 +1105,15 @@ export async function deleteBoard(
         const commentsIdent =
           board.visibility === 'public'
             ? QDeckId.commentsPublic(board.boardId, c.cardId)
-            : QDeckId.commentsPrivate(
-                board.boardId,
-                c.cardId,
-                board.privateMeta?.mode!,
-                board.privateMeta?.isAdmins,
-                board.privateMeta?.groupId
-              );
+            : board.privateMeta
+              ? QDeckId.commentsPrivate(
+                  board.boardId,
+                  c.cardId,
+                  board.privateMeta.mode ?? 'group',
+                  board.privateMeta.isAdmins,
+                  board.privateMeta.groupId
+                )
+              : QDeckId.commentsPrivate(board.boardId, c.cardId, 'group', undefined, undefined);
 
         await publishTombstone(
           issuerName,
@@ -1416,18 +1422,16 @@ export type BoardProbe = {
 export async function resolveBoardForRead(
   issuerName: string,
   boardIdOrIdent: string,
-  hint?: 'public' | 'private',
-  viewerAddress?: string
+  hint?: 'public' | 'private'
 ): Promise<QDeckBoard | null> {
-  const res = await resolveBoardForReadWithMeta(issuerName, boardIdOrIdent, hint, viewerAddress);
+  const res = await resolveBoardForReadWithMeta(issuerName, boardIdOrIdent, hint);
   return res?.doc ?? null;
 }
 
 export async function resolveBoardForReadWithMeta(
   issuer: string,
   boardIdOrIdent: string,
-  hint?: 'public' | 'private',
-  _viewerAddress?: string
+  hint?: 'public' | 'private'
 ) {
   // If an ident was passed, handle directly (unchanged)
   if (boardIdOrIdent.startsWith(QDeckId.prefixPublicBoards)) {

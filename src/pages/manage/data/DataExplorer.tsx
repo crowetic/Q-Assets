@@ -338,15 +338,13 @@ const detectMimeFromBase64 = (base64: string, fallback: string) => {
 const hasPrivateMagicPrefix = (base64: string) => base64.startsWith(PRIVATE_MAGIC_B64);
 
 const applyPrivateMagicIfNeeded = (base64: string, service?: string) => {
-  if (isPrivateService(service)) return base64;
+  if (isPrivateService(service)) console.log('private service:', service);
   return hasPrivateMagicPrefix(base64) ? base64 : addPrivateMagic(base64);
 };
 
-const stripPrivateMagicIfNeeded = (base64: string, service?: string) => {
-  if (!isPrivateService(service) && hasPrivateMagicPrefix(base64)) {
-    return stripPrivateMagic(base64);
-  }
-  return base64;
+const stripPrivateMagicIfNeeded = (base64: string, _service?: string) => {
+  console.log(_service);
+  return stripPrivateMagic(base64);
 };
 
 const resolveMimeForResource = (
@@ -3143,13 +3141,7 @@ export default function DataExplorer() {
             ? pagedShareResources.map((res) => res.identifier)
             : [];
     setSelectedResourceIds(ids);
-  }, [
-    activeSection,
-    activeService,
-    sortedFolderFiles,
-    pagedActiveResources,
-    pagedShareResources,
-  ]);
+  }, [activeSection, activeService, sortedFolderFiles, pagedActiveResources, pagedShareResources]);
 
   return (
     <Box sx={{ px: { xs: 1.25, md: 2.5 }, py: { xs: 1.5, md: 3 }, width: '100%' }}>
