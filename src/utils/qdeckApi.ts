@@ -592,8 +592,7 @@ export async function saveCommentsDoc(
   cardId?: string,
   thread?: CardCommentThread
 ) {
-  const privateMode =
-    board.privateMeta?.mode ?? (board.privateMeta?.groupId ? 'group' : 'direct');
+  const privateMode = board.privateMeta?.mode ?? (board.privateMeta?.groupId ? 'group' : 'direct');
   const identifier =
     board.visibility === 'public'
       ? QDeckId.commentsPublic(board.boardId, cardId!)
