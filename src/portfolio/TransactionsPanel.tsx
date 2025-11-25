@@ -1,5 +1,26 @@
-import React, { useEffect } from 'react';
-import { Box, Button, Chip, CircularProgress, Collapse, Typography, Tooltip } from '@mui/material';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Box,
+  Button,
+  Chip,
+  CircularProgress,
+  Collapse,
+  Typography,
+  Tooltip,
+  ToggleButtonGroup,
+  ToggleButton,
+} from '@mui/material';
+import PaymentIcon from '@mui/icons-material/Payment';
+import SyncAltIcon from '@mui/icons-material/SyncAlt';
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import ChatBubbleIcon from '@mui/icons-material/ChatBubbleOutline';
+import GroupIcon from '@mui/icons-material/Groups';
+import AddBoxIcon from '@mui/icons-material/AddBox';
+import EditNoteIcon from '@mui/icons-material/EditNote';
+import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
+import CancelIcon from '@mui/icons-material/Cancel';
+import MemoryIcon from '@mui/icons-material/Memory';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import { useAssetTx } from './useAssetTx';
 
 const relativeTimeFormat = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
@@ -53,6 +74,7 @@ export default function TransactionsPanel({
     assetId,
     20
   );
+  const [statusFilter, setStatusFilter] = useState<'all' | 'confirmed' | 'unconfirmed'>('all');
 
   // Auto-load first page on open
   useEffect(() => {
@@ -66,6 +88,83 @@ export default function TransactionsPanel({
     tx?.reference ||
     tx?.txId ||
     `${tx?.type ?? 'TX'}-${tx?.timestamp ?? 0}-${idx}`;
+
+  const filteredItems = useMemo(() => {
+    return items.filter((tx) => {
+      const isConfirmed = (tx.confirmations ?? 0) > 0 || (tx.blockHeight ?? 0) > 0;
+      if (statusFilter === 'confirmed') return isConfirmed;
+      if (statusFilter === 'unconfirmed') return !isConfirmed;
+      return true;
+    });
+  }, [items, statusFilter]);
+
+  const iconForType = (type: string) => {
+    switch (type) {
+      case 'PAYMENT':
+      case 'MULTI_PAYMENT':
+        return <PaymentIcon fontSize="small" />;
+      case 'TRANSFER_ASSET':
+        return <SyncAltIcon fontSize="small" />;
+      case 'ISSUE_ASSET':
+        return <AddBoxIcon fontSize="small" />;
+      case 'UPDATE_ASSET':
+        return <EditNoteIcon fontSize="small" />;
+      case 'CREATE_ASSET_ORDER':
+        return <SwapHorizIcon fontSize="small" />;
+      case 'CANCEL_ASSET_ORDER':
+        return <CancelIcon fontSize="small" />;
+      case 'ARBITRARY':
+        return <CloudUploadIcon fontSize="small" />;
+      case 'MESSAGE':
+        return <ChatBubbleIcon fontSize="small" />;
+      case 'JOIN_GROUP':
+      case 'LEAVE_GROUP':
+      case 'CREATE_GROUP':
+      case 'UPDATE_GROUP':
+      case 'GROUP_INVITE':
+      case 'GROUP_APPROVAL':
+        return <GroupIcon fontSize="small" />;
+      case 'AT':
+        return <MemoryIcon fontSize="small" />;
+      default:
+        return <HelpOutlineIcon fontSize="small" />;
+    }
+  };
+
+  const typeLabel = (type: string) => {
+    switch (type) {
+      case 'PAYMENT':
+        return 'Payment';
+      case 'MULTI_PAYMENT':
+        return 'Multi-payment';
+      case 'TRANSFER_ASSET':
+        return 'Asset transfer';
+      case 'ISSUE_ASSET':
+        return 'Issue asset';
+      case 'UPDATE_ASSET':
+        return 'Update asset';
+      case 'CREATE_ASSET_ORDER':
+        return 'Create asset order';
+      case 'CANCEL_ASSET_ORDER':
+        return 'Cancel asset order';
+      case 'ARBITRARY':
+        return 'Published data';
+      case 'MESSAGE':
+        return 'Message';
+      case 'JOIN_GROUP':
+        return 'Join group';
+      case 'LEAVE_GROUP':
+        return 'Leave group';
+      case 'CREATE_GROUP':
+        return 'Create group';
+      case 'UPDATE_GROUP':
+        return 'Update group';
+      case 'AT':
+        return 'Automated transaction';
+      default:
+        return type || 'Transaction';
+    }
+  };
 
   return (
     <Collapse in={open} timeout="auto" unmountOnExit>
@@ -81,6 +180,16 @@ export default function TransactionsPanel({
       >
         <Box display="flex" alignItems="baseline" justifyContent="space-between" mb={1}>
           <Typography variant="subtitle1">Recent {assetName} Transactions</Typography>
+          <ToggleButtonGroup
+            size="small"
+            exclusive
+            value={statusFilter}
+            onChange={(_e, val) => val && setStatusFilter(val)}
+          >
+            <ToggleButton value="all">All</ToggleButton>
+            <ToggleButton value="confirmed">Confirmed</ToggleButton>
+            <ToggleButton value="unconfirmed">Unconfirmed</ToggleButton>
+          </ToggleButtonGroup>
           {loading && <CircularProgress size={16} />}
         </Box>
 
@@ -90,7 +199,7 @@ export default function TransactionsPanel({
           </Typography>
         )}
 
-        {items.length === 0 && !loading ? (
+        {filteredItems.length === 0 && !loading ? (
           <Typography variant="body2" color="text.secondary">
             No transactions found.
           </Typography>
@@ -104,7 +213,7 @@ export default function TransactionsPanel({
               alignItems: 'center',
             }}
           >
-            {items.map((tx, idx) => {
+            {filteredItems.map((tx, idx) => {
               const isOut = (tx?.sender ?? '') === address;
               const sign = isOut ? '-' : '+';
               const color = isOut ? 'text.secondary' : undefined;
@@ -118,6 +227,12 @@ export default function TransactionsPanel({
                   : (otherParty ?? '');
 
               const amount = Number(tx?.amount ?? 0);
+              const displayType = String(tx?.type ?? 'TX');
+              const blockHeight =
+                (tx as any)?.blockHeight ??
+                (Number.isFinite(tx.blockHeight) ? tx.blockHeight : undefined);
+              const isConfirmed = Number.isFinite(blockHeight) && (blockHeight as number) > 0;
+              const statusLabel = isConfirmed ? 'Confirmed' : 'Unconfirmed';
 
               return (
                 <React.Fragment key={keyOf(tx, idx)}>
@@ -162,11 +277,21 @@ export default function TransactionsPanel({
                       component="div"
                       variant="body2"
                       sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                      title={tx?.type}
+                      title={displayType}
                     >
-                      {isOut ? 'OUTBOUND' : 'INCOMING'} {assetName}{' '}
+                      <Box
+                        component="span"
+                        sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}
+                      >
+                        {iconForType(displayType)}
+                        {typeLabel(displayType)}
+                      </Box>{' '}
                       <Box component="span" sx={{ ml: 0.5, display: 'inline-flex' }}>
-                        <Chip size="small" label={tx?.type ?? 'TX'} />
+                        <Chip
+                          size="small"
+                          label={statusLabel}
+                          color={isConfirmed ? 'success' : 'warning'}
+                        />
                       </Box>
                     </Typography>
                     <Typography variant="caption" color="text.secondary">
