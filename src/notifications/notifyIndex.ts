@@ -8,9 +8,11 @@ import { getAllAccountNames, getPrimaryAccountName } from '../utils/qortalApi';
 
 /* ------------------------------- Config -------------------------------- */
 const INDEX_PREFIX = 'qassets_notif_index::';
+const OPEN_SUFFIX = '::open';
 const INDEX_SERVICE: 'JSON' | 'DOCUMENT' = 'JSON'; // change if you want DOCUMENT
 const INDEX_MAX_ENTRIES = 1000; // guardrail
 export const NOTIF_GROUP_ID = 735; // <- set your real notifications group id
+export type IndexMode = 'admin' | 'open';
 
 /* -------------------------------- Types -------------------------------- */
 export interface IndexItem {
@@ -54,6 +56,9 @@ async function namesForAddress(address: string): Promise<string[]> {
 }
 
 // Build a set of **admin publisher names** for a group
+const buildIdentifierForMode = (scopeKey: string, mode: IndexMode) =>
+  `${INDEX_PREFIX}${scopeKey}${mode === 'open' ? OPEN_SUFFIX : ''}`;
+
 async function getAdminNameSet(groupId: number): Promise<Set<string>> {
   const rows = await fetchGroupMembers(true, groupId); // onlyAdmins=true
   const addrs = rows.map((r) => String(r.member || r.address || '').trim()).filter(Boolean);
@@ -73,9 +78,9 @@ function hitTime(h: SearchHit): number {
 }
 
 // Pick the latest admin publish for identifier+service
-function pickLatestAdminPublish(
+function pickLatestPublish(
   hits: SearchHit[],
-  adminNames: Set<string>,
+  adminNames: Set<string> | null,
   service: 'JSON' | 'DOCUMENT',
   identifier: string
 ): SearchHit | null {
@@ -84,7 +89,7 @@ function pickLatestAdminPublish(
       h.identifier === identifier &&
       h.service?.toUpperCase() === service &&
       h.name &&
-      adminNames.has(h.name.toLowerCase())
+      (!adminNames || adminNames.has(h.name.toLowerCase()))
   );
   if (!filtered.length) return null;
   return filtered.sort((a, b) => hitTime(b) - hitTime(a))[0];
@@ -133,6 +138,34 @@ function mergeIndex(existing: IndexItem[], incoming: IndexItem): IndexItem[] {
   return out;
 }
 
+export async function buildNotificationIndexResource(
+  scopeKey: string,
+  newItem: IndexItem,
+  opts?: { groupId?: number; service?: 'JSON' | 'DOCUMENT'; mode?: IndexMode }
+): Promise<{ identifier: string; service: 'JSON' | 'DOCUMENT'; data64: string }> {
+  const groupId = opts?.groupId ?? NOTIF_GROUP_ID;
+  const service = opts?.service ?? INDEX_SERVICE;
+  const mode = opts?.mode ?? 'admin';
+  const identifier = buildIdentifierForMode(scopeKey, mode);
+
+  const adminNames = mode === 'admin' ? await getAdminNameSet(groupId) : null;
+  const hits = await searchSimpleByFullId(identifier);
+  const latest = pickLatestPublish(hits as any, adminNames, service, identifier);
+
+  let existing: IndexItem[] = [];
+  if (latest) {
+    existing = await fetchIndexFromPublish({
+      service: latest.service,
+      identifier: latest.identifier,
+      name: latest.name,
+    }).catch(() => []);
+  }
+
+  const updated = mergeIndex(existing, newItem);
+  const data64 = await objectToBase64(updated);
+  return { identifier, service, data64 };
+}
+
 /* ------------------------------- Writer -------------------------------- */
 
 /**
@@ -143,40 +176,19 @@ function mergeIndex(existing: IndexItem[], incoming: IndexItem): IndexItem[] {
 export async function appendToIndex(
   scopeKey: string,
   newItem: IndexItem,
-  opts?: { groupId?: number; service?: 'JSON' | 'DOCUMENT' }
+  opts?: { groupId?: number; service?: 'JSON' | 'DOCUMENT'; mode?: IndexMode }
 ) {
-  const groupId = opts?.groupId ?? NOTIF_GROUP_ID;
-  const service = opts?.service ?? INDEX_SERVICE;
-  const identifier = `${INDEX_PREFIX}${scopeKey}`;
+  const { identifier, service, data64 } = await buildNotificationIndexResource(
+    scopeKey,
+    newItem,
+    opts
+  );
 
-  // 1) resolve set of admin names (lower-case)
-  const adminNames = await getAdminNameSet(groupId);
-
-  // 2) find all publishes of this identifier
-  const hits = await searchSimpleByFullId(identifier);
-
-  // 3) pick latest admin publish (if any)
-  const latest = pickLatestAdminPublish(hits as any, adminNames, service, identifier);
-
-  // 4) fetch current index or start from empty
-  let existing: IndexItem[] = [];
-  if (latest) {
-    existing = await fetchIndexFromPublish({
-      service: latest.service,
-      identifier: latest.identifier,
-      name: latest.name,
-    }).catch(() => []);
-  }
-
-  // 5) merge
-  const updated = mergeIndex(existing, newItem);
-
-  // 6) publish back under current user (should be admin — Core enforces anyway)
   await qortalRequest({
     action: 'PUBLISH_QDN_RESOURCE',
     service,
     identifier,
-    data64: await objectToBase64(updated),
+    data64,
   });
 }
 
@@ -188,15 +200,16 @@ export async function appendToIndex(
  */
 export async function loadIndex(
   scopeKey: string,
-  opts?: { groupId?: number; service?: 'JSON' | 'DOCUMENT' }
+  opts?: { groupId?: number; service?: 'JSON' | 'DOCUMENT'; mode?: IndexMode }
 ): Promise<{ items: IndexItem[]; publisher?: string; ts?: number } | null> {
   const groupId = opts?.groupId ?? NOTIF_GROUP_ID;
   const service = opts?.service ?? INDEX_SERVICE;
-  const identifier = `${INDEX_PREFIX}${scopeKey}`;
+  const mode = opts?.mode ?? 'admin';
+  const identifier = buildIdentifierForMode(scopeKey, mode);
 
-  const adminNames = await getAdminNameSet(groupId);
+  const adminNames = mode === 'admin' ? await getAdminNameSet(groupId) : null;
   const hits = await searchSimpleByFullId(identifier);
-  const latest = pickLatestAdminPublish(hits as any, adminNames, service, identifier);
+  const latest = pickLatestPublish(hits as any, adminNames, service, identifier);
   if (!latest) return null;
 
   const items = await fetchIndexFromPublish({

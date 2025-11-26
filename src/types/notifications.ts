@@ -1,9 +1,15 @@
 export type NotifScope =
-  | { kind: 'global' }
-  | { kind: 'asset'; assetId: number }
-  | { kind: 'group'; groupId: number }
-  | { kind: 'system' }
-  | { kind: 'custom'; key: string };
+  | { kind: 'global'; indexMode?: 'admin' | 'open' }
+  | { kind: 'asset'; assetId: number; indexMode?: 'admin' | 'open' }
+  | {
+      kind: 'group';
+      groupId: number;
+      privacy?: 'public' | 'private';
+      adminsOnly?: boolean;
+      indexMode?: 'admin' | 'open';
+    }
+  | { kind: 'system'; indexMode?: 'admin' | 'open' }
+  | { kind: 'custom'; key: string; indexMode?: 'admin' | 'open' };
 
 export type NotifPriority = 'low' | 'normal' | 'high';
 

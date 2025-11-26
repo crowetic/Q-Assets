@@ -2,8 +2,6 @@ import { useCallback } from 'react';
 import type { Service } from 'qapp-core';
 import { useAlert } from '../components/alerts';
 
-declare function qortalRequest<T = any>(req: any): Promise<T>;
-
 export type BatchPublishResource = {
   name: string;
   service: Service;
@@ -101,6 +99,51 @@ const formatBytes = (value: number) => {
   return `${current.toFixed(current >= 100 ? 0 : current >= 10 ? 1 : 2)} ${units[unit]}`;
 };
 
+const validateResources = (resources: BatchPublishResource[]) => {
+  resources.forEach((res) => {
+    const limit = deriveLimit(res.service);
+    const size = estimateBase64Bytes(res.data64);
+    if (size > limit) {
+      throw new Error(
+        `Resource ${res.identifier} exceeds the ${formatBytes(limit)} limit for ${
+          res.service
+        }. Size is ${formatBytes(size)}.`
+      );
+    }
+  });
+};
+
+const mapResourceFields = (res: BatchPublishResource) => ({
+  name: res.name,
+  service: res.service,
+  identifier: res.identifier,
+  data64: res.data64,
+  metadata: res.metadata,
+  tags: res.tags,
+  title: res.title,
+  description: res.description,
+});
+
+export async function publishQdnResources(resources: BatchPublishResource[]): Promise<void> {
+  if (!resources.length) return;
+
+  validateResources(resources);
+
+  if (resources.length === 1) {
+    const [single] = resources;
+    await qortalRequest({
+      action: 'PUBLISH_QDN_RESOURCE',
+      ...mapResourceFields(single),
+    } as any);
+    return;
+  }
+
+  await qortalRequest({
+    action: 'PUBLISH_MULTIPLE_QDN_RESOURCES',
+    resources: resources.map((res) => mapResourceFields(res)),
+  } as any);
+}
+
 export function useQdnBatchPublisher() {
   const { alert } = useAlert();
 
@@ -108,47 +151,7 @@ export function useQdnBatchPublisher() {
     async (resources: BatchPublishResource[]) => {
       if (!resources.length) return;
       try {
-        resources.forEach((res) => {
-          const limit = deriveLimit(res.service);
-          const size = estimateBase64Bytes(res.data64);
-          if (size > limit) {
-            throw new Error(
-              `Resource ${res.identifier} exceeds the ${formatBytes(
-                limit
-              )} limit for ${res.service}. Size is ${formatBytes(size)}.`
-            );
-          }
-        });
-
-        if (resources.length === 1) {
-          const [single] = resources;
-          await qortalRequest({
-            action: 'PUBLISH_QDN_RESOURCE',
-            name: single.name,
-            service: single.service,
-            identifier: single.identifier,
-            data64: single.data64,
-            metadata: single.metadata,
-            tags: single.tags,
-            title: single.title,
-            description: single.description,
-          } as any);
-          return;
-        }
-
-        await qortalRequest({
-          action: 'PUBLISH_MULTIPLE_QDN_RESOURCES',
-          resources: resources.map((res) => ({
-            name: res.name,
-            service: res.service,
-            identifier: res.identifier,
-            data64: res.data64,
-            metadata: res.metadata,
-            tags: res.tags,
-            title: res.title,
-            description: res.description,
-          })),
-        } as any);
+        await publishQdnResources(resources);
       } catch (e: any) {
         await alert(e?.message || 'Failed to publish resources.', 'Publish error', {
           severity: 'error',

@@ -5,7 +5,6 @@ import { TxTrackerProvider } from './unconfirmedTxTracker/TxTrackerProvider';
 import { UnconfirmedTxWidget } from './unconfirmedTxTracker/UnconfirmedTxWidget';
 import { UnconfirmedTxAutoScanner } from './unconfirmedTxTracker/UnconfirmedTxAutoScanner';
 import { NotificationProvider } from './notifications/NotificationProvider';
-import { NotificationWidget } from './notifications/NotificationWidget';
 import { NotificationAutoFetcher } from './notifications/NotificationAutoFetcher';
 
 export const AppWrapper = () => {
@@ -24,7 +23,6 @@ export const AppWrapper = () => {
         <NotificationProvider>
           <Layout />
           <UnconfirmedTxWidget />
-          <NotificationWidget />
           <NotificationAutoFetcher scopes={['global']} intervalMs={60_000} />
         </NotificationProvider>
         <UnconfirmedTxAutoScanner intervalMs={3_000} missGoneThreshold={2} limit={75} />

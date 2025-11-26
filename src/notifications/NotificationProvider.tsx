@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { NotifV1 } from '../types/notifications';
-import { fetchNotificationByRid } from '../utils/notify';
-import { loadIndex } from './notifyIndex';
+import { fetchNotificationByRid, getScopeIndexModesFromKey } from '../utils/notify';
+import { loadIndex, type IndexItem, type IndexMode } from './notifyIndex';
 
 type NotificationEntry = {
   key: string;
@@ -27,6 +27,23 @@ const STORAGE_KEY = 'qassets_notifications_v1';
 const NotificationContext = createContext<Ctx | null>(null);
 
 const keyFor = (rid: string, scope: string) => `${rid}::${scope || 'global'}`;
+
+const mergeIndexBatches = (
+  batches: Array<{ items: IndexItem[] } | null | undefined>
+): IndexItem[] => {
+  const map = new Map<string, IndexItem>();
+  for (const batch of batches) {
+    if (!batch?.items?.length) continue;
+    for (const item of batch.items) {
+      if (!item?.rid) continue;
+      const existing = map.get(item.rid);
+      if (!existing || (item.createdAt || 0) > (existing.createdAt || 0)) {
+        map.set(item.rid, item);
+      }
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+};
 
 function migrateLegacy(raw: any): NotificationState {
   if (raw?.byKey) return raw;
@@ -81,12 +98,17 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const refreshScope = useCallback<Ctx['refreshScope']>(
     async (scopeKey, limit = 25) => {
       try {
-        const index = await loadIndex(scopeKey);
-        if (!index?.items?.length) return;
-        const slice = index.items.slice(0, limit);
+        const modes = getScopeIndexModesFromKey(scopeKey);
+        const targetModes: IndexMode[] = modes.length ? modes : (['admin'] as IndexMode[]);
+        const batches = await Promise.all(
+          targetModes.map((mode) => loadIndex(scopeKey, { mode }).catch(() => null))
+        );
+        const merged = mergeIndexBatches(batches);
+        if (!merged.length) return;
+        const slice = merged.slice(0, limit);
         const fetched = await Promise.all(
           slice.map(async (item) => {
-            const notif = await fetchNotificationByRid(item.rid);
+            const notif = await fetchNotificationByRid(item.rid, { scopeKey });
             if (!notif) return null;
             return { rid: item.rid, notif };
           })

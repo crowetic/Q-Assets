@@ -1,3 +1,5 @@
+import { Service } from 'qapp-core';
+
 export type NewsType = 'announcement' | 'assetNews' | 'promotion';
 
 export interface NewsSummary {
@@ -13,7 +15,7 @@ export interface NewsSummary {
   // NEW:
   fullHtml?: string; // full HTML (for announcements + asset news, or promo contentHtml)
   publisherName?: string; // Qortal name that published it
-  service?: 'DOCUMENT' | 'JSON'; // original service for debugging
+  service?: Service; // original service for debugging
 }
 
 export type PromotionScope = 'asset' | 'general';

@@ -1,5 +1,10 @@
-import { qAssetsRevenueAddress } from '../constants/qdeckIdentifiers';
-import { appendToIndex } from '../notifications/notifyIndex';
+import type { Service } from 'qapp-core';
+import {
+  addPrivateMagic,
+  qAssetsRevenueAddress,
+  stripPrivateMagic,
+} from '../constants/qdeckIdentifiers';
+import { buildNotificationIndexResource, IndexMode } from '../notifications/notifyIndex';
 import {
   NotifPaymentProof,
   NotifPolicyV1,
@@ -10,6 +15,7 @@ import {
 import { objectToBase64 } from './data';
 import { sendChatMessage } from './qchat';
 import { getAccount, getTransactionInfoBySignature, transferAsset } from './qortalApi';
+import { BatchPublishResource, publishQdnResources } from './useQdnBatchPublisher';
 
 export type NotifPriority = 'low' | 'normal' | 'high';
 export type NotifScopeStr =
@@ -43,6 +49,85 @@ export function scopeToKey(scope: NotifScope): NotifScopeStr {
   }
 }
 
+const isPrivateGroupScope = (scope: NotifScope): scope is NotifScope & { kind: 'group' } =>
+  scope.kind === 'group' && scope.privacy !== 'public';
+
+const scopeKeyToGroupId = (scopeKey?: string | null): number | null => {
+  if (!scopeKey) return null;
+  const match = scopeKey.match(/^group:(\d+)$/);
+  if (match) {
+    const gid = Number(match[1]);
+    return Number.isFinite(gid) ? gid : null;
+  }
+  return null;
+};
+
+const resolveServiceForScope = (
+  scope: NotifScope
+): { service: Service; encryption?: { groupId: number; adminsOnly?: boolean } } => {
+  if (isPrivateGroupScope(scope)) {
+    return {
+      service: 'DOCUMENT_PRIVATE',
+      encryption: { groupId: scope.groupId, adminsOnly: scope.adminsOnly },
+    };
+  }
+  return { service: 'DOCUMENT' };
+};
+
+const normalizeIndexMode = (mode?: IndexMode): IndexMode[] => {
+  if (!mode) return [];
+  return [mode];
+};
+
+const DEFAULT_SCOPE_MODES: Record<NotifScope['kind'], IndexMode[]> = {
+  global: ['admin'],
+  system: ['admin'],
+  asset: ['open'],
+  group: ['open'],
+  custom: ['open'],
+};
+
+const dedupeModes = (modes: IndexMode[]) => Array.from(new Set(modes));
+
+export function getScopeIndexModes(scope: NotifScope): IndexMode[] {
+  const explicit = normalizeIndexMode(scope.indexMode);
+  if (explicit.length) return dedupeModes(explicit);
+  return DEFAULT_SCOPE_MODES[scope.kind] || ['open'];
+}
+
+export function getScopeIndexModesFromKey(scopeKey: string): IndexMode[] {
+  if (scopeKey === 'global') return ['admin'];
+  if (scopeKey === 'system') return ['admin'];
+  if (scopeKey.startsWith('asset:')) return ['open'];
+  if (scopeKey.startsWith('group:')) return ['open'];
+  if (scopeKey.startsWith('custom:')) return ['open'];
+  return ['open'];
+}
+
+async function resolvePublisherName(preferred?: string): Promise<string> {
+  if (preferred?.trim()) return preferred.trim();
+  const me = await qortalRequest({ action: 'GET_USER_ACCOUNT' });
+  const name = me?.name;
+  if (typeof name === 'string' && name.trim()) return name.trim();
+  throw new Error('Unable to resolve your Qortal name for publishing.');
+}
+
+async function encryptNotificationForGroup(
+  base64: string,
+  groupId: number,
+  adminsOnly?: boolean
+): Promise<string> {
+  const encrypted = await qortalRequest({
+    action: 'ENCRYPT_QORTAL_GROUP_DATA',
+    base64,
+    groupId,
+    isAdmins: !!adminsOnly,
+  });
+  if (!encrypted || typeof encrypted !== 'string') {
+    throw new Error('Failed to encrypt notification payload for group.');
+  }
+  return addPrivateMagic(encrypted);
+}
 export async function verifyPayment(
   p: NotifPaymentProof,
   expected: { assetId: number; amount: string; payer: string }
@@ -123,10 +208,15 @@ export async function publishNotification(args: {
     paymentBlockHeight = Number(confirmed?.blockHeight ?? 0) || 0;
   }
 
-  // 3) Build Notif JSON
+  // 3) Build Notif JSON(DOCUMENT service)
   const createdAt = Date.now();
   const scopeStr = scopeToKey(args.scope);
+  const scopeKey =
+    scopeStr.startsWith('asset:') || scopeStr.startsWith('group:') ? scopeStr : 'global';
+  const { service, encryption } = resolveServiceForScope(args.scope);
+  const publisherName = await resolvePublisherName(args.publisher.name);
 
+  const notifPublisher = { ...args.publisher, name: publisherName };
   const notif: NotifV1 = {
     version: 1,
     scope: scopeStr,
@@ -135,7 +225,7 @@ export async function publishNotification(args: {
     links: args.links,
     priority: args.priority ?? 'normal',
     createdAt,
-    publisher: args.publisher,
+    publisher: notifPublisher,
     audit: shouldCollect
       ? {
           payment: {
@@ -148,37 +238,76 @@ export async function publishNotification(args: {
       : undefined,
   };
 
-  // 4) Publish Notif JSON
   const id = `qassets_notif::${createdAt.toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const ridName = publisherName || args.publisher.address;
+  const rid = `${service}/${ridName}/${id}`;
 
-  await qortalRequest({
-    action: 'PUBLISH_QDN_RESOURCE',
-    service: 'DOCUMENT',
-    identifier: id,
-    data64: await objectToBase64(notif),
-    // name = publisher's name; defaulted by core if omitted
-  });
+  const baseNotif64 = await objectToBase64(notif);
+  let finalNotif64 = baseNotif64;
+  let notifMetadata: Record<string, any> | undefined;
+  let notifTags: string[] | undefined;
 
-  // 5) Append pointer to scope index
-  const scopeKey =
-    scopeStr.startsWith('asset:') || scopeStr.startsWith('group:') ? scopeStr : 'global';
+  if (encryption) {
+    finalNotif64 = await encryptNotificationForGroup(
+      baseNotif64,
+      encryption.groupId,
+      encryption.adminsOnly
+    );
+    notifMetadata = {
+      encrypted: {
+        mode: 'group',
+        groupId: encryption.groupId,
+        adminsOnly: Boolean(encryption.adminsOnly),
+      },
+    };
+    notifTags = ['private', 'encrypted:group'];
+  }
 
+  const resources: BatchPublishResource[] = [
+    {
+      name: publisherName,
+      service,
+      identifier: id,
+      data64: finalNotif64,
+      metadata: notifMetadata,
+      tags: notifTags,
+    },
+  ];
+
+  const indexModes = getScopeIndexModes(args.scope);
   const indexOpts = args.scope.kind === 'group' ? { groupId: args.scope.groupId } : undefined;
 
-  await appendToIndex(
-    scopeKey,
-    {
-      rid: `JSON/${args.publisher.name || args.publisher.address}/${id}`,
-      createdAt,
-      priority: notif.priority,
-    },
-    indexOpts
+  const targetModes: IndexMode[] = indexModes.length ? indexModes : (['admin'] as IndexMode[]);
+
+  const indexResources = await Promise.all(
+    targetModes.map((mode) =>
+      buildNotificationIndexResource(
+        scopeKey,
+        {
+          rid,
+          createdAt,
+          priority: notif.priority,
+        },
+        { ...indexOpts, mode }
+      )
+    )
   );
 
-  // 6) Optional: ping Q-Chat (feeless)
+  for (const indexResource of indexResources) {
+    resources.push({
+      name: publisherName,
+      service: indexResource.service as Service,
+      identifier: indexResource.identifier,
+      data64: indexResource.data64,
+    });
+  }
+
+  await publishQdnResources(resources);
+
+  // 4) Optional: ping Q-Chat (feeless)
   if (scopeKey === 'global' && args.chatGroupForGlobal) {
     const ping = buildNotifPing({
-      rid: `JSON/${args.publisher.name || args.publisher.address}/${id}`,
+      rid,
       scope: scopeKey as NotifScopeStr,
       priority: notif.priority as NotifPriority,
       title: notif.title,
@@ -231,18 +360,28 @@ export function buildNotifPing(
   return { kind: 'notif', ver: 1, rid, scope, priority, title, ts: ts ?? Date.now() };
 }
 
-type ParsedRid = { service: 'JSON' | 'DOCUMENT'; name: string; identifier: string };
+type ParsedRid = {
+  service: 'JSON' | 'DOCUMENT' | 'DOCUMENT_PRIVATE';
+  name: string;
+  identifier: string;
+};
 
 function parseRid(rid: string): ParsedRid | null {
   if (!rid) return null;
-  const m = rid.match(/^(JSON|DOCUMENT)\/([^/]+)\/(.+)$/i);
+  const m = rid.match(/^(JSON|DOCUMENT|DOCUMENT_PRIVATE)\/([^/]+)\/(.+)$/i);
   if (!m) return null;
   const [, serviceRaw, name, identifier] = m;
-  const service = serviceRaw.toUpperCase() === 'DOCUMENT' ? 'DOCUMENT' : 'JSON';
+  const serviceUpper = serviceRaw.toUpperCase();
+  if (serviceUpper !== 'DOCUMENT' && serviceUpper !== 'JSON' && serviceUpper !== 'DOCUMENT_PRIVATE')
+    return null;
+  const service = serviceUpper as ParsedRid['service'];
   return { service, name, identifier };
 }
 
-export async function fetchNotificationByRid(rid: string): Promise<NotifV1 | null> {
+export async function fetchNotificationByRid(
+  rid: string,
+  opts?: { scopeKey?: string }
+): Promise<NotifV1 | null> {
   const parsed = parseRid(rid);
   if (!parsed) return null;
   try {
@@ -253,8 +392,30 @@ export async function fetchNotificationByRid(rid: string): Promise<NotifV1 | nul
       identifier: parsed.identifier,
       encoding: 'base64',
     });
-    const data64 = res?.data64 ?? res;
+    let data64 = res?.data64 ?? res;
     if (!data64 || typeof data64 !== 'string') return null;
+    if (parsed.service === 'DOCUMENT_PRIVATE') {
+      const stripped = stripPrivateMagic(data64);
+      if (!stripped) return null;
+      const groupId = scopeKeyToGroupId(opts?.scopeKey);
+      if (groupId != null) {
+        const clear = await qortalRequest({
+          action: 'DECRYPT_QORTAL_GROUP_DATA',
+          base64: stripped,
+          groupId,
+          isAdmins: false,
+        });
+        if (!clear || typeof clear !== 'string') return null;
+        data64 = clear;
+      } else {
+        const clear = await qortalRequest({
+          action: 'DECRYPT_DATA',
+          encryptedData: stripped,
+        });
+        if (!clear || typeof clear !== 'string') return null;
+        data64 = clear;
+      }
+    }
     const json = atob(data64);
     const notif = JSON.parse(json) as NotifV1;
     return notif;

@@ -1,7 +1,62 @@
 // src/utils/news.ts
-import { qaAnnouncementPrefix, assetNewsGlobalPrefix } from '../constants/qdnConstants';
+import { Service } from 'qapp-core';
+import {
+  qaAnnouncementPrefix,
+  assetNewsGlobalPrefix,
+  Q_ASSETS_MANAGEMENT_GROUP_ID,
+} from '../constants/qdnConstants';
 import { NewsSummary } from '../types/newsAndPromos';
 import { fetchPromotionApprovals } from './promotions';
+import { searchSimpleByIdentifierPrefix } from './searchSimple';
+import { getAccountGroups } from './qortalApi';
+
+const nameAddressCache = new Map<string, string | null>();
+const adminCache = new Map<string, boolean>();
+
+const looksLikeAddress = (value: string) => /^Q[1-9A-HJ-NP-Za-km-z]{20,}$/.test(value.trim());
+
+async function resolvePublisherAddress(publisher?: string): Promise<string | null> {
+  if (!publisher) return null;
+  const key = publisher.toLowerCase();
+  if (nameAddressCache.has(key)) return nameAddressCache.get(key)!;
+
+  if (looksLikeAddress(publisher)) {
+    nameAddressCache.set(key, publisher);
+    return publisher;
+  }
+
+  try {
+    const data = await qortalRequest({ action: 'GET_NAME_DATA', name: publisher });
+    const owner = data?.owner ? String(data.owner) : null;
+    nameAddressCache.set(key, owner);
+    return owner;
+  } catch {
+    nameAddressCache.set(key, null);
+    return null;
+  }
+}
+
+async function isManagementAdminPublisher(publisher?: string): Promise<boolean> {
+  if (!publisher) return false;
+  const key = publisher.toLowerCase();
+  if (adminCache.has(key)) return adminCache.get(key)!;
+
+  const address = await resolvePublisherAddress(publisher);
+  if (!address) {
+    adminCache.set(key, false);
+    return false;
+  }
+
+  try {
+    const groups = await getAccountGroups(address);
+    const ok = groups.some((g) => g.groupId === Q_ASSETS_MANAGEMENT_GROUP_ID && Boolean(g.isAdmin));
+    adminCache.set(key, ok);
+    return ok;
+  } catch {
+    adminCache.set(key, false);
+    return false;
+  }
+}
 
 function stripHtml(html: string): string {
   if (!html) return '';
@@ -22,26 +77,20 @@ function extractTitleFromHtml(html: string, fallback: string): string {
 }
 
 export async function fetchAnnouncements(limit = 5): Promise<NewsSummary[]> {
-  // TODO: adjust params to your actual SEARCH_QDN_RESOURCES usage
-  const results = await qortalRequest({
-    action: 'SEARCH_QDN_RESOURCES',
-    service: 'DOCUMENT',
-    identifier: qaAnnouncementPrefix, // or use 'prefix' if supported
-    limit,
-    offset: 0,
-    reverse: true, // latest first if supported
-  });
-
-  if (!Array.isArray(results)) return [];
+  const hits = await searchSimpleByIdentifierPrefix('DOCUMENT', qaAnnouncementPrefix);
+  if (!hits.length) return [];
+  const ordered = hits.sort((a, b) => (b.created || 0) - (a.created || 0));
 
   const items: NewsSummary[] = [];
-  for (const r of results) {
+  for (const hit of ordered) {
+    if (!(await isManagementAdminPublisher(hit.name))) continue;
+    const finalService = hit.service ? (hit.service as Service) : ('DOCUMENT' as Service);
     try {
       const res = await qortalRequest({
         action: 'FETCH_QDN_RESOURCE',
-        name: r.name,
-        service: r.service,
-        identifier: r.identifier,
+        name: hit.name,
+        service: hit.service as Service,
+        identifier: hit.identifier,
         encoding: 'base64',
       });
 
@@ -52,45 +101,37 @@ export async function fetchAnnouncements(limit = 5): Promise<NewsSummary[]> {
 
       items.push({
         type: 'announcement',
-        identifier: r.identifier,
+        identifier: hit.identifier,
         title,
         excerpt,
-        created: r.created || Date.now(),
-        // NEW:
+        created: hit.created || Date.now(),
         fullHtml: html,
-        publisherName: r.name,
-        service: r.service,
+        publisherName: hit.name,
+        service: finalService,
       });
     } catch {
       // ignore broken resource
     }
+    if (items.length >= limit) break;
   }
 
   return items.sort((a, b) => b.created - a.created);
 }
 
 export async function fetchLatestAssetNews(limit = 10): Promise<NewsSummary[]> {
-  // TODO: again, fit to real SEARCH_QDN_RESOURCES signature
-  const results = await qortalRequest({
-    action: 'SEARCH_QDN_RESOURCES',
-    service: 'DOCUMENT',
-    identifier: assetNewsGlobalPrefix,
-    limit,
-    offset: 0,
-    reverse: true,
-  });
-
-  if (!Array.isArray(results)) return [];
+  const hits = await searchSimpleByIdentifierPrefix('DOCUMENT', assetNewsGlobalPrefix);
+  if (!hits.length) return [];
 
   const items: NewsSummary[] = [];
 
-  for (const r of results) {
+  for (const hit of hits) {
+    const finalService = hit.service ? (hit.service as Service) : ('DOCUMENT' as Service);
     try {
       const res = await qortalRequest({
         action: 'FETCH_QDN_RESOURCE',
-        name: r.name,
-        service: r.service,
-        identifier: r.identifier,
+        name: hit.name,
+        service: finalService,
+        identifier: hit.identifier,
         encoding: 'base64',
       });
 
@@ -100,7 +141,7 @@ export async function fetchLatestAssetNews(limit = 10): Promise<NewsSummary[]> {
 
       // Try to derive assetId from identifier: asset_news_pub__<assetId>__<id6>
       let assetId: number | undefined;
-      const m = r.identifier.match(/^asset_news_pub__([0-9]+)__/);
+      const m = hit.identifier.match(/^asset_news_pub__([0-9]+)__/);
       if (m && m[1]) {
         assetId = Number(m[1]);
       }
@@ -114,15 +155,15 @@ export async function fetchLatestAssetNews(limit = 10): Promise<NewsSummary[]> {
 
       items.push({
         type: 'assetNews',
-        identifier: r.identifier,
+        identifier: hit.identifier,
         title,
         excerpt,
-        created: r.created || Date.now(),
+        created: hit.created || Date.now(),
         assetId,
         assetName,
         fullHtml: html,
-        publisherName: r.name,
-        service: r.service,
+        publisherName: hit.name,
+        service: finalService,
       });
     } catch {
       // ignore
@@ -156,7 +197,7 @@ export async function fetchActivePromotions(now = Date.now()): Promise<NewsSumma
       promotionEndsAt: promo.endsAt,
       fullHtml: promo.contentHtml,
       publisherName: promo.createdBy,
-      service: 'JSON',
+      service: 'DOCUMENT',
     });
   }
 

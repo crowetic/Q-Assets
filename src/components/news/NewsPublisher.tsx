@@ -122,10 +122,15 @@ export default function NewsPublisher({
                 data64: b64,
               } as any);
 
+              const assetLink = `qortal://APP/Q-Assets/assets/${assetId}`;
               const links = [
                 {
                   label: 'View resource',
                   href: `qortal://DOCUMENT/${userName}/${newsItemId}`,
+                },
+                {
+                  label: assetName ? `View ${assetName}` : `View Asset #${assetId}`,
+                  href: assetLink,
                 },
               ];
 

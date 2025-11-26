@@ -27,6 +27,8 @@ type Props = {
   publishIdentifierPrefix?: string; // e.g. "qassets_announce"
 };
 
+const APP_HOME_LINK = 'qortal://APP/Q-Assets';
+
 export default function AnnouncementDialog({
   open,
   onClose,
@@ -69,24 +71,29 @@ export default function AnnouncementDialog({
 
       await qortalRequest({
         action: 'PUBLISH_QDN_RESOURCE',
-        service: 'BLOG_POST',
+        service: 'DOCUMENT',
         identifier,
         data64: await objectToBase64(blogPayload),
       });
 
       if ((notifyMail || notifyChat) && address) {
+        const links = [
+          {
+            label: 'View resource',
+            href: `qortal://DOCUMENT/${userName}/${identifier}`,
+          },
+          {
+            label: 'Open Q-Assets',
+            href: APP_HOME_LINK,
+          },
+        ];
         await sendNotification({
           scope: { kind: 'global' },
           title,
           bodyHtml: prepared,
           publisher: { name: userName, address, role: 'admin' },
           qdnResource: { publisher: userName, identifier },
-          links: [
-            {
-              label: 'View resource',
-              href: `qortal://DOCUMENT/${userName}/${identifier}`,
-            },
-          ],
+          links,
           deliveries: {
             internal: { enabled: true, chatPingGroupId: notifyChat ? NOTIF_GROUP_ID : undefined },
             qmail: notifyMail

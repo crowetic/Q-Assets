@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Box,
@@ -775,6 +776,14 @@ const useResolveResourceBase64 = (groups: GroupSummary[]) =>
     [groups]
   );
 
+const normalizeSectionParam = (
+  value?: string | null
+): 'services' | 'files' | 'shares' => {
+  if (!value) return 'services';
+  const lower = value.toLowerCase();
+  return lower === 'files' || lower === 'shares' ? (lower as 'files' | 'shares') : 'services';
+};
+
 export default function DataExplorer() {
   const { address: userAddress, name: authName, authenticateUser } = useAuth();
   const {
@@ -785,7 +794,28 @@ export default function DataExplorer() {
   } = useAccountNames();
   const [activeName, setActiveName] = useState<string | null>(null);
   const [activeService, setActiveService] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<'services' | 'files' | 'shares'>('services');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const searchParamsString = searchParams.toString();
+  const sectionParamValue = searchParams.get('section') ?? '';
+  const [activeSection, setActiveSectionState] = useState<'services' | 'files' | 'shares'>(() =>
+    normalizeSectionParam(sectionParamValue)
+  );
+  useEffect(() => {
+    const normalized = normalizeSectionParam(sectionParamValue);
+    setActiveSectionState((prev) => (prev === normalized ? prev : normalized));
+  }, [sectionParamValue]);
+  const setActiveSection = useCallback(
+    (nextSection: 'services' | 'files' | 'shares') => {
+      setActiveSectionState(nextSection);
+      const currentNormalized = normalizeSectionParam(sectionParamValue);
+      if (currentNormalized === nextSection) return;
+      const nextParams = new URLSearchParams(searchParamsString);
+      if (nextSection === 'services') nextParams.delete('section');
+      else nextParams.set('section', nextSection);
+      setSearchParams(nextParams, { replace: true });
+    },
+    [sectionParamValue, searchParamsString, setSearchParams]
+  );
   const [activeFilePath, setActiveFilePath] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null);
@@ -2694,6 +2724,12 @@ export default function DataExplorer() {
         ]
           .filter(Boolean)
           .join('');
+        const shareLinks = [
+          {
+            label: 'Open Data Explorer shares',
+            href: 'qortal://APP/Q-Assets/manage/data/explorer?section=shares',
+          },
+        ];
         const notificationPublisher = {
           name: publisherName || undefined,
           address: publisherAddress,
@@ -2706,6 +2742,7 @@ export default function DataExplorer() {
               title: shareTitle,
               bodyHtml: shareBody,
               publisher: notificationPublisher,
+              links: shareLinks,
               deliveries: { internal: { enabled: true } },
             })
           );
@@ -2717,6 +2754,7 @@ export default function DataExplorer() {
               title: shareTitle,
               bodyHtml: shareBody,
               publisher: notificationPublisher,
+              links: shareLinks,
               deliveries: {
                 internal: { enabled: false },
                 qmail: {

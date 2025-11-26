@@ -26,9 +26,6 @@ export type SendChatMessageResponse = {
   isEncrypted: boolean;
 };
 
-// If you're already exporting qortalRequest elsewhere, import it instead.
-declare function qortalRequest<T = any>(req: any): Promise<T>;
-
 export async function sendChatMessage(
   req: Omit<SendChatMessageRequest, 'action'>
 ): Promise<SendChatMessageResponse> {
@@ -45,13 +42,18 @@ export async function sendChatMessage(
     throw new Error('sendChatMessage: fullContent must be string or object.');
   }
 
-  const payload: SendChatMessageRequest = {
+  if (hasGroup) {
+    return qortalRequest({
+      action: 'SEND_CHAT_MESSAGE',
+      groupId: req.groupId!,
+      fullContent: req.fullContent,
+      ...(req.chatReference ? { chatReference: req.chatReference } : {}),
+    } as any);
+  }
+  return qortalRequest({
     action: 'SEND_CHAT_MESSAGE',
-    ...(hasGroup ? { groupId: req.groupId } : {}),
-    ...(hasRecipient ? { recipient: req.recipient!.trim() } : {}),
+    recipient: req.recipient!.trim(),
     fullContent: req.fullContent,
     ...(req.chatReference ? { chatReference: req.chatReference } : {}),
-  };
-
-  return qortalRequest<SendChatMessageResponse>(payload);
+  });
 }

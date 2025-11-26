@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { Box, Button, useTheme, useMediaQuery, Typography } from '@mui/material';
 import logoUrl from '../Q-Assets-Logo.png';
 import { Q_ASSETS_VERSION } from '../constants/qdnConstants';
+import { NotificationBell } from '../notifications/NotificationBell';
 
 const Header = () => {
   const theme = useTheme();
@@ -172,6 +173,7 @@ const Header = () => {
           </Button>
         );
       })}
+      <NotificationBell />
       <Typography
         variant="caption"
         sx={{

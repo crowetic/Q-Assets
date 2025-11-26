@@ -80,14 +80,15 @@ function parsePaidPromotionPayload(payload: any, identifier: string): PaidPromot
   };
 }
 
-async function fetchResourcesForPrefix(prefix: string, limit = 120): Promise<SearchResult[]> {
+async function searchResourcesForPrefix(prefix: string, limit = 120): Promise<SearchResult[]> {
   const results = await qortalRequest({
     action: 'SEARCH_QDN_RESOURCES',
-    service: 'JSON',
+    service: 'DOCUMENT',
     identifier: prefix,
     limit,
     offset: 0,
     reverse: true,
+    mode: 'ALL',
   });
 
   if (!Array.isArray(results)) return [];
@@ -113,7 +114,7 @@ async function fetchAndDecode(identifier: string, publisher: string, service: Se
 }
 
 export async function fetchPromotionRequests(limit = 120): Promise<PromotionRequest[]> {
-  const results = await fetchResourcesForPrefix(qaPromoRequestPrefix, limit);
+  const results = await searchResourcesForPrefix(qaPromoRequestPrefix, limit);
   const requests: PromotionRequest[] = [];
 
   for (const entry of results) {
@@ -136,7 +137,7 @@ export async function fetchPromotionRequests(limit = 120): Promise<PromotionRequ
 }
 
 export async function fetchPromotionApprovals(limit = 120): Promise<PaidPromotion[]> {
-  const results = await fetchResourcesForPrefix(qaPaidPromoPrefix, limit);
+  const results = await searchResourcesForPrefix(qaPaidPromoPrefix, limit);
   const promos: PaidPromotion[] = [];
 
   for (const entry of results) {
@@ -218,7 +219,7 @@ export async function setPromotionActive(
   await qortalRequest({
     action: 'PUBLISH_QDN_RESOURCE',
     ...(adminName ? { name: adminName } : {}),
-    service: 'JSON',
+    service: 'DOCUMENT',
     identifier,
     data64: await objectToBase64(payload),
   });
