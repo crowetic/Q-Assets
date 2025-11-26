@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useMemo, useState, useTransition, useRef } from 'react';
 import {
   Card,
@@ -400,7 +399,6 @@ export default function CommentsSection({
   // Yield helper (requestIdleCallback polyfilled)
   function yieldToMain(minTime = 8): Promise<void> {
     return new Promise((resolve) => {
-      // @ts-ignore
       const ric: any = window.requestIdleCallback;
       if (typeof ric === 'function') {
         ric(() => resolve(), { timeout: 50 });
@@ -434,6 +432,7 @@ export default function CommentsSection({
     const next = () => {
       active--;
       const fn = queue.shift();
+      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
       fn && fn();
     };
     return async function <T>(fn: () => Promise<T>): Promise<T> {
@@ -482,7 +481,6 @@ export default function CommentsSection({
 
     const vis = readVisibleFromUrl();
     setCollapsed((prev) => (prev === !vis ? !vis : prev));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams.toString()]);
 
   useEffect(() => {
@@ -495,7 +493,6 @@ export default function CommentsSection({
       next.set('cshow', collapsed ? '0' : '1');
       setSearchParams(next, { replace: true });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalPages]);
 
   // Load all existing comments (within the primary group namespace)
@@ -512,7 +509,7 @@ export default function CommentsSection({
       setError(null);
       try {
         // 1) Find all identifiers quickly (cheap)
-        const hitsAll = await searchSimpleByIdentifierPrefix('DOCUMENT', prefix);
+        const hitsAll = await searchSimpleByIdentifierPrefix('DOCUMENT', prefix, 0);
         if (cancelled) return;
 
         // Sort stable (you had this already)
@@ -568,7 +565,6 @@ export default function CommentsSection({
           const candidateNames = namesByIdentifier.get(fullIdentifier) ?? [];
           let found: ThreadComment | null = null;
           for (const nm of candidateNames) {
-            // eslint-disable-next-line no-await-in-loop
             const doc = await fetchHtmlComment(nm, fullIdentifier, prefix);
             if (doc) {
               found = doc;
@@ -578,7 +574,6 @@ export default function CommentsSection({
           if (!found && docs.length) {
             const uniqueAuthors = Array.from(new Set(docs.map((x) => x.author).filter(Boolean)));
             for (const nm of uniqueAuthors) {
-              // eslint-disable-next-line no-await-in-loop
               const doc = await fetchHtmlComment(nm, fullIdentifier, prefix);
               if (doc) {
                 found = doc;
@@ -611,7 +606,7 @@ export default function CommentsSection({
         const CHUNK = 200; // tune as needed
         for (let i = 0; i < union.length; i += CHUNK) {
           const slice = union.slice(i, i + CHUNK);
-          // eslint-disable-next-line no-await-in-loop
+
           const t = await tagComments(slice, inputs);
           tagged.push(...t);
           // incremental paint via transition

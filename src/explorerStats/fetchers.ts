@@ -121,7 +121,7 @@ export async function fetchCommentsSummaryForAsset(assetId: number): Promise<{
 }> {
   try {
     const prefix = `asset_comment__${assetId}__`;
-    const hits = await searchSimpleByIdentifierPrefix('DOCUMENT', prefix) // your existing util
+    const hits = await searchSimpleByIdentifierPrefix('DOCUMENT', prefix, 0) // your existing util
       .catch(() => [] as any[]);
 
     if (!Array.isArray(hits) || hits.length === 0) {

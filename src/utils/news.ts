@@ -7,6 +7,7 @@ import { stripHtml, extractTitleFromHtml, isManagementAdminPublisher } from './n
 import { loadAnnouncementApprovalDoc } from './announcementApprovals';
 import { getNewsPromoExpiryDays, publisherHasPermission } from './managementManifest';
 import { base64ToObject, base64ToUtf8 } from './data';
+import { getCached, setCached } from './cache';
 
 async function canPublishAnnouncement(publisher: string): Promise<boolean> {
   try {
@@ -55,12 +56,19 @@ const decodeAnnouncementResource = async (data64?: string | null) => {
 
 type FetchNewsOptions = { includeExpired?: boolean };
 
+const LIST_CACHE_MS = 60_000;
+const ITEM_CACHE_MS = 5 * 60_000;
+
 export async function fetchAnnouncements(
   limit = 5,
   options?: FetchNewsOptions
 ): Promise<NewsSummary[]> {
   try {
     const includeExpired = options?.includeExpired ?? false;
+    const listKey = `ann:list:${includeExpired}:${limit}`;
+    const cachedList = getCached<NewsSummary[]>(listKey);
+    if (cachedList) return cachedList;
+
     const expiryDays = Number(await getNewsPromoExpiryDays());
     const expiryCutoff =
       Number.isFinite(expiryDays) && expiryDays > 0 ? Date.now() - expiryDays * 86_400_000 : null;
@@ -79,14 +87,23 @@ export async function fetchAnnouncements(
       createdHint?: number
     ) => {
       try {
-        const res = await qortalRequest({
-          action: 'FETCH_QDN_RESOURCE',
-          name: publisher,
-          service: service || ('DOCUMENT' as Service),
-          identifier,
-          encoding: 'base64',
-        });
-        const payload = await decodeAnnouncementResource(res?.data64 ?? res);
+        const svc = service || ('DOCUMENT' as Service);
+        const cacheKey = `ann:item:${(publisher || '').toLowerCase()}:${svc}:${identifier}`;
+        let payload: { html: string; title?: string; createdAt?: number } | null | undefined =
+          getCached(cacheKey);
+
+        if (!payload) {
+          const res = await qortalRequest({
+            action: 'FETCH_QDN_RESOURCE',
+            name: publisher,
+            service: svc,
+            identifier,
+            encoding: 'base64',
+          });
+          payload = await decodeAnnouncementResource(res?.data64 ?? res);
+          if (payload) setCached(cacheKey, payload, ITEM_CACHE_MS);
+        }
+
         if (!payload) return false;
         const html = payload.html;
         const title = payload.title || extractTitleFromHtml(html, 'Q-Assets Announcement');
@@ -142,8 +159,8 @@ export async function fetchAnnouncements(
       let jsonHits: Awaited<ReturnType<typeof searchSimpleByIdentifierPrefix>> = [];
       try {
         [docHits, jsonHits] = await Promise.all([
-          searchSimpleByIdentifierPrefix('DOCUMENT', qaAnnouncementPrefix),
-          searchSimpleByIdentifierPrefix('JSON', qaAnnouncementPrefix).catch(() => []),
+          searchSimpleByIdentifierPrefix('DOCUMENT', qaAnnouncementPrefix, limit),
+          searchSimpleByIdentifierPrefix('JSON', qaAnnouncementPrefix, limit).catch(() => []),
         ]);
       } catch (e) {
         console.warn('Failed to fetch announcement list', e);
@@ -166,7 +183,9 @@ export async function fetchAnnouncements(
       }
     }
 
-    return items.sort((a, b) => b.created - a.created).slice(0, limit);
+    const finalList = items.sort((a, b) => b.created - a.created).slice(0, limit);
+    setCached(listKey, finalList, LIST_CACHE_MS);
+    return finalList;
   } catch (e) {
     console.warn('fetchAnnouncements failed', e);
     return [];
@@ -179,6 +198,10 @@ export async function fetchLatestAssetNews(
 ): Promise<NewsSummary[]> {
   try {
     const includeExpired = options?.includeExpired ?? false;
+    const listKey = `assetnews:list:${includeExpired}:${limit}`;
+    const cachedList = getCached<NewsSummary[]>(listKey);
+    if (cachedList) return cachedList;
+
     const expiryDays = await getNewsPromoExpiryDays();
     const expiryCutoff =
       typeof expiryDays === 'number' && expiryDays > 0
@@ -186,7 +209,7 @@ export async function fetchLatestAssetNews(
         : null;
     let hits: Awaited<ReturnType<typeof searchSimpleByIdentifierPrefix>> = [];
     try {
-      hits = await searchSimpleByIdentifierPrefix('DOCUMENT', assetNewsGlobalPrefix);
+      hits = await searchSimpleByIdentifierPrefix('DOCUMENT', assetNewsGlobalPrefix, limit);
     } catch (e) {
       console.warn('Failed to fetch asset news list', e);
       return [];
@@ -202,43 +225,54 @@ export async function fetchLatestAssetNews(
       seen.add(dedupeKey);
       const finalService = hit.service ? (hit.service as Service) : ('DOCUMENT' as Service);
       try {
-        const res = await qortalRequest({
-          action: 'FETCH_QDN_RESOURCE',
-          name: hit.name,
-          service: finalService,
-          identifier: hit.identifier,
-          encoding: 'base64',
-        });
+        const payloadKey = `assetnews:item:${hit.name.toLowerCase()}:${finalService}:${hit.identifier}`;
+        let payload = getCached<{ html: string; title?: string; createdAt?: number }>(payloadKey);
 
-        const raw = res?.data64 ?? res;
-        let html = '';
-        let title: string | undefined;
-        let createdAt: number | undefined;
+        if (!payload) {
+          const res = await qortalRequest({
+            action: 'FETCH_QDN_RESOURCE',
+            name: hit.name,
+            service: finalService,
+            identifier: hit.identifier,
+            encoding: 'base64',
+          });
 
-        try {
-          const parsed = await base64ToObject(raw);
-          if (parsed && typeof parsed === 'object') {
-            html = parsed.html || parsed.fullHtml || '';
-            title = parsed.title;
-            createdAt = parsed.updatedAt || parsed.createdAt || hit.updated || hit.created;
-          }
-        } catch {
-          /* fallback below */
-        }
+          const raw = res?.data64 ?? res;
+          let html = '';
+          let title: string | undefined;
+          let createdAt: number | undefined;
 
-        if (!html && typeof raw === 'string') {
           try {
-            html = atob(raw);
+            const parsed = await base64ToObject(raw);
+            if (parsed && typeof parsed === 'object') {
+              html = parsed.html || parsed.fullHtml || '';
+              title = parsed.title;
+              createdAt = parsed.updatedAt || parsed.createdAt || hit.updated || hit.created;
+            }
           } catch {
+            /* fallback below */
+          }
+
+          if (!html && typeof raw === 'string') {
             try {
-              html = base64ToUtf8(raw);
+              html = atob(raw);
             } catch {
-              html = String(raw);
+              try {
+                html = base64ToUtf8(raw);
+              } catch {
+                html = String(raw);
+              }
             }
           }
+          if (!html) console.log('wtfnohtml', html);
+          if (!html) continue;
+          payload = { html, title, createdAt };
+          setCached(payloadKey, payload, ITEM_CACHE_MS);
         }
-        if (!html) console.log('wtfnohtml', html);
-        if (!html) continue;
+
+        const html = payload.html;
+        let title = payload.title;
+        const createdAt = payload.createdAt;
 
         const text = stripHtml(html);
         const excerpt = text.slice(0, 220) + (text.length > 220 ? '…' : '');
@@ -281,7 +315,9 @@ export async function fetchLatestAssetNews(
     }
 
     // Sort latest first and trim to limit
-    return items.sort((a, b) => b.created - a.created).slice(0, limit);
+    const finalList = items.sort((a, b) => b.created - a.created).slice(0, limit);
+    setCached(listKey, finalList, LIST_CACHE_MS);
+    return finalList;
   } catch (e) {
     console.warn('fetchLatestAssetNews failed', e);
     return [];

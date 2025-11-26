@@ -164,7 +164,7 @@ export async function fetchPendingAnnouncementsDetailed(
   limit = 50
 ): Promise<PendingAnnouncementSummary[]> {
   const [hits, doc] = await Promise.all([
-    searchSimpleByIdentifierPrefix('DOCUMENT', qaAnnouncementPrefix),
+    searchSimpleByIdentifierPrefix('DOCUMENT', qaAnnouncementPrefix, limit),
     loadAnnouncementApprovalDoc(),
   ]);
 
