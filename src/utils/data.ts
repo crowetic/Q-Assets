@@ -1,5 +1,3 @@
-//@ts-nocheck
-
 class Semaphore {
   private count: number;
   private waiting: (() => void)[];

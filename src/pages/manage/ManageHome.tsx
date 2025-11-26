@@ -7,7 +7,7 @@ import FolderSpecialRoundedIcon from '@mui/icons-material/FolderSpecialRounded';
 import SecurityRoundedIcon from '@mui/icons-material/SecurityRounded';
 import AdminPanelSettingsRoundedIcon from '@mui/icons-material/AdminPanelSettingsRounded';
 import { alpha, darken, lighten, useTheme, type Theme } from '@mui/material/styles';
-import { getUserRoles, type UserRoles } from '../../utils/roles';
+import { getUserRoles, type UserRoles, userHasPermission } from '../../utils/roles';
 import { fetchAccountAvatarDataUrl } from '../../utils/qdnAvatar';
 import { useFetchTracker } from '../../state/global/fetchTracker';
 
@@ -492,7 +492,9 @@ export default function ManageHome() {
     };
   }, [track]);
 
-  const visibleTiles = tiles.filter((t) => !t.requiresAdmin || roles?.isManagementAdmin);
+  const visibleTiles = tiles.filter(
+    (t) => !t.requiresAdmin || userHasPermission(roles, 'permissions.manage.manifest')
+  );
   const dataTile = visibleTiles.find((tile) => tile.to === '/manage/data/explorer') ?? null;
   const adminTile = visibleTiles.find((tile) => tile.to === '/manage/admin') ?? null;
   const otherTiles = visibleTiles.filter(

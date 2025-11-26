@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Box, Tooltip } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
-import { getUserRoles, UserRoles } from '../../utils/roles';
+import { getUserRoles, UserRoles, userHasPermission } from '../../utils/roles';
 import PromotionDialog from './PromotionDialog';
 import AnnouncementDialog from './AnnouncementDialog';
 import SuccessButton from '../buttons/SuccessButton';
@@ -19,6 +19,7 @@ export default function NewsActionBar({ treasuryAddress, defaultPromoPriceQort =
     isManagement: false,
     isManagementAdmin: false,
     isAssetIssuer: false,
+    permissions: [],
   });
   const [promoOpen, setPromoOpen] = useState(false);
   const [announceOpen, setAnnounceOpen] = useState(false);
@@ -45,7 +46,7 @@ export default function NewsActionBar({ treasuryAddress, defaultPromoPriceQort =
       {/* Submit Promotion: visible to any logged-in user */}
 
       {/* Add Q-Assets Announcement: management only */}
-      {roles.isManagement && (
+      {userHasPermission(roles, 'announcements.publish') && (
         <InfoButton variant="outlined" onClick={() => setAnnounceOpen(true)}>
           Add Q-Assets Announcement
         </InfoButton>

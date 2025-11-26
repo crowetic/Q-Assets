@@ -6,18 +6,14 @@
 // import { MINTER_GROUP_ID, DEV_GROUP_ID } from "../constants/qdnConstants";
 import type { ThreadComment } from '../types/ThreadedComment';
 import { Q_ASSETS_MANAGEMENT_GROUP_ID } from '../constants/qdnConstants';
+import { getAccountGroups, type GroupSummary } from './qortalApi';
+import { derivePermissionsForGroups, type PermissionId } from './managementManifest';
 
 export type RoleMap = Record<number, string>; // groupId -> tag label (e.g., 691: 'MINTER')
 
 // --- in-memory caches (session-scoped) -----------------
 const nameAddrCache = new Map<string, string>(); // name(lower) -> address
-const addrGroupsCache = new Map<string, GroupInfo[]>(); // address -> memberships
-
-type GroupInfo = {
-  groupId: number;
-  groupName: string;
-  isAdmin?: boolean;
-};
+const addrGroupsCache = new Map<string, GroupSummary[]>(); // address -> memberships
 
 export interface TaggingInputs {
   primaryGroupId: number; // PAG id
@@ -41,6 +37,7 @@ export interface UserRoles {
   isManagement: boolean; // member of Q-Assets-Management group
   isManagementAdmin: boolean; // admin in Q-Assets-Management group
   isAssetIssuer: boolean; // has issued at least one asset
+  permissions: PermissionId[];
 }
 
 const anonymousRoles: UserRoles = {
@@ -48,6 +45,7 @@ const anonymousRoles: UserRoles = {
   isManagement: false,
   isManagementAdmin: false,
   isAssetIssuer: false,
+  permissions: [],
 };
 
 // --- fetch helpers ------------------------------------
@@ -65,28 +63,14 @@ async function getAddressForName(name: string): Promise<string | null> {
   }
 }
 
-async function getGroupsForAddress(address: string): Promise<GroupInfo[]> {
+async function getGroupsForAddress(address: string): Promise<GroupSummary[]> {
   if (!address) return [];
   if (addrGroupsCache.has(address)) return addrGroupsCache.get(address)!;
 
   try {
-    const resp = await fetch(`/groups/member/${encodeURIComponent(address)}`, {
-      method: 'GET',
-      headers: { accept: 'application/json' },
-    });
-    if (!resp.ok) throw new Error(`groups/member failed: ${resp.status}`);
-    const arr = await resp.json();
-    const out: GroupInfo[] = Array.isArray(arr)
-      ? arr
-          .map((g: any) => ({
-            groupId: Number(g?.groupId),
-            groupName: String(g?.groupName ?? ''),
-            isAdmin: Boolean(g?.isAdmin),
-          }))
-          .filter((g) => Number.isFinite(g.groupId))
-      : [];
-    addrGroupsCache.set(address, out);
-    return out;
+    const groups = await getAccountGroups(address);
+    addrGroupsCache.set(address, groups);
+    return groups;
   } catch {
     return [];
   }
@@ -175,6 +159,7 @@ export async function getUserRoles(): Promise<UserRoles> {
       reverse: true,
     }).catch(() => []),
   ]);
+  const permissions = await derivePermissionsForGroups(groups);
 
   return {
     loggedIn: true,
@@ -184,5 +169,13 @@ export async function getUserRoles(): Promise<UserRoles> {
     isManagement: groups.some((g) => g.groupId === Q_ASSETS_MANAGEMENT_GROUP_ID),
     isManagementAdmin: groups.some((g) => g.groupId === Q_ASSETS_MANAGEMENT_GROUP_ID && g.isAdmin),
     isAssetIssuer: Array.isArray(issuedTxs) && issuedTxs.length > 0,
+    permissions,
   };
+}
+
+export function userHasPermission(
+  roles: UserRoles | null | undefined,
+  permission: PermissionId
+): boolean {
+  return Boolean(roles?.permissions?.includes(permission));
 }

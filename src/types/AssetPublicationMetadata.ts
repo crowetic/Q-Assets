@@ -1,4 +1,3 @@
-// src/types/AssetPublicationMetadata.ts
 export interface AssetGroupMetadata {
   primaryGroupName: string;
   primaryGroupId: string;

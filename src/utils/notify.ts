@@ -12,7 +12,7 @@ import {
   NotifScope,
   NotifV1,
 } from '../types/notifications';
-import { objectToBase64 } from './data';
+import { base64ToObject, objectToBase64 } from './data';
 import { sendChatMessage } from './qchat';
 import { getAccount, getTransactionInfoBySignature, transferAsset } from './qortalApi';
 import { BatchPublishResource, publishQdnResources } from './useQdnBatchPublisher';
@@ -416,8 +416,8 @@ export async function fetchNotificationByRid(
         data64 = clear;
       }
     }
-    const json = atob(data64);
-    const notif = JSON.parse(json) as NotifV1;
+    // const json = atob(data64);
+    const notif = (await base64ToObject(data64)) as NotifV1;
     return notif;
   } catch {
     return null;

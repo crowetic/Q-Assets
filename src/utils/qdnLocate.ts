@@ -1,10 +1,5 @@
-// src/utils/qdnLocate.ts
 import { getAssetIdentifiers } from '../constants/qdnConstants';
 import type { Service } from 'qapp-core';
-
-// If your qapp-core Service type doesn’t include 'BLOG_POST', add it there;
-// or keep a local augmentation somewhere central:
-// type Service = 'BLOG_POST' | 'IMAGE' | 'JSON' | 'ARBITRARY_DATA' | 'ARBITRARY' | /* ... */ string;
 
 type Kind = 'genesisPost' | 'avatar' | 'groupMeta' | 'structuredMeta';
 

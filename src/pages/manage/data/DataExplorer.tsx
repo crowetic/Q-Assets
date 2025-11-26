@@ -658,15 +658,18 @@ const dedupeFolderDescriptors = (descriptors: FolderDescriptor[]): FolderDescrip
 const matchesSearch = (resource: QdnResource, query: string) => {
   if (!query) return true;
   const lower = query.toLowerCase();
+  const identifier =
+    typeof resource.identifier === 'string' ? resource.identifier.toLowerCase() : '';
   const title =
     typeof resource.metadata?.title === 'string' ? resource.metadata.title.toLowerCase() : '';
   const desc =
     typeof resource.metadata?.description === 'string'
       ? resource.metadata.description.toLowerCase()
       : '';
+  const service = typeof resource.service === 'string' ? resource.service.toLowerCase() : '';
   return (
-    resource.identifier.toLowerCase().includes(lower) ||
-    (resource.service || '').toLowerCase().includes(lower) ||
+    identifier.includes(lower) ||
+    service.includes(lower) ||
     title.includes(lower) ||
     desc.includes(lower)
   );
@@ -776,9 +779,7 @@ const useResolveResourceBase64 = (groups: GroupSummary[]) =>
     [groups]
   );
 
-const normalizeSectionParam = (
-  value?: string | null
-): 'services' | 'files' | 'shares' => {
+const normalizeSectionParam = (value?: string | null): 'services' | 'files' | 'shares' => {
   if (!value) return 'services';
   const lower = value.toLowerCase();
   return lower === 'files' || lower === 'shares' ? (lower as 'files' | 'shares') : 'services';

@@ -2,7 +2,6 @@ import { useMemo, useState, MouseEvent } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import {
   Badge,
-  Box,
   Button,
   Divider,
   IconButton,
@@ -149,7 +148,12 @@ export function NotificationBell() {
                         <Typography
                           variant="body2"
                           color="text.secondary"
-                          sx={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                          sx={{
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden',
+                          }}
                         >
                           {snippet}
                           {summary.length > 240 ? '…' : ''}

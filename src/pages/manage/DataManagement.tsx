@@ -1,4 +1,3 @@
-// src/pages/manage/DataManagement.tsx
 import { Box, Typography, Paper, Button, Stack } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import CloudUploadRoundedIcon from '@mui/icons-material/CloudUploadRounded';

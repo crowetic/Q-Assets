@@ -1,15 +1,15 @@
-// utils/notifyIndex.ts
 import { objectToBase64, Service } from 'qapp-core'; // or your './data' helper
 import pLimit from 'p-limit';
 import { fetchGroupMembers } from '../utils/access'; // your code you pasted
 import { searchSimpleByFullId } from '../utils/searchSimple';
 import { getAllAccountNames, getPrimaryAccountName } from '../utils/qortalApi';
+import { base64ToObject } from '../utils/data';
 // import { base64ToObject } if you want a typed parse; here we JSON.parse manually
 
 /* ------------------------------- Config -------------------------------- */
 const INDEX_PREFIX = 'qassets_notif_index::';
 const OPEN_SUFFIX = '::open';
-const INDEX_SERVICE: 'JSON' | 'DOCUMENT' = 'JSON'; // change if you want DOCUMENT
+const INDEX_SERVICE: 'JSON' | 'DOCUMENT' = 'DOCUMENT'; // change if you want DOCUMENT
 const INDEX_MAX_ENTRIES = 1000; // guardrail
 export const NOTIF_GROUP_ID = 735; // <- set your real notifications group id
 export type IndexMode = 'admin' | 'open';
@@ -112,8 +112,8 @@ async function fetchIndexFromPublish(p: {
   const b64 = (res && (res.data64 ?? res)) as string | undefined;
   if (!b64 || typeof b64 !== 'string') return [];
   try {
-    const json = atob(b64);
-    const parsed = JSON.parse(json);
+    // const json = atob(b64);
+    const parsed = await base64ToObject(b64);
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];

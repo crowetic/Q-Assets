@@ -33,6 +33,7 @@ export const qaAnnouncementHeadId = 'qa_announcement_head';
 export const qaPaidPromoPrefix = 'qa_paid_promo__'; // per-entry
 export const qaPaidPromoHeadId = 'qa_paid_promo_head';
 export const qaPromoRequestPrefix = 'qa_promo_req__'; // user-submitted requests
+export const qaManagementManifestId = 'qassets_management_manifest';
 
 // Optional: base prefix for asset news across *all* assets, for global search
 export const assetNewsGlobalPrefix = 'asset_news_pub__';

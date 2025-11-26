@@ -8,7 +8,7 @@ import AssessmentRoundedIcon from '@mui/icons-material/AssessmentRounded';
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
 import ShieldRoundedIcon from '@mui/icons-material/ShieldRounded';
 
-import { getUserRoles, UserRoles } from '../../utils/roles';
+import { getUserRoles, UserRoles, userHasPermission } from '../../utils/roles';
 import { Q_ASSETS_MANAGEMENT_GROUP_ID, Q_ASSETS_VERSION } from '../../constants/qdnConstants';
 import { fetchAnnouncements, fetchActivePromotions, fetchLatestAssetNews } from '../../utils/news';
 import type {
@@ -24,6 +24,12 @@ import {
   summarizePromotionContributions,
   setPromotionActive,
 } from '../../utils/promotions';
+import {
+  fetchPendingAnnouncementsDetailed,
+  approveAnnouncement,
+  type PendingAnnouncementSummary,
+} from '../../utils/announcementApprovals';
+import { ManagementManifestEditor } from '../../components/admin/ManagementManifestEditor';
 
 type FeedState = {
   announcements: NewsSummary[];
@@ -150,6 +156,12 @@ export default function AdminPanel() {
   const [approvals, setApprovals] = useState<Map<string, PaidPromotion>>(new Map());
   const [contributions, setContributions] = useState<PromotionContribution[]>([]);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [pendingAnnouncements, setPendingAnnouncements] = useState<PendingAnnouncementSummary[]>(
+    []
+  );
+  const [pendingAnnLoading, setPendingAnnLoading] = useState(false);
+  const [pendingAnnError, setPendingAnnError] = useState<string | null>(null);
+  const [approvingAnnouncementId, setApprovingAnnouncementId] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -167,7 +179,7 @@ export default function AdminPanel() {
     };
   }, []);
 
-  const canAccess = Boolean(roles?.isManagementAdmin);
+  const canAccess = userHasPermission(roles, 'permissions.manage.manifest');
 
   const refreshFeed = useCallback(async () => {
     if (!canAccess) return;
@@ -219,6 +231,24 @@ export default function AdminPanel() {
     loadPromotionData();
   }, [loadPromotionData]);
 
+  const loadPendingAnnouncements = useCallback(async () => {
+    if (!canAccess) return;
+    setPendingAnnLoading(true);
+    setPendingAnnError(null);
+    try {
+      const pending = await fetchPendingAnnouncementsDetailed(50);
+      setPendingAnnouncements(pending);
+    } catch (e: any) {
+      setPendingAnnError(e?.message || 'Unable to load pending announcements.');
+    } finally {
+      setPendingAnnLoading(false);
+    }
+  }, [canAccess]);
+
+  useEffect(() => {
+    loadPendingAnnouncements();
+  }, [loadPendingAnnouncements]);
+
   const handleTogglePromotion = useCallback(
     async (request: PromotionRequest, makeActive: boolean) => {
       if (!roles?.userName) {
@@ -229,13 +259,34 @@ export default function AdminPanel() {
       try {
         await setPromotionActive(request, makeActive, roles.userName);
         await loadPromotionData();
+        await refreshFeed();
       } catch (e: any) {
         setPromoError(e?.message || 'Failed to update promotion status.');
       } finally {
         setUpdatingId(null);
       }
     },
-    [roles?.userName, loadPromotionData]
+    [roles?.userName, loadPromotionData, refreshFeed]
+  );
+
+  const handleApproveAnnouncementPending = useCallback(
+    async (announcement: PendingAnnouncementSummary) => {
+      if (!roles?.userName) {
+        setPendingAnnError('Unable to determine your admin name for publishing.');
+        return;
+      }
+      setApprovingAnnouncementId(announcement.identifier);
+      try {
+        await approveAnnouncement(announcement, roles.userName);
+        await loadPendingAnnouncements();
+        await refreshFeed();
+      } catch (e: any) {
+        setPendingAnnError(e?.message || 'Failed to approve announcement.');
+      } finally {
+        setApprovingAnnouncementId(null);
+      }
+    },
+    [roles?.userName, loadPendingAnnouncements, refreshFeed]
   );
 
   return (
@@ -356,6 +407,106 @@ export default function AdminPanel() {
               </Paper>
             </Grid>
           </Grid>
+
+          <Paper variant="outlined" sx={{ p: 3, borderRadius: 3, mt: 3 }}>
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={1}
+              justifyContent="space-between"
+              alignItems={{ xs: 'flex-start', sm: 'center' }}
+            >
+              <Box>
+                <Typography variant="h6">Pending announcements</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Approve management-submitted announcements before they appear in the app.
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={1} alignItems="center">
+                {pendingAnnError && (
+                  <Typography variant="body2" color="error.main">
+                    {pendingAnnError}
+                  </Typography>
+                )}
+                <Button
+                  size="small"
+                  startIcon={<RefreshRoundedIcon />}
+                  onClick={loadPendingAnnouncements}
+                  disabled={pendingAnnLoading}
+                >
+                  Refresh
+                </Button>
+              </Stack>
+            </Stack>
+            {pendingAnnLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                <CircularProgress size={28} />
+              </Box>
+            ) : pendingAnnouncements.length === 0 ? (
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                No announcements awaiting approval.
+              </Typography>
+            ) : (
+              <Stack spacing={1.5} sx={{ mt: 2 }}>
+                {pendingAnnouncements.map((announcement) => (
+                  <Paper
+                    key={announcement.identifier}
+                    variant="outlined"
+                    sx={{ p: 2, borderRadius: 2, borderColor: 'divider' }}
+                  >
+                    <Stack
+                      direction={{ xs: 'column', sm: 'row' }}
+                      spacing={1}
+                      justifyContent="space-between"
+                    >
+                      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                        {announcement.title}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {announcement.publisherName}
+                      </Typography>
+                    </Stack>
+                    <Typography variant="caption" color="text.secondary">
+                      Submitted {new Date(announcement.createdAt).toLocaleString()}
+                    </Typography>
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{
+                        mt: 1,
+                        display: '-webkit-box',
+                        WebkitLineClamp: 3,
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {announcement.excerpt}
+                    </Typography>
+                    <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap' }}>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        onClick={() => handleApproveAnnouncementPending(announcement)}
+                        disabled={approvingAnnouncementId === announcement.identifier}
+                      >
+                        Approve
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        component="a"
+                        href={`qortal://DOCUMENT/${announcement.publisherName}/${announcement.identifier}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        View
+                      </Button>
+                    </Stack>
+                  </Paper>
+                ))}
+              </Stack>
+            )}
+          </Paper>
+
+          <ManagementManifestEditor disabled={!canAccess} />
 
           <Paper variant="outlined" sx={{ p: 3, borderRadius: 3, mt: 3 }}>
             <Stack

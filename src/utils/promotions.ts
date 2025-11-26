@@ -190,6 +190,19 @@ function toApprovalIdentifier(identifier: string) {
   return `${qaPaidPromoPrefix}${identifier.replace(qaPromoRequestPrefix, '')}`;
 }
 
+export async function fetchPendingPromotionRequests(limit = 120): Promise<PromotionRequest[]> {
+  const [requests, approvals] = await Promise.all([
+    fetchPromotionRequests(limit),
+    fetchPromotionApprovals(limit),
+  ]);
+  const approvedKeys = new Set(
+    approvals
+      .map((appr) => appr.requestIdentifier || appr.id)
+      .filter((id): id is string => Boolean(id))
+  );
+  return requests.filter((req) => !approvedKeys.has(req.identifier));
+}
+
 export async function setPromotionActive(
   request: PromotionRequest,
   isActive: boolean,
