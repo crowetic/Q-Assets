@@ -279,6 +279,12 @@ export function ManagementManifestEditor({ disabled, onChange }: Props) {
           <Typography variant="body2" color="text.secondary">
             Configure which Qortal groups hold admin/editor roles for core features.
           </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            Roles map Qortal groups to permission strings; scopes describe where those permissions
+            apply. Fees control what users pay for specific actions. Discount tiers set Q-Asset
+            holding thresholds for fee reductions. Publishing writes the manifest to QDN so the app
+            enforces the new rules.
+          </Typography>
         </Box>
         <Stack direction="row" spacing={1} alignItems="center">
           {error && (
@@ -318,6 +324,28 @@ export function ManagementManifestEditor({ disabled, onChange }: Props) {
             )}
           </Stack>
 
+          <Box sx={{ mt: 2, maxWidth: 300 }}>
+            <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+              Content expiry (days)
+            </Typography>
+            <TextField
+              fullWidth
+              type="number"
+              size="small"
+              inputProps={{ min: 0 }}
+              value={manifest.defaultNewsPromoExpiryDays ?? ''}
+              onChange={(e) =>
+                updateManifest((prev) => ({
+                  ...prev,
+                  updatedAt: Date.now(),
+                  defaultNewsPromoExpiryDays: Number(e.target.value) || 0,
+                }))
+              }
+              helperText="Announcements and asset news older than this move to Archived. Use 0 to keep everything active."
+              disabled={disabled}
+            />
+          </Box>
+
           <Box sx={{ mt: 3 }}>
             <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
               <Typography variant="subtitle1">Roles</Typography>
@@ -334,6 +362,10 @@ export function ManagementManifestEditor({ disabled, onChange }: Props) {
                 {manifest.roles.map((role, idx) => (
                   <Grid key={role.id} size={{ xs: 12, md: 6 }}>
                     <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                        Set which group (and membership level) controls these permissions. Avoid
+                        changing Role ID unless you are migrating to a new identifier.
+                      </Typography>
                       <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
                         <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                           {role.label}
@@ -425,6 +457,10 @@ export function ManagementManifestEditor({ disabled, onChange }: Props) {
                 {manifest.scopes.map((scope, idx) => (
                   <Grid key={`${scope.type}-${scope.identifier}-${idx}`} size={{ xs: 12, md: 6 }}>
                     <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                        Scopes describe where permissions are required (e.g., notifications:global).
+                        Do not remove requiredPermissions unless the feature no longer needs them.
+                      </Typography>
                       <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
                         <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                           {scope.type}:{scope.identifier}
@@ -480,6 +516,10 @@ export function ManagementManifestEditor({ disabled, onChange }: Props) {
                 const fee = manifest.fees?.[key] || { baseAmount: 0, currencies: ['QORT'] };
                 return (
                   <Paper key={key} variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                      Base amount is charged per action. Allowed currencies restrict what users can
+                      pay with. 1:1 treats Q-Asset equal to QORT for this fee.
+                    </Typography>
                     <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
                       {label}
                     </Typography>
@@ -545,6 +585,10 @@ export function ManagementManifestEditor({ disabled, onChange }: Props) {
                     variant="outlined"
                     sx={{ p: 2 }}
                   >
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                      Discounts apply when holdings meet the min (and optional max) for this asset.
+                      Leave max empty to cover all balances above min.
+                    </Typography>
                     <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
                       <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                         Tier {idx + 1}

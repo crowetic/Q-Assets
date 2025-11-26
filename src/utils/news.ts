@@ -5,7 +5,7 @@ import { fetchPromotionApprovals } from './promotions';
 import { searchSimpleByIdentifierPrefix } from './searchSimple';
 import { stripHtml, extractTitleFromHtml, isManagementAdminPublisher } from './newsHelpers';
 import { loadAnnouncementApprovalDoc } from './announcementApprovals';
-import { publisherHasPermission } from './managementManifest';
+import { getNewsPromoExpiryDays, publisherHasPermission } from './managementManifest';
 import { base64ToObject, base64ToUtf8 } from './data';
 
 async function canPublishAnnouncement(publisher: string): Promise<boolean> {
@@ -39,7 +39,16 @@ const decodeAnnouncementResource = async (data64?: string | null) => {
   }
 };
 
-export async function fetchAnnouncements(limit = 5): Promise<NewsSummary[]> {
+type FetchNewsOptions = { includeExpired?: boolean };
+
+export async function fetchAnnouncements(
+  limit = 5,
+  options?: FetchNewsOptions
+): Promise<NewsSummary[]> {
+  const includeExpired = options?.includeExpired ?? false;
+  const expiryDays = await getNewsPromoExpiryDays();
+  const expiryCutoff =
+    typeof expiryDays === 'number' && expiryDays > 0 ? Date.now() - expiryDays * 86_400_000 : null;
   const approvalDoc = await loadAnnouncementApprovalDoc();
   const approvedEntries = approvalDoc.items || [];
   const items: NewsSummary[] = [];
@@ -48,7 +57,12 @@ export async function fetchAnnouncements(limit = 5): Promise<NewsSummary[]> {
   const keyFor = (publisher: string, identifier: string) =>
     `${(publisher || '').toLowerCase()}::${identifier}`;
 
-  const pushAnnouncement = async (publisher: string, identifier: string, service?: Service) => {
+  const pushAnnouncement = async (
+    publisher: string,
+    identifier: string,
+    service: Service | undefined,
+    createdHint?: number
+  ) => {
     try {
       const res = await qortalRequest({
         action: 'FETCH_QDN_RESOURCE',
@@ -64,12 +78,17 @@ export async function fetchAnnouncements(limit = 5): Promise<NewsSummary[]> {
       const text = stripHtml(html);
       const excerpt = text.slice(0, 220) + (text.length > 220 ? '…' : '');
 
+      const created = payload.createdAt || createdHint || Date.now();
+      const isExpired = expiryCutoff != null && created < expiryCutoff;
+      if (!includeExpired && isExpired) return false;
+
       items.push({
         type: 'announcement',
         identifier,
         title,
         excerpt,
-        created: payload.createdAt || Date.now(),
+        created,
+        isExpired,
         fullHtml: html,
         publisherName: publisher,
         service,
@@ -88,12 +107,15 @@ export async function fetchAnnouncements(limit = 5): Promise<NewsSummary[]> {
     for (const entry of ordered) {
       const dedupeKey = keyFor(entry.publisher, entry.identifier);
       if (seen.has(dedupeKey)) continue;
-      const added = await pushAnnouncement(entry.publisher, entry.identifier, entry.service);
+      const createdHint = entry.approvedAt || entry.createdAt || Date.now();
+      const added = await pushAnnouncement(
+        entry.publisher,
+        entry.identifier,
+        entry.service,
+        createdHint
+      );
       if (added) {
         seen.add(dedupeKey);
-        // Prefer approval timestamps when available
-        items[items.length - 1].created =
-          items[items.length - 1].created || entry.approvedAt || entry.createdAt || Date.now();
       }
       if (items.length >= limit) break;
     }
@@ -115,7 +137,7 @@ export async function fetchAnnouncements(limit = 5): Promise<NewsSummary[]> {
       const allowed = await canPublishAnnouncement(hit.name);
       if (!allowed) continue;
       const finalService = (hit.service as Service) || ('DOCUMENT' as Service);
-      const added = await pushAnnouncement(hit.name, hit.identifier, finalService);
+      const added = await pushAnnouncement(hit.name, hit.identifier, finalService, hit.created);
       if (added) {
         seen.add(dedupeKey);
       }
@@ -126,13 +148,24 @@ export async function fetchAnnouncements(limit = 5): Promise<NewsSummary[]> {
   return items.sort((a, b) => b.created - a.created).slice(0, limit);
 }
 
-export async function fetchLatestAssetNews(limit = 10): Promise<NewsSummary[]> {
+export async function fetchLatestAssetNews(
+  limit = 10,
+  options?: FetchNewsOptions
+): Promise<NewsSummary[]> {
+  const includeExpired = options?.includeExpired ?? false;
+  const expiryDays = await getNewsPromoExpiryDays();
+  const expiryCutoff =
+    typeof expiryDays === 'number' && expiryDays > 0 ? Date.now() - expiryDays * 86_400_000 : null;
   const hits = await searchSimpleByIdentifierPrefix('DOCUMENT', assetNewsGlobalPrefix);
   if (!hits.length) return [];
 
   const items: NewsSummary[] = [];
+  const seen = new Set<string>();
 
   for (const hit of hits) {
+    const dedupeKey = `${hit.name}::${hit.identifier}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
     const finalService = hit.service ? (hit.service as Service) : ('DOCUMENT' as Service);
     try {
       const res = await qortalRequest({
@@ -143,7 +176,8 @@ export async function fetchLatestAssetNews(limit = 10): Promise<NewsSummary[]> {
         encoding: 'base64',
       });
 
-      const html = atob(res.data64 ?? res);
+      const newsObject = await base64ToObject(res.data64 ?? res);
+      const html = newsObject.fullHtml;
       const text = stripHtml(html);
       const excerpt = text.slice(0, 220) + (text.length > 220 ? '…' : '');
 
@@ -156,17 +190,26 @@ export async function fetchLatestAssetNews(limit = 10): Promise<NewsSummary[]> {
 
       const assetName = assetId != null ? `Asset #${assetId}` : undefined;
 
-      const title = extractTitleFromHtml(
+      const title = newsObject.title;
+
+      const titleExtracted = extractTitleFromHtml(
         html,
         assetId != null ? `News for ${assetName}` : 'Asset news'
       );
 
+      const finalTitle = typeof title == 'string' ? title : titleExtracted;
+
+      const created = hit.created || Date.now();
+      const isExpired = expiryCutoff != null && created < expiryCutoff;
+      if (!includeExpired && isExpired) continue;
+
       items.push({
         type: 'assetNews',
         identifier: hit.identifier,
-        title,
+        title: finalTitle,
         excerpt,
-        created: hit.created || Date.now(),
+        created,
+        isExpired,
         assetId,
         assetName,
         fullHtml: html,

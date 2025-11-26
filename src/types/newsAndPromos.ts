@@ -8,6 +8,7 @@ export interface NewsSummary {
   title: string;
   excerpt: string;
   created: number;
+  isExpired?: boolean;
   assetId?: number;
   assetName?: string;
   promotionEndsAt?: number;

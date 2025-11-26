@@ -31,6 +31,7 @@ export interface ManagementManifest {
   scopes: ManifestScope[];
   fees?: Record<string, FeeEntry>;
   discounts?: DiscountTier[];
+  defaultNewsPromoExpiryDays?: number;
   metadata?: Record<string, any>;
 }
 
@@ -50,6 +51,7 @@ export interface DiscountTier {
 }
 
 const CURRENT_VERSION = 1;
+const DEFAULT_NEWS_PROMO_EXPIRY_DAYS = 30;
 
 const defaultManifest = (): ManagementManifest => ({
   version: CURRENT_VERSION,
@@ -62,6 +64,7 @@ const defaultManifest = (): ManagementManifest => ({
     'qdeck.upvote': { baseAmount: 1, currencies: ['QASSET', 'QORT'], allow1to1: true },
     'qdeck.bounty': { baseAmount: 5, currencies: ['QASSET', 'QORT'], allow1to1: true },
   },
+  defaultNewsPromoExpiryDays: DEFAULT_NEWS_PROMO_EXPIRY_DAYS,
   discounts: [
     { assetId: 6, min: 0, max: 500, percent: 5 },
     { assetId: 6, min: 501, max: 1000, percent: 8 },
@@ -125,6 +128,10 @@ const coerceManifest = (input: any): ManagementManifest => {
     version: Number(input.version) || CURRENT_VERSION,
     updatedAt: Number(input.updatedAt) || Date.now(),
     metadata: input.metadata || {},
+  defaultNewsPromoExpiryDays:
+      typeof input.defaultNewsPromoExpiryDays === 'number' && input.defaultNewsPromoExpiryDays >= 0
+        ? input.defaultNewsPromoExpiryDays
+        : DEFAULT_NEWS_PROMO_EXPIRY_DAYS,
     roles: Array.isArray(input.roles)
       ? (input.roles
           .map((role: any): ManifestRole | null => {
@@ -245,6 +252,14 @@ async function getCachedManifest(): Promise<ManagementManifest> {
   const manifest = await loadManagementManifest();
   _manifestCache = { manifest, at: now };
   return manifest;
+}
+
+export async function getNewsPromoExpiryDays(): Promise<number> {
+  const manifest = await getCachedManifest();
+  if (typeof manifest.defaultNewsPromoExpiryDays === 'number') {
+    return manifest.defaultNewsPromoExpiryDays;
+  }
+  return DEFAULT_NEWS_PROMO_EXPIRY_DAYS;
 }
 
 export async function derivePermissionsForGroups(groups: GroupSummary[]): Promise<PermissionId[]> {

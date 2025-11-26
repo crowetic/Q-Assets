@@ -18,6 +18,7 @@ export const applyPrivateMagicIfNeeded = (base64: string, service?: string) => {
 };
 
 export const stripPrivateMagicIfNeeded = (base64: string, _service?: string) => {
+  console.log('removing private magic', base64, 'from service (if passed)', _service);
   return stripPrivateMagic(base64);
 };
 
@@ -28,7 +29,7 @@ type GroupDecryptAttempt = {
 
 const buildGroupDecryptAttempts = (
   groups: GroupSummary[],
-  priority?: { groupId?: number | null; adminBias?: boolean | null },
+  priority?: { groupId?: number | null; adminBias?: boolean | null }
 ): GroupDecryptAttempt[] => {
   const attempts: GroupDecryptAttempt[] = [];
   const seen = new Set<string>();
@@ -56,7 +57,7 @@ const buildGroupDecryptAttempts = (
 
 const tryGroupDecryptSequence = async (
   payload: string,
-  attempts: GroupDecryptAttempt[],
+  attempts: GroupDecryptAttempt[]
 ): Promise<string | null> => {
   for (const attempt of attempts) {
     try {
@@ -111,7 +112,7 @@ export async function fetchPrivateBase64(resource: QdnResource): Promise<string>
 async function decryptPrivateBase64(
   resource: QdnResource,
   encryptedWithMagic: string,
-  groups: GroupSummary[],
+  groups: GroupSummary[]
 ): Promise<string> {
   const meta = (resource.metadata || {}) as any;
   const encryptedMeta = meta.encrypted;
@@ -173,7 +174,7 @@ async function decryptPrivateBase64(
 
 const tryDecryptLegacyBase64 = async (
   base64: string,
-  groups: GroupSummary[],
+  groups: GroupSummary[]
 ): Promise<string | null> => {
   const payload = hasPrivateMagicPrefix(base64) ? stripPrivateMagic(base64) : base64;
   try {
@@ -196,8 +197,8 @@ export const useResolveResourceBase64 = (groups: GroupSummary[]) =>
       onStep?: (
         step: 'fetch' | 'decrypt',
         status: 'pending' | 'active' | 'success' | 'error',
-        message?: string,
-      ) => void,
+        message?: string
+      ) => void
     ): Promise<string> => {
       let base64: string | null = null;
       try {
@@ -231,5 +232,5 @@ export const useResolveResourceBase64 = (groups: GroupSummary[]) =>
       if (!base64) throw new Error('Unable to load resource data.');
       return base64;
     },
-    [groups],
+    [groups]
   );
