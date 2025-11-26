@@ -128,7 +128,7 @@ const coerceManifest = (input: any): ManagementManifest => {
     version: Number(input.version) || CURRENT_VERSION,
     updatedAt: Number(input.updatedAt) || Date.now(),
     metadata: input.metadata || {},
-  defaultNewsPromoExpiryDays:
+    defaultNewsPromoExpiryDays:
       typeof input.defaultNewsPromoExpiryDays === 'number' && input.defaultNewsPromoExpiryDays >= 0
         ? input.defaultNewsPromoExpiryDays
         : DEFAULT_NEWS_PROMO_EXPIRY_DAYS,

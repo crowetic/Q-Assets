@@ -46,9 +46,9 @@ export async function fetchAnnouncements(
   options?: FetchNewsOptions
 ): Promise<NewsSummary[]> {
   const includeExpired = options?.includeExpired ?? false;
-  const expiryDays = await getNewsPromoExpiryDays();
+  const expiryDays = Number(await getNewsPromoExpiryDays());
   const expiryCutoff =
-    typeof expiryDays === 'number' && expiryDays > 0 ? Date.now() - expiryDays * 86_400_000 : null;
+    Number.isFinite(expiryDays) && expiryDays > 0 ? Date.now() - expiryDays * 86_400_000 : null;
   const approvalDoc = await loadAnnouncementApprovalDoc();
   const approvedEntries = approvalDoc.items || [];
   const items: NewsSummary[] = [];
@@ -88,7 +88,7 @@ export async function fetchAnnouncements(
         title,
         excerpt,
         created,
-        isExpired,
+        isExpired: Boolean(isExpired),
         fullHtml: html,
         publisherName: publisher,
         service,
@@ -153,9 +153,9 @@ export async function fetchLatestAssetNews(
   options?: FetchNewsOptions
 ): Promise<NewsSummary[]> {
   const includeExpired = options?.includeExpired ?? false;
-  const expiryDays = await getNewsPromoExpiryDays();
+  const expiryDays = Number(await getNewsPromoExpiryDays());
   const expiryCutoff =
-    typeof expiryDays === 'number' && expiryDays > 0 ? Date.now() - expiryDays * 86_400_000 : null;
+    Number.isFinite(expiryDays) && expiryDays > 0 ? Date.now() - expiryDays * 86_400_000 : null;
   const hits = await searchSimpleByIdentifierPrefix('DOCUMENT', assetNewsGlobalPrefix);
   if (!hits.length) return [];
 
@@ -199,7 +199,7 @@ export async function fetchLatestAssetNews(
 
       const finalTitle = typeof title == 'string' ? title : titleExtracted;
 
-      const created = hit.created || Date.now();
+      const created = hit.created || hit.updated || Date.now();
       const isExpired = expiryCutoff != null && created < expiryCutoff;
       if (!includeExpired && isExpired) continue;
 
@@ -209,7 +209,7 @@ export async function fetchLatestAssetNews(
         title: finalTitle,
         excerpt,
         created,
-        isExpired,
+        isExpired: Boolean(isExpired),
         assetId,
         assetName,
         fullHtml: html,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Box, Card, CardContent, Typography, Divider, Skeleton, Chip, Button } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import { useNavigate } from 'react-router-dom';
@@ -188,6 +188,8 @@ export default function QAssetsNewsSection() {
   const [announcements, setAnnouncements] = useState<NewsSummary[] | null>(null);
   const [assetNews, setAssetNews] = useState<NewsSummary[] | null>(null);
   const [promotions, setPromotions] = useState<NewsSummary[] | null>(null);
+  const refreshInFlight = useRef(false);
+  const isMounted = useRef(true);
   const [showArchivedAnnouncements, setShowArchivedAnnouncements] = useState(false);
   const [showArchivedNews, setShowArchivedNews] = useState(false);
   const [showMoreAnnouncements, setShowMoreAnnouncements] = useState(false);
@@ -201,33 +203,53 @@ export default function QAssetsNewsSection() {
 
   const theme = useTheme();
 
-  // Initial load of lists
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [a, n, p] = await Promise.all([
-          fetchAnnouncements(50, { includeExpired: true }),
-          fetchLatestAssetNews(50, { includeExpired: true }),
-          fetchActivePromotions(),
-        ]);
-        if (cancelled) return;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
+  const refreshNews = useCallback(async (includeExpired?: boolean) => {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    try {
+      const [a, n, p] = await Promise.all([
+        fetchAnnouncements(50, { includeExpired: includeExpired ?? false }),
+        fetchLatestAssetNews(50, { includeExpired: includeExpired ?? false }),
+        fetchActivePromotions(),
+      ]);
+      if (isMounted.current) {
         setAnnouncements(a);
         setAssetNews(n);
         setPromotions(p);
-      } catch (e) {
-        console.error('Failed to load Q-Assets news', e);
-        if (!cancelled) {
-          setAnnouncements([]);
-          setAssetNews([]);
-          setPromotions([]);
-        }
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    } catch (e) {
+      console.error('Failed to load Q-Assets news', e);
+      if (isMounted.current) {
+        setAnnouncements([]);
+        setAssetNews([]);
+        setPromotions([]);
+      }
+    } finally {
+      refreshInFlight.current = false;
+    }
   }, []);
+
+  const includeExpired = showArchivedAnnouncements || showArchivedNews;
+
+  // Initial load + periodic refresh
+  useEffect(() => {
+    let alive = true;
+    refreshNews(includeExpired);
+    const interval = setInterval(() => {
+      if (!alive) return;
+      refreshNews(includeExpired);
+    }, 60_000);
+    return () => {
+      alive = false;
+      clearInterval(interval);
+    };
+  }, [refreshNews, includeExpired]);
 
   const loadingLists = announcements === null || assetNews === null || promotions === null;
 
@@ -250,10 +272,9 @@ export default function QAssetsNewsSection() {
   const newsActive = assetNewsList.filter((item) => !item.isExpired);
   const newsArchived = assetNewsList.filter((item) => item.isExpired);
 
-  const visibleAnnouncements = (showArchivedAnnouncements ? announcementArchived : announcementActive).slice(
-    0,
-    showMoreAnnouncements ? Number.MAX_SAFE_INTEGER : maxPerList
-  );
+  const visibleAnnouncements = (
+    showArchivedAnnouncements ? announcementArchived : announcementActive
+  ).slice(0, showMoreAnnouncements ? Number.MAX_SAFE_INTEGER : maxPerList);
   const visibleNews = (showArchivedNews ? newsArchived : newsActive).slice(
     0,
     showMoreNews ? Number.MAX_SAFE_INTEGER : maxPerList
@@ -406,6 +427,36 @@ export default function QAssetsNewsSection() {
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2, textAlign: 'center' }}>
         Announcements from Q-Assets, latest news from all issuers, and paid promotional content.
       </Typography>
+      <Box
+        sx={{
+          display: 'flex',
+          gap: 1,
+          flexWrap: 'wrap',
+          justifyContent: 'center',
+          mb: 1,
+        }}
+      >
+        <Button
+          size="small"
+          onClick={() => {
+            setShowArchivedAnnouncements((v) => !v);
+            setShowMoreAnnouncements(false);
+          }}
+          variant={showArchivedAnnouncements ? 'contained' : 'outlined'}
+        >
+          {showArchivedAnnouncements ? 'Show active announcements' : 'Show archived announcements'}
+        </Button>
+        <Button
+          size="small"
+          onClick={() => {
+            setShowArchivedNews((v) => !v);
+            setShowMoreNews(false);
+          }}
+          variant={showArchivedNews ? 'contained' : 'outlined'}
+        >
+          {showArchivedNews ? 'Show active asset news' : 'Show archived asset news'}
+        </Button>
+      </Box>
 
       {loadingLists ? (
         <Grid container spacing={2}>
@@ -428,7 +479,9 @@ export default function QAssetsNewsSection() {
               title="Q-Assets Announcements"
               items={visibleAnnouncements}
               emptyText={
-                showArchivedAnnouncements ? 'No archived announcements.' : 'No Q-Assets announcements yet.'
+                showArchivedAnnouncements
+                  ? 'No archived announcements.'
+                  : 'No Q-Assets announcements yet.'
               }
               onClickItem={handleClickItem}
               variant="announcement"
@@ -462,7 +515,9 @@ export default function QAssetsNewsSection() {
               title="Asset News Publications"
               items={visibleNews}
               emptyText={
-                showArchivedNews ? 'No archived asset news.' : 'No Assets have not published news yet.'
+                showArchivedNews
+                  ? 'No archived asset news.'
+                  : 'No Assets have not published news yet.'
               }
               onClickItem={handleClickItem}
               variant="news"
