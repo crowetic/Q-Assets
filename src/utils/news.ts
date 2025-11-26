@@ -43,69 +43,22 @@ export async function fetchAnnouncements(limit = 5): Promise<NewsSummary[]> {
   const approvalDoc = await loadAnnouncementApprovalDoc();
   const approvedEntries = approvalDoc.items || [];
   const items: NewsSummary[] = [];
+  const seen = new Set<string>();
 
-  if (approvedEntries.length) {
-    const ordered = approvedEntries
-      .slice()
-      .sort((a, b) => (b.approvedAt || b.createdAt || 0) - (a.approvedAt || a.createdAt || 0));
+  const keyFor = (publisher: string, identifier: string) =>
+    `${(publisher || '').toLowerCase()}::${identifier}`;
 
-    for (const entry of ordered) {
-      try {
-        const res = await qortalRequest({
-          action: 'FETCH_QDN_RESOURCE',
-          name: entry.publisher,
-          service: entry.service || ('DOCUMENT' as Service),
-          identifier: entry.identifier,
-          encoding: 'base64',
-        });
-        const payload = await decodeAnnouncementResource(res?.data64 ?? res);
-        if (!payload) continue;
-        const html = payload.html;
-        const title = payload.title || extractTitleFromHtml(html, 'Q-Assets Announcement');
-        const text = stripHtml(html);
-        const excerpt = text.slice(0, 220) + (text.length > 220 ? '…' : '');
-
-        items.push({
-          type: 'announcement',
-          identifier: entry.identifier,
-          title,
-          excerpt,
-          created: payload.createdAt || entry.approvedAt || entry.createdAt || Date.now(),
-          fullHtml: html,
-          publisherName: entry.publisher,
-          service: entry.service,
-        });
-      } catch {
-        // ignore corrupted entry
-      }
-      if (items.length >= limit) break;
-    }
-  }
-
-  if (items.length) {
-    return items.sort((a, b) => b.created - a.created).slice(0, limit);
-  }
-
-  // Fallback for legacy announcements (admin publishers only)
-  const hits = await searchSimpleByIdentifierPrefix('DOCUMENT', qaAnnouncementPrefix);
-  if (!hits.length) return [];
-  const orderedHits = hits.sort((a, b) => (b.created || 0) - (a.created || 0));
-
-  for (const hit of orderedHits) {
-    const allowed = await canPublishAnnouncement(hit.name);
-    if (!allowed) continue;
-    const finalService = hit.service ? (hit.service as Service) : ('DOCUMENT' as Service);
+  const pushAnnouncement = async (publisher: string, identifier: string, service?: Service) => {
     try {
       const res = await qortalRequest({
         action: 'FETCH_QDN_RESOURCE',
-        name: hit.name,
-        service: hit.service as Service,
-        identifier: hit.identifier,
+        name: publisher,
+        service: service || ('DOCUMENT' as Service),
+        identifier,
         encoding: 'base64',
       });
-
       const payload = await decodeAnnouncementResource(res?.data64 ?? res);
-      if (!payload) continue;
+      if (!payload) return false;
       const html = payload.html;
       const title = payload.title || extractTitleFromHtml(html, 'Q-Assets Announcement');
       const text = stripHtml(html);
@@ -113,18 +66,61 @@ export async function fetchAnnouncements(limit = 5): Promise<NewsSummary[]> {
 
       items.push({
         type: 'announcement',
-        identifier: hit.identifier,
+        identifier,
         title,
         excerpt,
-        created: payload.createdAt || hit.created || Date.now(),
+        created: payload.createdAt || Date.now(),
         fullHtml: html,
-        publisherName: hit.name,
-        service: finalService,
+        publisherName: publisher,
+        service,
       });
+      return true;
     } catch {
-      // ignore broken resource
+      return false;
     }
-    if (items.length >= limit) break;
+  };
+
+  if (approvedEntries.length) {
+    const ordered = approvedEntries
+      .slice()
+      .sort((a, b) => (b.approvedAt || b.createdAt || 0) - (a.approvedAt || a.createdAt || 0));
+
+    for (const entry of ordered) {
+      const dedupeKey = keyFor(entry.publisher, entry.identifier);
+      if (seen.has(dedupeKey)) continue;
+      const added = await pushAnnouncement(entry.publisher, entry.identifier, entry.service);
+      if (added) {
+        seen.add(dedupeKey);
+        // Prefer approval timestamps when available
+        items[items.length - 1].created =
+          items[items.length - 1].created || entry.approvedAt || entry.createdAt || Date.now();
+      }
+      if (items.length >= limit) break;
+    }
+  }
+
+  // Also surface admin-published announcements even if not explicitly approved
+  if (items.length < limit) {
+    const [docHits, jsonHits] = await Promise.all([
+      searchSimpleByIdentifierPrefix('DOCUMENT', qaAnnouncementPrefix),
+      searchSimpleByIdentifierPrefix('JSON', qaAnnouncementPrefix).catch(() => []),
+    ]);
+    const allHits = [...docHits, ...jsonHits].sort(
+      (a, b) => (b.created || b.updated || 0) - (a.created || a.updated || 0)
+    );
+
+    for (const hit of allHits) {
+      const dedupeKey = keyFor(hit.name, hit.identifier);
+      if (seen.has(dedupeKey)) continue;
+      const allowed = await canPublishAnnouncement(hit.name);
+      if (!allowed) continue;
+      const finalService = (hit.service as Service) || ('DOCUMENT' as Service);
+      const added = await pushAnnouncement(hit.name, hit.identifier, finalService);
+      if (added) {
+        seen.add(dedupeKey);
+      }
+      if (items.length >= limit) break;
+    }
   }
 
   return items.sort((a, b) => b.created - a.created).slice(0, limit);

@@ -20,11 +20,13 @@ import { prepareHtmlForPublish } from '../../utils/publicationPublisher';
 import { objectToBase64 } from '../../utils/data';
 import { sendNotification } from '../../notifications/notificationService';
 import { NOTIF_GROUP_ID } from '../../notifications/notifyIndex';
+import { qaAnnouncementPrefix } from '../../constants/qdnConstants';
+import { uniqueId6 } from '../../utils/ids';
 
 type Props = {
   open: boolean;
   onClose: () => void;
-  publishIdentifierPrefix?: string; // e.g. "qassets_announce"
+  publishIdentifierPrefix?: string;
 };
 
 const APP_HOME_LINK = 'qortal://APP/Q-Assets';
@@ -32,7 +34,7 @@ const APP_HOME_LINK = 'qortal://APP/Q-Assets';
 export default function AnnouncementDialog({
   open,
   onClose,
-  publishIdentifierPrefix = 'qassets_announce',
+  publishIdentifierPrefix = qaAnnouncementPrefix,
 }: Props) {
   const [title, setTitle] = useState('');
   const [contentHtml, setContentHtml] = useState('');
@@ -60,20 +62,21 @@ export default function AnnouncementDialog({
     try {
       setBusy(true);
 
-      const blogPayload = {
+      const annPayload = {
         title,
         html: prepared,
         createdAt: Date.now(),
         kind: 'QASSETS_ANNOUNCEMENT',
       };
 
-      const identifier = `${publishIdentifierPrefix}_${Date.now()}`;
+      const prefix = publishIdentifierPrefix || qaAnnouncementPrefix;
+      const identifier = `${prefix}${uniqueId6()}`;
 
       await qortalRequest({
         action: 'PUBLISH_QDN_RESOURCE',
         service: 'DOCUMENT',
         identifier,
-        data64: await objectToBase64(blogPayload),
+        data64: await objectToBase64(annPayload),
       });
 
       if ((notifyMail || notifyChat) && address) {
