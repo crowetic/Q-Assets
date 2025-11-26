@@ -20,17 +20,21 @@ export async function searchSimpleByIdentifierPrefix(
     service
   )}&identifier=${encodeURIComponent(identifierPrefix)}&prefix=true&limit=0`;
 
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: { accept: 'application/json' },
-  });
-
-  if (!res.ok) {
-    throw new Error(`searchsimple failed: ${res.status} ${res.statusText}`);
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+    });
+    if (!res.ok) {
+      console.warn(`searchsimple failed: ${res.status} ${res.statusText}`);
+      return [];
+    }
+    const data = await res.json();
+    return Array.isArray(data) ? (data as SimpleHit[]) : [];
+  } catch (e) {
+    console.warn('searchSimpleByIdentifierPrefix error', e);
+    return [];
   }
-
-  const data = await res.json();
-  return Array.isArray(data) ? (data as SimpleHit[]) : [];
 }
 
 export async function searchSimpleByIdPrefixOnly(
@@ -43,17 +47,23 @@ export async function searchSimpleByIdPrefixOnly(
     service
   )}&identifier=${encodeURIComponent(identifierPrefix)}&prefix=true&limit=0`;
 
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: { accept: 'application/json' },
-  });
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+    });
 
-  if (!res.ok) {
-    throw new Error(`searchsimple failed: ${res.status} ${res.statusText}`);
+    if (!res.ok) {
+      console.warn(`searchsimple failed: ${res.status} ${res.statusText}`);
+      return [];
+    }
+
+    const data = await res.json();
+    return Array.isArray(data) ? (data as SimpleHit[]) : [];
+  } catch (e) {
+    console.warn('searchSimpleByIdPrefixOnly error', e);
+    return [];
   }
-
-  const data = await res.json();
-  return Array.isArray(data) ? (data as SimpleHit[]) : [];
 }
 
 export async function searchSimpleNameIdPrefix(
@@ -65,19 +75,27 @@ export async function searchSimpleNameIdPrefix(
 
   const url = `/arbitrary/resources/searchsimple?service=${encodeURIComponent(
     service
-  )}&identifier=${encodeURIComponent(identifierPrefix)}&name=${encodeURIComponent(name)}&caseInsensitive=true&prefix=true&limit=0`;
+  )}&identifier=${encodeURIComponent(
+    identifierPrefix
+  )}&name=${encodeURIComponent(name)}&caseInsensitive=true&prefix=true&limit=0`;
 
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: { accept: 'application/json' },
-  });
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+    });
 
-  if (!res.ok) {
-    throw new Error(`searchsimple failed: ${res.status} ${res.statusText}`);
+    if (!res.ok) {
+      console.warn(`searchsimple failed: ${res.status} ${res.statusText}`);
+      return [];
+    }
+
+    const data = await res.json();
+    return Array.isArray(data) ? (data as SimpleHit[]) : [];
+  } catch (e) {
+    console.warn('searchSimpleNameIdPrefix error', e);
+    return [];
   }
-
-  const data = await res.json();
-  return Array.isArray(data) ? (data as SimpleHit[]) : [];
 }
 
 export async function searchSimpleByFullId(
@@ -90,15 +108,21 @@ export async function searchSimpleByFullId(
     service
   )}&identifier=${encodeURIComponent(identifier)}&limit=0`;
 
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: { accept: 'application/json' },
-  });
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+    });
 
-  if (!res.ok) {
-    throw new Error(`searchsimple failed: ${res.status} ${res.statusText}`);
+    if (!res.ok) {
+      console.warn(`searchsimple failed: ${res.status} ${res.statusText}`);
+      return [];
+    }
+
+    const data = await res.json();
+    return Array.isArray(data) ? (data as SimpleHit[]) : [];
+  } catch (e) {
+    console.warn('searchSimpleByFullId error', e);
+    return [];
   }
-
-  const data = await res.json();
-  return Array.isArray(data) ? (data as SimpleHit[]) : [];
 }

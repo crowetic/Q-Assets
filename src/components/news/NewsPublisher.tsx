@@ -20,6 +20,7 @@ import { isNameAdminOfGroupId } from '../../utils/access';
 import { uniqueId6 } from '../../utils/ids';
 import { useAlert } from '../alerts';
 import { publishScopedNotification } from '../../utils/notificationPublisher';
+import { objectToBase64 } from '../../utils/data';
 
 export default function NewsPublisher({
   assetId,
@@ -112,7 +113,12 @@ export default function NewsPublisher({
               // Unique history item
               const id6 = uniqueId6();
               const newsItemId = assetNewsItemId(assetId, id6);
-              const b64 = btoa(payload);
+              const payloadObj = {
+                html: payload,
+                title: assetName ? `${assetName} news` : `Asset #${assetId} update`,
+                createdAt: Date.now(),
+              };
+              const b64 = await objectToBase64(payloadObj);
 
               await qortalRequest({
                 action: 'PUBLISH_QDN_RESOURCE',
@@ -125,8 +131,8 @@ export default function NewsPublisher({
               const assetLink = `qortal://APP/Q-Assets/assets/${assetId}`;
               const links = [
                 {
-                  label: 'View resource',
-                  href: `qortal://DOCUMENT/${userName}/${newsItemId}`,
+                  label: 'View News Publication on Q-Assets',
+                  href: `qortal://APP/Q-Assets`,
                 },
                 {
                   label: assetName ? `View ${assetName}` : `View Asset #${assetId}`,

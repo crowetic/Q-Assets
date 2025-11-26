@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { Box, Card, CardContent, Typography, Divider, Skeleton, Chip, Button } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import { useNavigate } from 'react-router-dom';
@@ -188,12 +188,6 @@ export default function QAssetsNewsSection() {
   const [announcements, setAnnouncements] = useState<NewsSummary[] | null>(null);
   const [assetNews, setAssetNews] = useState<NewsSummary[] | null>(null);
   const [promotions, setPromotions] = useState<NewsSummary[] | null>(null);
-  const refreshInFlight = useRef(false);
-  const isMounted = useRef(true);
-  const [showArchivedAnnouncements, setShowArchivedAnnouncements] = useState(false);
-  const [showArchivedNews, setShowArchivedNews] = useState(false);
-  const [showMoreAnnouncements, setShowMoreAnnouncements] = useState(false);
-  const [showMoreNews, setShowMoreNews] = useState(false);
 
   const [selected, setSelected] = useState<SelectedState | null>(null);
   // const [detailLoading, setDetailLoading] = useState(false);
@@ -203,53 +197,33 @@ export default function QAssetsNewsSection() {
 
   const theme = useTheme();
 
+  // Initial load of lists
   useEffect(() => {
-    return () => {
-      isMounted.current = false;
-    };
-  }, []);
-
-  const refreshNews = useCallback(async (includeExpired?: boolean) => {
-    if (refreshInFlight.current) return;
-    refreshInFlight.current = true;
-    try {
-      const [a, n, p] = await Promise.all([
-        fetchAnnouncements(50, { includeExpired: includeExpired ?? false }),
-        fetchLatestAssetNews(50, { includeExpired: includeExpired ?? false }),
-        fetchActivePromotions(),
-      ]);
-      if (isMounted.current) {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [a, n, p] = await Promise.all([
+          fetchAnnouncements(5),
+          fetchLatestAssetNews(8),
+          fetchActivePromotions(),
+        ]);
+        if (cancelled) return;
         setAnnouncements(a);
         setAssetNews(n);
         setPromotions(p);
+      } catch (e) {
+        console.error('Failed to load Q-Assets news', e);
+        if (!cancelled) {
+          setAnnouncements([]);
+          setAssetNews([]);
+          setPromotions([]);
+        }
       }
-    } catch (e) {
-      console.error('Failed to load Q-Assets news', e);
-      if (isMounted.current) {
-        setAnnouncements([]);
-        setAssetNews([]);
-        setPromotions([]);
-      }
-    } finally {
-      refreshInFlight.current = false;
-    }
-  }, []);
-
-  const includeExpired = showArchivedAnnouncements || showArchivedNews;
-
-  // Initial load + periodic refresh
-  useEffect(() => {
-    let alive = true;
-    refreshNews(includeExpired);
-    const interval = setInterval(() => {
-      if (!alive) return;
-      refreshNews(includeExpired);
-    }, 60_000);
+    })();
     return () => {
-      alive = false;
-      clearInterval(interval);
+      cancelled = true;
     };
-  }, [refreshNews, includeExpired]);
+  }, []);
 
   const loadingLists = announcements === null || assetNews === null || promotions === null;
 
@@ -262,23 +236,6 @@ export default function QAssetsNewsSection() {
     // setDetailError(null);
     // setDetailLoading(false);
   };
-
-  const maxPerList = 5;
-  const announcementList = announcements || [];
-  const assetNewsList = assetNews || [];
-
-  const announcementActive = announcementList.filter((item) => !item.isExpired);
-  const announcementArchived = announcementList.filter((item) => item.isExpired);
-  const newsActive = assetNewsList.filter((item) => !item.isExpired);
-  const newsArchived = assetNewsList.filter((item) => item.isExpired);
-
-  const visibleAnnouncements = (
-    showArchivedAnnouncements ? announcementArchived : announcementActive
-  ).slice(0, showMoreAnnouncements ? Number.MAX_SAFE_INTEGER : maxPerList);
-  const visibleNews = (showArchivedNews ? newsArchived : newsActive).slice(
-    0,
-    showMoreNews ? Number.MAX_SAFE_INTEGER : maxPerList
-  );
 
   // Helper for label
   const typeLabel = (type: NewsType | undefined) => {
@@ -427,36 +384,6 @@ export default function QAssetsNewsSection() {
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2, textAlign: 'center' }}>
         Announcements from Q-Assets, latest news from all issuers, and paid promotional content.
       </Typography>
-      <Box
-        sx={{
-          display: 'flex',
-          gap: 1,
-          flexWrap: 'wrap',
-          justifyContent: 'center',
-          mb: 1,
-        }}
-      >
-        <Button
-          size="small"
-          onClick={() => {
-            setShowArchivedAnnouncements((v) => !v);
-            setShowMoreAnnouncements(false);
-          }}
-          variant={showArchivedAnnouncements ? 'contained' : 'outlined'}
-        >
-          {showArchivedAnnouncements ? 'Show active announcements' : 'Show archived announcements'}
-        </Button>
-        <Button
-          size="small"
-          onClick={() => {
-            setShowArchivedNews((v) => !v);
-            setShowMoreNews(false);
-          }}
-          variant={showArchivedNews ? 'contained' : 'outlined'}
-        >
-          {showArchivedNews ? 'Show active asset news' : 'Show archived asset news'}
-        </Button>
-      </Box>
 
       {loadingLists ? (
         <Grid container spacing={2}>
@@ -477,69 +404,20 @@ export default function QAssetsNewsSection() {
           <Grid size={{ xs: 12, md: 4 }}>
             <NewsListColumn
               title="Q-Assets Announcements"
-              items={visibleAnnouncements}
-              emptyText={
-                showArchivedAnnouncements
-                  ? 'No archived announcements.'
-                  : 'No Q-Assets announcements yet.'
-              }
+              items={announcements ?? []}
+              emptyText="No Q-Assets announcements yet."
               onClickItem={handleClickItem}
               variant="announcement"
             />
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
-              {(showArchivedAnnouncements ? announcementArchived : announcementActive).length >
-                maxPerList && (
-                <Button
-                  size="small"
-                  onClick={() => setShowMoreAnnouncements((v) => !v)}
-                  variant="outlined"
-                >
-                  {showMoreAnnouncements ? 'Show less' : 'Show more'}
-                </Button>
-              )}
-              {announcementArchived.length > 0 && (
-                <Button
-                  size="small"
-                  onClick={() => {
-                    setShowArchivedAnnouncements((v) => !v);
-                    setShowMoreAnnouncements(false);
-                  }}
-                >
-                  {showArchivedAnnouncements ? 'Show active' : 'Show archived'}
-                </Button>
-              )}
-            </Box>
           </Grid>
           <Grid size={{ xs: 12, md: 4 }}>
             <NewsListColumn
               title="Asset News Publications"
-              items={visibleNews}
-              emptyText={
-                showArchivedNews
-                  ? 'No archived asset news.'
-                  : 'No Assets have not published news yet.'
-              }
+              items={assetNews ?? []}
+              emptyText="No Assets have not published news yet."
               onClickItem={handleClickItem}
               variant="news"
             />
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
-              {(showArchivedNews ? newsArchived : newsActive).length > maxPerList && (
-                <Button size="small" onClick={() => setShowMoreNews((v) => !v)} variant="outlined">
-                  {showMoreNews ? 'Show less' : 'Show more'}
-                </Button>
-              )}
-              {newsArchived.length > 0 && (
-                <Button
-                  size="small"
-                  onClick={() => {
-                    setShowArchivedNews((v) => !v);
-                    setShowMoreNews(false);
-                  }}
-                >
-                  {showArchivedNews ? 'Show active' : 'Show archived'}
-                </Button>
-              )}
-            </Box>
           </Grid>
           <Grid size={{ xs: 12, md: 4 }}>
             <NewsListColumn

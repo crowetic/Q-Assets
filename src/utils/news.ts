@@ -18,25 +18,39 @@ async function canPublishAnnouncement(publisher: string): Promise<boolean> {
 
 const decodeAnnouncementResource = async (data64?: string | null) => {
   if (!data64 || typeof data64 !== 'string') return null;
+
+  // Attempt JSON first
   try {
     const parsed = await base64ToObject(data64);
-    const decoded = base64ToUtf8(data64);
-    try {
-      // const parsed = JSON.parse(decoded);
-      if (parsed && typeof parsed.html === 'string') {
-        return {
-          html: parsed.html as string,
-          title: typeof parsed.title === 'string' ? parsed.title : undefined,
-          createdAt: typeof parsed.createdAt === 'number' ? parsed.createdAt : undefined,
-        };
-      }
-    } catch {
-      /* not JSON */
+    if (parsed && typeof parsed === 'object' && typeof (parsed as any).html === 'string') {
+      return {
+        html: (parsed as any).html as string,
+        title: typeof (parsed as any).title === 'string' ? (parsed as any).title : undefined,
+        createdAt:
+          typeof (parsed as any).createdAt === 'number' ? (parsed as any).createdAt : undefined,
+      };
     }
-    return { html: decoded };
   } catch {
-    return null;
+    /* fall back to utf8 decode */
   }
+
+  // Fallback: treat as plain HTML payload
+  try {
+    const decoded = base64ToUtf8(data64);
+    if (decoded) return { html: decoded };
+  } catch {
+    /* ignore */
+  }
+
+  // Last-resort: atob
+  try {
+    const decoded = atob(data64);
+    if (decoded) return { html: decoded };
+  } catch {
+    /* ignore */
+  }
+
+  return null;
 };
 
 type FetchNewsOptions = { includeExpired?: boolean };
@@ -45,184 +59,233 @@ export async function fetchAnnouncements(
   limit = 5,
   options?: FetchNewsOptions
 ): Promise<NewsSummary[]> {
-  const includeExpired = options?.includeExpired ?? false;
-  const expiryDays = Number(await getNewsPromoExpiryDays());
-  const expiryCutoff =
-    Number.isFinite(expiryDays) && expiryDays > 0 ? Date.now() - expiryDays * 86_400_000 : null;
-  const approvalDoc = await loadAnnouncementApprovalDoc();
-  const approvedEntries = approvalDoc.items || [];
-  const items: NewsSummary[] = [];
-  const seen = new Set<string>();
+  try {
+    const includeExpired = options?.includeExpired ?? false;
+    const expiryDays = Number(await getNewsPromoExpiryDays());
+    const expiryCutoff =
+      Number.isFinite(expiryDays) && expiryDays > 0 ? Date.now() - expiryDays * 86_400_000 : null;
+    const approvalDoc = await loadAnnouncementApprovalDoc();
+    const approvedEntries = approvalDoc.items || [];
+    const items: NewsSummary[] = [];
+    const seen = new Set<string>();
 
-  const keyFor = (publisher: string, identifier: string) =>
-    `${(publisher || '').toLowerCase()}::${identifier}`;
+    const keyFor = (publisher: string, identifier: string) =>
+      `${(publisher || '').toLowerCase()}::${identifier}`;
 
-  const pushAnnouncement = async (
-    publisher: string,
-    identifier: string,
-    service: Service | undefined,
-    createdHint?: number
-  ) => {
-    try {
-      const res = await qortalRequest({
-        action: 'FETCH_QDN_RESOURCE',
-        name: publisher,
-        service: service || ('DOCUMENT' as Service),
-        identifier,
-        encoding: 'base64',
-      });
-      const payload = await decodeAnnouncementResource(res?.data64 ?? res);
-      if (!payload) return false;
-      const html = payload.html;
-      const title = payload.title || extractTitleFromHtml(html, 'Q-Assets Announcement');
-      const text = stripHtml(html);
-      const excerpt = text.slice(0, 220) + (text.length > 220 ? '…' : '');
+    const pushAnnouncement = async (
+      publisher: string,
+      identifier: string,
+      service: Service | undefined,
+      createdHint?: number
+    ) => {
+      try {
+        const res = await qortalRequest({
+          action: 'FETCH_QDN_RESOURCE',
+          name: publisher,
+          service: service || ('DOCUMENT' as Service),
+          identifier,
+          encoding: 'base64',
+        });
+        const payload = await decodeAnnouncementResource(res?.data64 ?? res);
+        if (!payload) return false;
+        const html = payload.html;
+        const title = payload.title || extractTitleFromHtml(html, 'Q-Assets Announcement');
+        const text = stripHtml(html);
+        const excerpt = text.slice(0, 220) + (text.length > 220 ? '…' : '');
 
-      const created = payload.createdAt || createdHint || Date.now();
-      const isExpired = expiryCutoff != null && created < expiryCutoff;
-      if (!includeExpired && isExpired) return false;
+        const created = payload.createdAt || createdHint || Date.now();
+        const isExpired = expiryCutoff != null && created < expiryCutoff;
+        if (!includeExpired && isExpired) return false;
 
-      items.push({
-        type: 'announcement',
-        identifier,
-        title,
-        excerpt,
-        created,
-        isExpired: Boolean(isExpired),
-        fullHtml: html,
-        publisherName: publisher,
-        service,
-      });
-      return true;
-    } catch {
-      return false;
+        items.push({
+          type: 'announcement',
+          identifier,
+          title,
+          excerpt,
+          created,
+          isExpired: Boolean(isExpired),
+          fullHtml: html,
+          publisherName: publisher,
+          service,
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    if (approvedEntries.length) {
+      const ordered = approvedEntries
+        .slice()
+        .sort((a, b) => (b.approvedAt || b.createdAt || 0) - (a.approvedAt || a.createdAt || 0));
+
+      for (const entry of ordered) {
+        const dedupeKey = keyFor(entry.publisher, entry.identifier);
+        if (seen.has(dedupeKey)) continue;
+        const createdHint = entry.approvedAt || entry.createdAt || Date.now();
+        const added = await pushAnnouncement(
+          entry.publisher,
+          entry.identifier,
+          entry.service,
+          createdHint
+        );
+        if (added) {
+          seen.add(dedupeKey);
+        }
+        if (items.length >= limit) break;
+      }
     }
-  };
 
-  if (approvedEntries.length) {
-    const ordered = approvedEntries
-      .slice()
-      .sort((a, b) => (b.approvedAt || b.createdAt || 0) - (a.approvedAt || a.createdAt || 0));
-
-    for (const entry of ordered) {
-      const dedupeKey = keyFor(entry.publisher, entry.identifier);
-      if (seen.has(dedupeKey)) continue;
-      const createdHint = entry.approvedAt || entry.createdAt || Date.now();
-      const added = await pushAnnouncement(
-        entry.publisher,
-        entry.identifier,
-        entry.service,
-        createdHint
+    // Also surface admin-published announcements even if not explicitly approved
+    if (items.length < limit) {
+      let docHits: Awaited<ReturnType<typeof searchSimpleByIdentifierPrefix>> = [];
+      let jsonHits: Awaited<ReturnType<typeof searchSimpleByIdentifierPrefix>> = [];
+      try {
+        [docHits, jsonHits] = await Promise.all([
+          searchSimpleByIdentifierPrefix('DOCUMENT', qaAnnouncementPrefix),
+          searchSimpleByIdentifierPrefix('JSON', qaAnnouncementPrefix).catch(() => []),
+        ]);
+      } catch (e) {
+        console.warn('Failed to fetch announcement list', e);
+      }
+      const allHits = [...docHits, ...jsonHits].sort(
+        (a, b) => (b.created || b.updated || 0) - (a.created || a.updated || 0)
       );
-      if (added) {
-        seen.add(dedupeKey);
+
+      for (const hit of allHits) {
+        const dedupeKey = keyFor(hit.name, hit.identifier);
+        if (seen.has(dedupeKey)) continue;
+        const allowed = await canPublishAnnouncement(hit.name);
+        if (!allowed) continue;
+        const finalService = (hit.service as Service) || ('DOCUMENT' as Service);
+        const added = await pushAnnouncement(hit.name, hit.identifier, finalService, hit.created);
+        if (added) {
+          seen.add(dedupeKey);
+        }
+        if (items.length >= limit) break;
       }
-      if (items.length >= limit) break;
     }
+
+    return items.sort((a, b) => b.created - a.created).slice(0, limit);
+  } catch (e) {
+    console.warn('fetchAnnouncements failed', e);
+    return [];
   }
-
-  // Also surface admin-published announcements even if not explicitly approved
-  if (items.length < limit) {
-    const [docHits, jsonHits] = await Promise.all([
-      searchSimpleByIdentifierPrefix('DOCUMENT', qaAnnouncementPrefix),
-      searchSimpleByIdentifierPrefix('JSON', qaAnnouncementPrefix).catch(() => []),
-    ]);
-    const allHits = [...docHits, ...jsonHits].sort(
-      (a, b) => (b.created || b.updated || 0) - (a.created || a.updated || 0)
-    );
-
-    for (const hit of allHits) {
-      const dedupeKey = keyFor(hit.name, hit.identifier);
-      if (seen.has(dedupeKey)) continue;
-      const allowed = await canPublishAnnouncement(hit.name);
-      if (!allowed) continue;
-      const finalService = (hit.service as Service) || ('DOCUMENT' as Service);
-      const added = await pushAnnouncement(hit.name, hit.identifier, finalService, hit.created);
-      if (added) {
-        seen.add(dedupeKey);
-      }
-      if (items.length >= limit) break;
-    }
-  }
-
-  return items.sort((a, b) => b.created - a.created).slice(0, limit);
 }
 
 export async function fetchLatestAssetNews(
   limit = 10,
   options?: FetchNewsOptions
 ): Promise<NewsSummary[]> {
-  const includeExpired = options?.includeExpired ?? false;
-  const expiryDays = Number(await getNewsPromoExpiryDays());
-  const expiryCutoff =
-    Number.isFinite(expiryDays) && expiryDays > 0 ? Date.now() - expiryDays * 86_400_000 : null;
-  const hits = await searchSimpleByIdentifierPrefix('DOCUMENT', assetNewsGlobalPrefix);
-  if (!hits.length) return [];
-
-  const items: NewsSummary[] = [];
-  const seen = new Set<string>();
-
-  for (const hit of hits) {
-    const dedupeKey = `${hit.name}::${hit.identifier}`;
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
-    const finalService = hit.service ? (hit.service as Service) : ('DOCUMENT' as Service);
+  try {
+    const includeExpired = options?.includeExpired ?? false;
+    const expiryDays = await getNewsPromoExpiryDays();
+    const expiryCutoff =
+      typeof expiryDays === 'number' && expiryDays > 0
+        ? Date.now() - expiryDays * 86_400_000
+        : null;
+    let hits: Awaited<ReturnType<typeof searchSimpleByIdentifierPrefix>> = [];
     try {
-      const res = await qortalRequest({
-        action: 'FETCH_QDN_RESOURCE',
-        name: hit.name,
-        service: finalService,
-        identifier: hit.identifier,
-        encoding: 'base64',
-      });
-
-      const newsObject = await base64ToObject(res.data64 ?? res);
-      const html = newsObject.fullHtml;
-      const text = stripHtml(html);
-      const excerpt = text.slice(0, 220) + (text.length > 220 ? '…' : '');
-
-      // Try to derive assetId from identifier: asset_news_pub__<assetId>__<id6>
-      let assetId: number | undefined;
-      const m = hit.identifier.match(/^asset_news_pub__([0-9]+)__/);
-      if (m && m[1]) {
-        assetId = Number(m[1]);
-      }
-
-      const assetName = assetId != null ? `Asset #${assetId}` : undefined;
-
-      const title = newsObject.title;
-
-      const titleExtracted = extractTitleFromHtml(
-        html,
-        assetId != null ? `News for ${assetName}` : 'Asset news'
-      );
-
-      const finalTitle = typeof title == 'string' ? title : titleExtracted;
-
-      const created = hit.created || hit.updated || Date.now();
-      const isExpired = expiryCutoff != null && created < expiryCutoff;
-      if (!includeExpired && isExpired) continue;
-
-      items.push({
-        type: 'assetNews',
-        identifier: hit.identifier,
-        title: finalTitle,
-        excerpt,
-        created,
-        isExpired: Boolean(isExpired),
-        assetId,
-        assetName,
-        fullHtml: html,
-        publisherName: hit.name,
-        service: finalService,
-      });
-    } catch {
-      // ignore
+      hits = await searchSimpleByIdentifierPrefix('DOCUMENT', assetNewsGlobalPrefix);
+    } catch (e) {
+      console.warn('Failed to fetch asset news list', e);
+      return [];
     }
-  }
+    if (!hits.length) return [];
 
-  // Sort latest first and trim to limit
-  return items.sort((a, b) => b.created - a.created).slice(0, limit);
+    const items: NewsSummary[] = [];
+    const seen = new Set<string>();
+
+    for (const hit of hits) {
+      const dedupeKey = `${hit.name}::${hit.identifier}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      const finalService = hit.service ? (hit.service as Service) : ('DOCUMENT' as Service);
+      try {
+        const res = await qortalRequest({
+          action: 'FETCH_QDN_RESOURCE',
+          name: hit.name,
+          service: finalService,
+          identifier: hit.identifier,
+          encoding: 'base64',
+        });
+
+        const raw = res?.data64 ?? res;
+        let html = '';
+        let title: string | undefined;
+        let createdAt: number | undefined;
+
+        try {
+          const parsed = await base64ToObject(raw);
+          if (parsed && typeof parsed === 'object') {
+            html = parsed.html || parsed.fullHtml || '';
+            title = parsed.title;
+            createdAt = parsed.updatedAt || parsed.createdAt || hit.updated || hit.created;
+          }
+        } catch {
+          /* fallback below */
+        }
+
+        if (!html && typeof raw === 'string') {
+          try {
+            html = atob(raw);
+          } catch {
+            try {
+              html = base64ToUtf8(raw);
+            } catch {
+              html = String(raw);
+            }
+          }
+        }
+        if (!html) console.log('wtfnohtml', html);
+        if (!html) continue;
+
+        const text = stripHtml(html);
+        const excerpt = text.slice(0, 220) + (text.length > 220 ? '…' : '');
+
+        // Try to derive assetId from identifier: asset_news_pub__<assetId>__<id6>
+        let assetId: number | undefined;
+        const m = hit.identifier.match(/^asset_news_pub__([0-9]+)__/);
+        if (m && m[1]) {
+          assetId = Number(m[1]);
+        }
+
+        const assetName = assetId != null ? `Asset #${assetId}` : undefined;
+
+        title = extractTitleFromHtml(
+          html,
+          assetId != null ? `News for ${assetName}` : 'Asset news'
+        );
+        // const finalTitle = typeof title === 'string' && title.trim() ? title : titleExtracted;
+
+        const created = createdAt || hit.updated || hit.created || Date.now();
+        const isExpired = expiryCutoff != null && created < expiryCutoff;
+        if (!includeExpired && isExpired) continue;
+
+        items.push({
+          type: 'assetNews',
+          identifier: hit.identifier,
+          title,
+          excerpt,
+          created,
+          isExpired: Boolean(isExpired),
+          assetId,
+          assetName,
+          fullHtml: html,
+          publisherName: hit.name,
+          service: finalService,
+        });
+      } catch (err) {
+        console.warn('Failed to fetch asset news item', err);
+      }
+    }
+
+    // Sort latest first and trim to limit
+    return items.sort((a, b) => b.created - a.created).slice(0, limit);
+  } catch (e) {
+    console.warn('fetchLatestAssetNews failed', e);
+    return [];
+  }
 }
 
 export async function fetchActivePromotions(now = Date.now()): Promise<NewsSummary[]> {
