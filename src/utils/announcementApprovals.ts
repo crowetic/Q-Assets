@@ -179,6 +179,8 @@ export async function fetchPendingAnnouncementsDetailed(
     const key = approvalKey(hit.name, hit.identifier);
     if (approvedKeys.has(key)) continue;
     const allowed = await canPublisherSubmit(hit.name);
+    // Admins can publish directly; they should not appear in the pending queue.
+    if (await isManagementAdminPublisher(hit.name)) continue;
     if (!allowed) continue;
     const payload = await fetchAnnouncementPayload(hit);
     if (!payload) continue;

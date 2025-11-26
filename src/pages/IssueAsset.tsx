@@ -369,6 +369,8 @@ export default function IssueAsset() {
                 setGroupLink(joinLinkForId(match.groupId));
                 setGroupIsPrivate(!match.isOpen);
               } else {
+                setGroupName('');
+                setGroupLink('');
                 setGroupIsPrivate(false);
               }
             }}
@@ -380,9 +382,6 @@ export default function IssueAsset() {
               return `${match.groupName} (#${match.groupId}) — ${match.isOpen ? 'Public' : 'Private'}`;
             }}
           >
-            <MenuItem value="">
-              <em>Manual entry</em>
-            </MenuItem>
             {groupOptions.map((group) => (
               <MenuItem key={group.groupId} value={group.groupId}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -405,37 +404,6 @@ export default function IssueAsset() {
             </Box>
           )}
         </FormControl>
-        <TextField
-          fullWidth
-          label="Primary Group Name"
-          value={groupName}
-          onChange={(e) => setGroupName(e.target.value)}
-          sx={{ mb: 2 }}
-        />
-        <TextField
-          fullWidth
-          label="Primary Group ID"
-          value={groupId}
-          onChange={(e) => setGroupId(e.target.value)}
-          sx={{ mb: 2 }}
-        />
-        <TextField
-          fullWidth
-          label="Group Join Link"
-          value={groupLink}
-          onChange={(e) => setGroupLink(e.target.value)}
-          sx={{ mb: 2 }}
-          placeholder="qortal://use-group/action-join/groupid-123"
-        />
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={groupIsPrivate}
-              onChange={(e) => setGroupIsPrivate(e.target.checked)}
-            />
-          }
-          label="Mark group as private (restricts publication access)"
-        />
 
         <Divider sx={{ my: 3 }} />
 

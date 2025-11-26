@@ -43,14 +43,14 @@ export async function sendChatMessage(
   }
 
   if (hasGroup) {
-    return qortalRequest({
+    return await qortalRequest({
       action: 'SEND_CHAT_MESSAGE',
       groupId: req.groupId!,
       fullContent: req.fullContent,
       ...(req.chatReference ? { chatReference: req.chatReference } : {}),
     } as any);
   }
-  return qortalRequest({
+  return await qortalRequest({
     action: 'SEND_CHAT_MESSAGE',
     recipient: req.recipient!.trim(),
     fullContent: req.fullContent,
