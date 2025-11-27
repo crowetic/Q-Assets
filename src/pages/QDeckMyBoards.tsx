@@ -31,7 +31,7 @@ import {
   deleteBoardById,
   isGroupKeyMissing,
   qdeckFetch,
-  repairOwnerIndex,
+  // repairOwnerIndex, //todo readd this in the future after verifying.
 } from '../utils/qdeckApi';
 import { loadBoardsIndexMerged } from '../utils/qdeckIndexCache';
 import { searchSimpleByIdPrefixOnly } from '../utils/searchSimple';
@@ -112,22 +112,22 @@ export default function MyBoards() {
   }, [visibility, canUseGroupEncryption, selectedPrivateGroups, privateGroupId]);
 
   // debounced repair
-  const repairTimer = React.useRef<number | null>(null);
-  const runRepair = async () => {
-    if (repairTimer.current) window.clearTimeout(repairTimer.current);
-    repairTimer.current = window.setTimeout(async () => {
-      try {
-        await busyWhile(async () => {
-          await repairOwnerIndex(issuer);
-          await load();
-        }, 'blocking:qdeck:repair');
-        alert('Index repair finished.', 'success', { severity: 'success' });
-      } catch (e: any) {
-        alert(`Index repair failed: ${e?.message || e}`, 'error', { severity: 'error' });
-      }
-      repairTimer.current = null;
-    }, 600);
-  };
+  // const repairTimer = React.useRef<number | null>(null); //todo - re-add this feature in the future after verifying it.
+  // const runRepair = async () => {
+  //   if (repairTimer.current) window.clearTimeout(repairTimer.current);
+  //   repairTimer.current = window.setTimeout(async () => {
+  //     try {
+  //       await busyWhile(async () => {
+  //         await repairOwnerIndex(issuer);
+  //         await load();
+  //       }, 'blocking:qdeck:repair');
+  //       alert('Index repair finished.', 'success', { severity: 'success' });
+  //     } catch (e: any) {
+  //       alert(`Index repair failed: ${e?.message || e}`, 'error', { severity: 'error' });
+  //     }
+  //     repairTimer.current = null;
+  //   }, 600);
+  // };
 
   const load = React.useCallback(async () => {
     if (!issuer) return;

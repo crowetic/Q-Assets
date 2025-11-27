@@ -29,7 +29,7 @@ import {
 import { QDeckId } from '../../constants/qdeckIdentifiers';
 import { useFetchTracker } from '../../state/global/fetchTracker';
 import pLimit from 'p-limit';
-import QDeckPermissionsPanel from './QDeckPermissionsPanel';
+// import QDeckPermissionsPanel from './QDeckPermissionsPanel';
 
 // ---- Types ----
 type LoadOpts = {
