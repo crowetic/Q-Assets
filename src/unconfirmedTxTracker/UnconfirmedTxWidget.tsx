@@ -203,6 +203,7 @@ export const UnconfirmedTxWidget: React.FC = () => {
         width: size?.width ?? 320,
         zIndex: 1300,
         ...(position ? { left: position.x, top: position.y } : { right: '4%', bottom: '5%' }),
+        maxWidth: '96vw',
       };
 
   const toggleExpanded = (sig: string) =>
@@ -217,7 +218,12 @@ export const UnconfirmedTxWidget: React.FC = () => {
     if (isMobile) return;
     if (!containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
-    dragState.current = { startX: e.clientX, startY: e.clientY, origX: rect.left, origY: rect.top };
+    dragState.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: rect.left,
+      origY: rect.top,
+    };
     window.addEventListener('pointermove', onDrag);
     window.addEventListener('pointerup', endDrag);
   };
@@ -227,7 +233,11 @@ export const UnconfirmedTxWidget: React.FC = () => {
     if (!ds) return;
     const dx = e.clientX - ds.startX;
     const dy = e.clientY - ds.startY;
-    const next = { x: ds.origX + dx, y: ds.origY + dy };
+    const nextW = size?.width ?? 320;
+    const nextH = size?.height ?? 320;
+    const nextX = Math.min(Math.max(0, ds.origX + dx), window.innerWidth - Math.min(nextW, window.innerWidth));
+    const nextY = Math.min(Math.max(0, ds.origY + dy), window.innerHeight - Math.min(nextH, window.innerHeight));
+    const next = { x: nextX, y: nextY };
     setPosition(next);
   };
 
@@ -374,7 +384,7 @@ export const UnconfirmedTxWidget: React.FC = () => {
               display="flex"
               flexDirection="column"
               gap={1}
-              maxHeight={isMobile ? 240 : size?.height ?? 320}
+              maxHeight={isMobile ? 240 : (size?.height ?? 320)}
               sx={{ overflowY: 'auto' }}
             >
               {unconfirmed.map(({ tx }) => {
@@ -411,7 +421,11 @@ export const UnconfirmedTxWidget: React.FC = () => {
                         sx={{ pl: 0.5, borderLeft: `2px solid ${theme.palette.divider}` }}
                       >
                         {detailFieldsForTx(tx).map((row) => (
-                          <DetailRow key={`${tx.signature}:${row.label}`} label={row.label} value={row.value} />
+                          <DetailRow
+                            key={`${tx.signature}:${row.label}`}
+                            label={row.label}
+                            value={row.value}
+                          />
                         ))}
                       </Box>
                     )}
@@ -464,7 +478,11 @@ export const UnconfirmedTxWidget: React.FC = () => {
                         sx={{ pl: 0.5, borderLeft: `2px solid ${theme.palette.divider}` }}
                       >
                         {detailFieldsForTx(tx).map((row) => (
-                          <DetailRow key={`${tx.signature}:${row.label}`} label={row.label} value={row.value} />
+                          <DetailRow
+                            key={`${tx.signature}:${row.label}`}
+                            label={row.label}
+                            value={row.value}
+                          />
                         ))}
                       </Box>
                     )}

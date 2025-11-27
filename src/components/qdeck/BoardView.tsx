@@ -1,4 +1,15 @@
-import * as React from 'react';
+import {
+  useCallback,
+  useState,
+  useRef,
+  memo,
+  FC,
+  useEffect,
+  useMemo,
+  ReactNode,
+  CSSProperties,
+} from 'react';
+
 import { useQDeck } from './QDeckProvider';
 import {
   DndContext,
@@ -43,6 +54,8 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import PlaylistAddIcon from '@mui/icons-material/PlaylistAdd';
+import ArchiveIcon from '@mui/icons-material/Archive';
+import UnarchiveIcon from '@mui/icons-material/Unarchive';
 import { ListColumn } from './ListColumn';
 import { Priority } from '../../types/qdeck';
 import CardDialog from './CardDialog';
@@ -70,18 +83,18 @@ type AddCardInlineProps = {
   onSubmit: (draft: NewCardDraft) => void;
 };
 
-export const AddCardInline = React.memo(function AddCardInline({
+export const AddCardInline = memo(function AddCardInline({
   listId,
   onCancel,
   onSubmit,
 }: AddCardInlineProps) {
-  const [title, setTitle] = React.useState('');
-  const [quick, setQuick] = React.useState('');
-  const [priority, setPriority] = React.useState<Priority>('NORMAL');
-  const [eta, setEta] = React.useState<number | ''>('');
-  const [tagsCsv, setTagsCsv] = React.useState('');
+  const [title, setTitle] = useState('');
+  const [quick, setQuick] = useState('');
+  const [priority, setPriority] = useState<Priority>('NORMAL');
+  const [eta, setEta] = useState<number | ''>('');
+  const [tagsCsv, setTagsCsv] = useState('');
 
-  const submit = React.useCallback(() => {
+  const submit = useCallback(() => {
     const t = title.trim();
     if (!t) return;
     const tags = tagsCsv
@@ -175,48 +188,51 @@ type BoardViewProps = {
   onCloneBoard?: (title: string) => Promise<void> | void; // optional external handler
 };
 
-export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
+export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
   const {
     board,
     cards,
+    cardVariants,
+    archivedCardIds,
     moveCard,
     createCard,
     // updateCard,
     persistBoard,
     deleteBoard,
     refreshBoard,
+    archiveCard,
   } = useQDeck();
 
   // --- header state ---
-  const [editingTitle, setEditingTitle] = React.useState(false);
-  const [titleInput, setTitleInput] = React.useState('');
-  const titleRef = React.useRef<HTMLInputElement | null>(null);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleInput, setTitleInput] = useState('');
+  const titleRef = useRef<HTMLInputElement | null>(null);
 
   // actions menu
-  const [menuEl, setMenuEl] = React.useState<null | HTMLElement>(null);
+  const [menuEl, setMenuEl] = useState<null | HTMLElement>(null);
   const menuOpen = Boolean(menuEl);
 
   // dialogs
-  const [manageListsOpen, setManageListsOpen] = React.useState(false);
-  const [cloneOpen, setCloneOpen] = React.useState(false);
-  const [cloneTitle, setCloneTitle] = React.useState('');
-  const [confirmDeleteOpen, setConfirmDeleteOpen] = React.useState(false);
+  const [manageListsOpen, setManageListsOpen] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
+  const [cloneTitle, setCloneTitle] = useState('');
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   // Manage Lists – drafts keyed by listId
-  const [listTitleDrafts, setListTitleDrafts] = React.useState<Record<string, string>>({});
+  const [listTitleDrafts, setListTitleDrafts] = useState<Record<string, string>>({});
 
   // --- per-list inline rename state ---
-  const [editingListId, setEditingListId] = React.useState<string | null>(null);
-  const [editingListTitle, setEditingListTitle] = React.useState('');
+  const [editingListId, setEditingListId] = useState<string | null>(null);
+  const [editingListTitle, setEditingListTitle] = useState('');
 
   // quick-add per-list
-  const [addingForListId, setAddingForListId] = React.useState<string | null>(null);
+  const [addingForListId, setAddingForListId] = useState<string | null>(null);
 
-  const inputRef = React.useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Select/open cards
-  const [selectedCardId, setSelectedCardId] = React.useState<string | null>(null);
-  const [dialogOpen, setDialogOpen] = React.useState(false);
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
 
   const theme = useTheme();
   const isXs = useMediaQuery(theme.breakpoints.down('sm'));
@@ -225,46 +241,63 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
     useSensor(TouchSensor, { activationConstraint: { delay: 120, tolerance: 5 } })
   );
 
-  React.useEffect(() => {
+  const lists = board?.lists ?? [];
+
+  const archivedCards = useMemo(() => {
+    if (!board) return [];
+    const out: (typeof cards)[keyof typeof cards][] = [];
+    archivedCardIds.forEach((cid) => {
+      const variants = cardVariants?.[cid];
+      if (variants?.length) {
+        const preferredPublisher = board.preferredVariants?.[cid];
+        const chosen =
+          (preferredPublisher && variants.find((v) => v.createdBy === preferredPublisher)) ||
+          variants.find((v) => v.createdBy === board.createdBy) ||
+          variants[0];
+        if (chosen) out.push(chosen);
+      }
+    });
+    return out;
+  }, [archivedCardIds, cardVariants, board]);
+
+  useEffect(() => {
     if (editingTitle) {
       setTitleInput(board?.title ?? '');
       setTimeout(() => titleRef.current?.focus(), 30);
     }
   }, [editingTitle, board?.title]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (addingForListId && inputRef.current) {
       const t = setTimeout(() => inputRef.current?.focus(), 30);
       return () => clearTimeout(t);
     }
   }, [addingForListId]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (manageListsOpen && board) {
       // seed drafts from current board on open
       const seed: Record<string, string> = {};
-      for (const l of board.lists) seed[l.listId] = l.title;
+      for (const l of lists) seed[l.listId] = l.title;
       setListTitleDrafts(seed);
     }
-  }, [manageListsOpen, board]);
+  }, [manageListsOpen, board, lists]);
 
-  if (!board) return <Typography>Loading board…</Typography>;
-
-  const saveManageListTitles = React.useCallback(async () => {
+  const saveManageListTitles = useCallback(async () => {
     if (!board) return;
-    const nextLists = board.lists.map((l) => {
+    const nextLists = lists.map((l) => {
       const t = (listTitleDrafts[l.listId] ?? l.title).trim();
       return t && t !== l.title ? { ...l, title: t } : l;
     });
     // only persist if any title changed
-    const changed = nextLists.some((l, i) => l.title !== board.lists[i].title);
+    const changed = nextLists.some((l, i) => l.title !== lists[i].title);
     if (changed) {
       await persistBoard({ ...board, lists: nextLists, updatedAt: Date.now() });
     }
     setManageListsOpen(false);
-  }, [board, listTitleDrafts, persistBoard]);
+  }, [board, listTitleDrafts, persistBoard, lists]);
 
-  const cardsByList = React.useMemo(() => {
+  const cardsByList = useMemo(() => {
     const byList: Record<string, string[]> = {};
     for (const c of Object.values(cards)) {
       (byList[c.statusListId] ||= []).push(c.cardId);
@@ -275,12 +308,9 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
     return byList;
   }, [cards]);
 
-  /*const sortedLists = */ React.useMemo(
-    () => board.lists.slice().sort((a, b) => a.order - b.order),
-    [board.lists]
-  );
+  const sortedLists = useMemo(() => lists.slice().sort((a, b) => a.order - b.order), [lists]);
 
-  function ListDroppable({ id, children }: { id: string; children: React.ReactNode }) {
+  function ListDroppable({ id, children }: { id: string; children: ReactNode }) {
     const { setNodeRef } = useDroppable({ id });
     return (
       <Box ref={setNodeRef} sx={{ minHeight: 8, position: 'relative' }}>
@@ -322,13 +352,13 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
   //   setSelectedCardId(cardId);
   //   setDialogOpen(true);
   // };
-  const openCard = React.useCallback((cardId: string) => {
+  const openCard = useCallback((cardId: string) => {
     setSelectedCardId(cardId);
     setDialogOpen(true);
   }, []);
   const closeCard = () => setDialogOpen(false);
 
-  const renameList = React.useCallback(
+  const renameList = useCallback(
     async (listId: string, newTitleRaw: string) => {
       if (!board) return;
       const newTitle = newTitleRaw.trim().toUpperCase();
@@ -338,6 +368,8 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
     },
     [board, persistBoard]
   );
+
+  if (!board) return <Typography>Loading board…</Typography>;
 
   const saveTitle = async () => {
     const t = titleInput.trim();
@@ -420,7 +452,7 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
           p: { xs: '1rem', md: '1.25rem' },
           '--gap': `${gapRem}rem`,
           '--col-basis': colBasis,
-        } as React.CSSProperties
+        } as CSSProperties
       }
     >
       {/* ===== Header ===== */}
@@ -553,7 +585,7 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
             overflowY: 'auto',
           }}
         >
-          {board.lists
+          {sortedLists
             .slice()
             .sort((a, b) => a.order - b.order)
             .map((list) => {
@@ -714,6 +746,55 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
         </Box>
       </DndContext>
 
+      {/* Archived cards */}
+      {board && board.featureFlags?.cardArchive && archivedCards.length > 0 && (
+        <Paper
+          variant="outlined"
+          sx={{
+            mt: 2,
+            p: 1,
+            borderStyle: 'dashed',
+            borderColor: (t) => t.palette.divider,
+            background: (t) => (t.palette.mode === 'dark' ? t.palette.background.paper : '#fafafa'),
+          }}
+        >
+          <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
+            <Box display="flex" alignItems="center" gap={1}>
+              <ArchiveIcon fontSize="small" />
+              <Typography variant="subtitle2" fontWeight={700}>
+                Archived cards
+              </Typography>
+            </Box>
+            <Typography variant="caption" color="text.secondary">
+              {archivedCards.length} hidden
+            </Typography>
+          </Box>
+          <Stack spacing={0.5}>
+            {archivedCards.map((c) => (
+              <Paper key={c.cardId} variant="outlined" sx={{ p: 0.75 }}>
+                <Box display="flex" justifyContent="space-between" alignItems="center" gap={1}>
+                  <Box>
+                    <Typography variant="body2" fontWeight={700} noWrap title={c.cardId}>
+                      {c.title}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {c.cardId} · {c.createdBy}
+                    </Typography>
+                  </Box>
+                  <Button
+                    size="small"
+                    startIcon={<UnarchiveIcon />}
+                    onClick={() => void archiveCard(c.cardId, false)}
+                  >
+                    Unarchive
+                  </Button>
+                </Box>
+              </Paper>
+            ))}
+          </Stack>
+        </Paper>
+      )}
+
       {/* ===== Manage Lists Dialog ===== */}
       <Dialog
         open={manageListsOpen}
@@ -725,7 +806,7 @@ export const BoardView: React.FC<BoardViewProps> = ({ issuerName, onCloneBoard }
         <DialogTitle>Manage lists</DialogTitle>
         <DialogContent dividers>
           <MList dense>
-            {board.lists
+            {sortedLists
               .slice()
               .sort((a, b) => a.order - b.order)
               .map((l) => (

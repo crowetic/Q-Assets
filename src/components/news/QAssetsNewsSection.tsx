@@ -239,7 +239,8 @@ export default function QAssetsNewsSection() {
     };
   }, [showArchivedAnnouncements, showArchivedNews, showMoreAnnouncements, showMoreNews]);
 
-  const loadingLists = loading || announcements === null || assetNews === null || promotions === null;
+  const loadingLists =
+    loading || announcements === null || assetNews === null || promotions === null;
 
   const handleClickItem = (item: NewsSummary) => {
     setSelected(item);
@@ -510,7 +511,7 @@ export default function QAssetsNewsSection() {
         </Grid>
       )}
       <NewsActionBar
-        treasuryAddress="Q-Assets" // TODO put real address I have an import from another p
+        treasuryAddress="Q-Assets" // TODO put real address for the treasury account. We do not want to utilize Q-Assets.
         defaultPromoPriceQort={5}
       />
     </Box>

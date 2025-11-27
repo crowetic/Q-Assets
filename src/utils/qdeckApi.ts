@@ -31,10 +31,7 @@ import { fileToBase64 } from './data';
 import { guessImageMimeFromBase64 } from './fetchAssetAvatar';
 import { transferAsset } from './qortalApi';
 import { canUserDeleteBoard, collectRecipientPublicKeys } from './qdeckAccess';
-import { LruTtl } from './cache';
-// import { uniqueId6 } from './ids';
-// import { assetCommentsPrefix } from '../constants/qdnConstants';
-// import { ThreadComment } from '../types/ThreadedComment';
+import { getCached, setCached, LruTtl } from './cache';
 
 export type QUserIdentity = {
   name?: string; // QDN name (issuer)
@@ -66,6 +63,30 @@ export function requireName(u: QUserIdentity) {
   if (!u.name) throw new Error('This action requires a QDN name. Please register / select a name.');
   return u.name;
 }
+
+// ---- caching helpers ----
+const FETCH_CACHE_MS = 60_000; // 1 minute TTL to avoid hammering node for unchanged docs
+
+const fetchKey = (
+  name: string,
+  identifier: string,
+  isPrivate?: boolean,
+  groupId?: number,
+  isAdmins?: boolean,
+  privateMode?: 'group' | 'direct'
+) => {
+  return [
+    'qdeckFetch',
+    name || '',
+    identifier || '',
+    isPrivate ? 'priv' : 'pub',
+    groupId ?? 'nog',
+    isAdmins ? 'adm' : 'mem',
+    privateMode || 'auto',
+  ].join(':');
+};
+
+// const cardFetchLimit = pLimit(6);
 
 export async function loadCardsIndex(
   issuerName: string,
@@ -190,9 +211,56 @@ export async function removeCardFromIndex(issuerName: string, board: QDeckBoard,
   const next = {
     ...doc,
     cardIds: doc.cardIds.filter((id) => id !== cardId),
+    archivedIds: (doc.archivedIds || []).filter((id) => id !== cardId),
     updatedAt: Date.now(),
     seq: (doc.seq ?? 0) + 1,
   };
+  await saveCardsIndex(issuerName, board, next);
+}
+
+export async function updateCardArchiveState(
+  issuerName: string,
+  board: QDeckBoard,
+  cardId: string,
+  archived: boolean
+) {
+  const doc = (await loadCardsIndex(issuerName, board)) ?? {
+    _type: 'QDECK_CARDS_INDEX' as const,
+    version: 1 as const,
+    boardId: board.boardId,
+    cardIds: [],
+    entries: [],
+    archivedIds: [],
+    updatedAt: 0,
+    seq: 0,
+  };
+  const archivedIds = new Set(doc.archivedIds || []);
+  if (archived) archivedIds.add(cardId);
+  else archivedIds.delete(cardId);
+
+  // Also set flag on card doc
+  try {
+    const card = await loadCardDoc(issuerName, board, cardId);
+    if (card) {
+      const updated: QDeckCard = {
+        ...card,
+        archived,
+        archivedAt: archived ? Date.now() : undefined,
+        archivedBy: archived ? issuerName : undefined,
+      };
+      await saveCardDoc(issuerName, board, updated);
+    }
+  } catch {
+    /* best effort */
+  }
+
+  const next: CardsIndexDoc = {
+    ...doc,
+    archivedIds: Array.from(archivedIds),
+    updatedAt: Date.now(),
+    seq: (doc.seq ?? 0) + 1,
+  };
+
   await saveCardsIndex(issuerName, board, next);
 }
 
@@ -336,15 +404,21 @@ export async function qdeckFetch<T>(
   isAdmins?: boolean,
   privateMode?: 'group' | 'direct'
 ): Promise<T | null> {
+  const key = fetchKey(name, identifier, isPrivate, groupId, isAdmins, privateMode);
+  const cached = getCached<T>(key);
+  if (cached) return cached;
+
   if (isPrivate) {
     const mode: 'group' | 'direct' = privateMode ?? (groupId != null ? 'group' : 'direct');
-    return fetchPrivate<T>({
+    const val = await fetchPrivate<T>({
       identifier,
       issuerName: name,
       mode,
       groupId,
       isAdmins,
     });
+    if (val) setCached(key, val, FETCH_CACHE_MS);
+    return val;
   }
   // console.log('passed service',service)
 
@@ -360,7 +434,9 @@ export async function qdeckFetch<T>(
 
   try {
     const obj = await base64ToObject(res);
-    return obj && typeof obj === 'object' ? (obj as T) : null;
+    const val = obj && typeof obj === 'object' ? (obj as T) : null;
+    if (val) setCached(key, val, FETCH_CACHE_MS);
+    return val;
   } catch {
     // non-JSON = tombstone or opaque
     return null;
@@ -456,13 +532,15 @@ export async function saveBoardDoc(issuerName: string, board: QDeckBoard) {
 
   if (board.visibility === 'public') {
     board.service = 'DOCUMENT';
-    return qortalRequest({
+    const res = await qortalRequest({
       action: 'PUBLISH_QDN_RESOURCE',
       service: 'DOCUMENT',
       name: issuerName,
       identifier,
       data64,
     });
+    setCached(fetchKey(issuerName, identifier, false), board, FETCH_CACHE_MS);
+    return res;
   }
 
   try {
@@ -476,6 +554,18 @@ export async function saveBoardDoc(issuerName: string, board: QDeckBoard) {
       issuerName,
     });
     board.service = 'DOCUMENT_PRIVATE';
+    setCached(
+      fetchKey(
+        issuerName,
+        identifier,
+        true,
+        board.privateMeta?.groupId,
+        board.privateMeta?.isAdmins,
+        board.privateMeta?.mode ?? 'group'
+      ),
+      board,
+      FETCH_CACHE_MS
+    );
   } catch (e) {
     if (e instanceof GroupKeyMissingError) throw e;
     throw e;
@@ -523,12 +613,21 @@ export async function saveCardDoc(issuerName: string, board: QDeckBoard, card: Q
       ? QDeckId.cardPublic(board.boardId, card.cardId)
       : QDeckId.cardPrivate(board.boardId, card.cardId);
 
+  // persist archive flag inside card doc for robustness
+  const payload = {
+    ...card,
+    archived: !!card.archived,
+    archivedAt: card.archived ? (card.archivedAt ?? Date.now()) : undefined,
+    archivedBy: card.archived ? card.archivedBy : undefined,
+    archiveReason: card.archived ? card.archiveReason : undefined,
+  };
+
   if (board.visibility === 'public') {
-    return qdeckPublish(issuerName, identifier, card, false);
+    return qdeckPublish(issuerName, identifier, payload, false);
   }
 
   const mode = board.privateMeta?.mode ?? 'group';
-  const payloadBase64 = await objectToBase64(card);
+  const payloadBase64 = await objectToBase64(payload);
 
   if (mode === 'direct') {
     // derive recipients (assignees + allowed + self)

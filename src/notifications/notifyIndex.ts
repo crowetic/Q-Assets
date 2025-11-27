@@ -11,7 +11,7 @@ const INDEX_PREFIX = 'qassets_notif_index::';
 const OPEN_SUFFIX = '::open';
 const INDEX_SERVICE: 'JSON' | 'DOCUMENT' = 'DOCUMENT'; // change if you want DOCUMENT
 const INDEX_MAX_ENTRIES = 1000; // guardrail
-export const NOTIF_GROUP_ID = 735; // <- set your real notifications group id //TODO modify this to utilize the admin manifest so that notification group (or groups) can be updated.
+export const NOTIF_GROUP_ID = 890; // <- set your real notifications group id //TODO modify this to utilize the admin manifest so that notification group (or groups) can be updated.
 export type IndexMode = 'admin' | 'open';
 
 /* -------------------------------- Types -------------------------------- */

@@ -41,11 +41,11 @@ const tiles: Tile[] = [
     disabled: true, // flip to false when ready / if already implemented
   },
   {
-    title: 'Permissions / Roles',
-    description: 'Admin/editor roles, group-based publishing rights.',
-    to: '/manage/permissions',
+    title: 'Q-Deck Permissions',
+    description: 'Admins/editors and card controls for your Q-Deck boards.',
+    to: '/manage/qdeck-permissions',
     icon: <SecurityRoundedIcon fontSize="inherit" />,
-    disabled: true,
+    disabled: false,
   },
   {
     title: 'Admin Panel',

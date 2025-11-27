@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useMemo, useRef, useState, useCallback } from 'react';
-import { QDeckBoard, QDeckCard, CardCommentThread } from '../../types/qdeck';
+import { QDeckBoard, QDeckCard, CardCommentThread, CardsIndexDoc } from '../../types/qdeck';
 import {
   saveBoardDoc,
   saveCardDoc,
@@ -15,6 +15,7 @@ import {
   resolveBoardForReadWithMeta,
   discoverComments,
   loadCommentsDoc,
+  updateCardArchiveState,
 } from '../../utils/qdeckApi';
 import { useAuth } from 'qapp-core';
 import { deleteBoard as apiDeleteBoard } from '../../utils/qdeckApi'; // path as needed
@@ -27,6 +28,8 @@ import {
 } from '../../utils/qdeckAccess';
 import { QDeckId } from '../../constants/qdeckIdentifiers';
 import { useFetchTracker } from '../../state/global/fetchTracker';
+import pLimit from 'p-limit';
+import QDeckPermissionsPanel from './QDeckPermissionsPanel';
 
 // ---- Types ----
 type LoadOpts = {
@@ -40,6 +43,8 @@ type QDeckCtx = {
 
   board: QDeckBoard | null;
   cards: Record<string, QDeckCard>;
+  cardVariants: Record<string, QDeckCard[]>;
+  archivedCardIds: Set<string>;
   comments: Record<string, CardCommentThread>;
 
   loadBoardById: (
@@ -55,6 +60,8 @@ type QDeckCtx = {
   createCard: (partial: Partial<QDeckCard>) => Promise<QDeckCard>;
   moveCard: (cardId: string, toListId: string, newOrder: number) => Promise<void>;
   updateCard: (card: QDeckCard) => Promise<void>;
+  archiveCard: (cardId: string, archived: boolean) => Promise<void>;
+  setPreferredVariant: (cardId: string, publisher: string) => Promise<void>;
 
   addComment: (
     cardId: string,
@@ -84,6 +91,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const [board, setBoard] = useState<QDeckBoard | null>(null);
   const [cards, setCards] = useState<Record<string, QDeckCard>>({});
+  const [cardVariants, setCardVariants] = useState<Record<string, QDeckCard[]>>({});
+  const [archivedCardIds, setArchivedCardIds] = useState<Set<string>>(new Set());
   const [comments, setComments] = useState<Record<string, CardCommentThread>>({});
 
   const identity: QUserIdentity = {
@@ -94,6 +103,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const lastLoadKey = useRef<string>('');
   const { track } = useFetchTracker();
+  const cardLimiter = useMemo(() => pLimit(6), []);
 
   const loadCardsForBoard = React.useCallback(
     async (_issuerIgnored: string, b: QDeckBoard) => {
@@ -102,13 +112,16 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (!canView) {
         console.error('[Q-Deck] viewer not allowed; cannot open board');
         setCards({});
+        setCardVariants({});
+        setArchivedCardIds(new Set());
         return;
       }
 
       // 1) Try index (read under board issuer!)
       let refs: Array<{ name: string; cardId: string }> | null = null;
+      let idx: CardsIndexDoc | null = null;
       try {
-        const idx = await loadCardsIndex(b.createdBy, b);
+        idx = await loadCardsIndex(b.createdBy, b);
         if (idx?.entries?.length) {
           refs = idx.entries.slice();
         } else if (idx?.cardIds?.length) {
@@ -146,27 +159,60 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       if (!refs || refs.length === 0) {
         setCards({});
+        setCardVariants({});
+        setArchivedCardIds(new Set());
         return;
       }
 
       // 3) Fetch each card with its *publisher* name
       const loaded = await Promise.all(
-        refs.map(async (r) => {
-          try {
-            const doc = await loadCardDoc(r.name, b, r.cardId);
-            if (!doc || (doc as any)._type === 'QDECK_TOMBSTONE') return null;
-            return doc as QDeckCard;
-          } catch {
-            return null;
-          }
-        })
+        refs.map((r) =>
+          cardLimiter(async () => {
+            try {
+              const doc = await loadCardDoc(r.name, b, r.cardId);
+              if (!doc || (doc as any)._type === 'QDECK_TOMBSTONE') return null;
+              return doc as QDeckCard;
+            } catch {
+              return null;
+            }
+          })
+        )
       );
 
       const usable = loaded.filter(Boolean) as QDeckCard[];
-      const byId = Object.fromEntries(usable.map((c) => [c.cardId, c]));
+      const archivedSet = new Set(idx?.archivedIds ?? []);
+      const variants: Record<string, QDeckCard[]> = {};
+      const byId: Record<string, QDeckCard> = {};
+
+      for (const c of usable) {
+        variants[c.cardId] = variants[c.cardId] || [];
+        variants[c.cardId].push(c);
+      }
+
+      // Pick display variant per card
+      const usePreferred = b.featureFlags?.cardVariants;
+      const preferredMap = b.preferredVariants || {};
+      for (const [cardId, list] of Object.entries(variants)) {
+        if (archivedSet.has(cardId)) continue;
+        let chosen: QDeckCard | undefined;
+        if (usePreferred) {
+          const preferredPublisher = preferredMap[cardId];
+          if (preferredPublisher) {
+            chosen = list.find((c) => c.createdBy === preferredPublisher);
+          }
+        }
+        if (!chosen) {
+          // default: creator version, else first
+          chosen = list.find((c) => c.createdBy === b.createdBy) || list[0];
+        }
+        if (chosen) byId[cardId] = chosen;
+      }
+
       setCards(byId);
+      setCardVariants(variants);
+      setArchivedCardIds(archivedSet);
     },
-    [identity.address, setCards]
+    [identity.address, cardLimiter]
   );
 
   const loadBoardById = useCallback<QDeckCtx['loadBoardById']>(
@@ -209,6 +255,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
         setBoard(probe.doc);
         setCards({});
+        setCardVariants({});
+        setArchivedCardIds(new Set());
         setComments({});
         void track(loadCardsForBoard(issuer, probe.doc), `${probe.doc}`);
         console.log('[Q-Deck] loadBoardById success (ident)', {
@@ -242,6 +290,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       setBoard(resolved);
       setCards({});
+      setCardVariants({});
+      setArchivedCardIds(new Set());
       setComments({});
       void track(loadCardsForBoard(issuer, resolved), `${resolved}`);
 
@@ -374,6 +424,66 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       await saveCardDoc(auth.name ? auth.name : identity.name, board, card);
     },
     [board, cards]
+  );
+
+  const archiveCard = useCallback<QDeckCtx['archiveCard']>(
+    async (cardId, archived) => {
+      if (!board) throw new Error('No board loaded');
+      if (!auth.name || !identity.name) throw new Error('Authentication Failed');
+      await updateCardArchiveState(auth.name ? auth.name : identity.name, board, cardId, archived);
+      setArchivedCardIds((prev) => {
+        const next = new Set(prev);
+        if (archived) next.add(cardId);
+        else next.delete(cardId);
+        return next;
+      });
+      if (archived) {
+        setCards((prev) => {
+          const next = { ...prev };
+          delete next[cardId];
+          return next;
+        });
+      } else {
+        // restore display card if we have variants
+        const variants = cardVariants[cardId];
+        if (variants?.length) {
+          const preferred = board.preferredVariants?.[cardId];
+          const chosen =
+            (preferred && variants.find((c) => c.createdBy === preferred)) ||
+            variants.find((c) => c.createdBy === board.createdBy) ||
+            variants[0];
+          if (chosen) setCards((prev) => ({ ...prev, [cardId]: chosen }));
+        }
+      }
+    },
+    [board, cardVariants]
+  );
+
+  const setPreferredVariant = useCallback<QDeckCtx['setPreferredVariant']>(
+    async (cardId, publisher) => {
+      if (!board) throw new Error('No board loaded');
+      const nextBoard: QDeckBoard = {
+        ...board,
+        featureFlags: { ...(board.featureFlags || {}), cardVariants: true },
+        preferredVariants: {
+          ...(board.preferredVariants || {}),
+          [cardId]: publisher,
+        },
+        updatedAt: Date.now(),
+        seq: board.seq + 1,
+      };
+      await saveBoardDoc(auth.name ?? board.createdBy, nextBoard);
+      setBoard(nextBoard);
+      const variants = cardVariants[cardId];
+      if (variants?.length) {
+        const chosen =
+          variants.find((c) => c.createdBy === publisher) ||
+          variants.find((c) => c.createdBy === board.createdBy) ||
+          variants[0];
+        if (chosen) setCards((prev) => ({ ...prev, [cardId]: chosen }));
+      }
+    },
+    [board, cardVariants]
   );
 
   const addComment = useCallback<QDeckCtx['addComment']>(
@@ -519,6 +629,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // clear local state since board is gone
       setBoard(null);
       setCards({});
+      setCardVariants({});
+      setArchivedCardIds(new Set());
       setComments({});
     },
     [board, cards]
@@ -529,6 +641,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       identity,
       board,
       cards,
+      cardVariants,
+      archivedCardIds,
       comments,
       loadBoardById,
       persistBoard,
@@ -536,6 +650,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       createCard,
       moveCard,
       updateCard,
+      archiveCard,
+      setPreferredVariant,
       addComment,
       loadCommentsForCard,
       recordPayment,
@@ -545,6 +661,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       identity,
       board,
       cards,
+      cardVariants,
+      archivedCardIds,
       comments,
       loadBoardById,
       persistBoard,
@@ -552,6 +670,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       createCard,
       moveCard,
       updateCard,
+      archiveCard,
+      setPreferredVariant,
       addComment,
       loadCommentsForCard,
       recordPayment,

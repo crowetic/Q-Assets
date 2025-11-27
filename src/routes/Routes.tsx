@@ -22,8 +22,10 @@ import QDeckHome from '../pages/QDeckHome';
 import ManageHome from '../pages/manage/ManageHome';
 import ManageDividends from '../pages/manage/ManageDividends';
 import ManageDividendsAsset from '../pages/manage/ManageDividendsAsset';
+import QDeckPermissionsPage from '../pages/manage/QDeckPermissions';
 import AdminPanel from '../pages/manage/AdminPanel';
 import PublishAssetNewsPage from '../pages/PublishAssetNews';
+import { SafeBoundary } from '../components/common/SafeBoundary';
 
 // --- Q-Deck (lazy) ---
 const QDeckIndex = React.lazy(() => import('../pages/QDeckMyBoards'));
@@ -78,9 +80,11 @@ export function Routes() {
         <AlertProvider>
           <QortalLinkProvider>
             <QortalLinkHandler>
-              <React.Suspense fallback={<div style={{ padding: 16 }}>Loading…</div>}>
-                <AppWrapper />
-              </React.Suspense>
+              <SafeBoundary fallback={<div style={{ padding: 16 }}>Loading…</div>}>
+                <React.Suspense fallback={<div style={{ padding: 16 }}>Loading…</div>}>
+                  <AppWrapper />
+                </React.Suspense>
+              </SafeBoundary>
             </QortalLinkHandler>
           </QortalLinkProvider>
         </AlertProvider>
@@ -106,6 +110,7 @@ export function Routes() {
         { path: 'manage', element: <ManageHome /> },
         { path: 'manage/dividends', element: <ManageDividends /> },
         { path: 'manage/dividends/:assetId', element: <ManageDividendsAsset /> },
+        { path: 'manage/qdeck-permissions', element: <QDeckPermissionsPage /> },
         { path: 'manage/admin', element: <AdminPanel /> },
 
         // --- Manage / Data Management (panel + subpages)

@@ -409,8 +409,12 @@ export default function MyBoards() {
             Create Board
           </Button>
 
-          <Button onClick={() => runRepair()} sx={{ order: { xs: 2, sm: 0 } }}>
-            Run Index Repair
+          <Button
+            component={RouterLink}
+            to="/manage/qdeck-permissions"
+            sx={{ order: { xs: 2, sm: 0 } }}
+          >
+            Manage Permissions
           </Button>
         </Stack>
       </Stack>

@@ -2,6 +2,7 @@ import { QDeckBoard, QDeckCard } from '../types/qdeck';
 import { fetchGroupMembers } from './access';
 import { qdeckFetch } from './qdeckApi';
 import { getAccountGroupIds, getAccountGroups } from './qortalApi';
+import { getCached, setCached } from './cache';
 import pLimit from 'p-limit';
 
 function eq(a?: string, b?: string) {
@@ -12,7 +13,13 @@ function eq(a?: string, b?: string) {
 export async function userInAllowedGroups(board: QDeckBoard, viewerAddress?: string) {
   const need = new Set(board.groupsAllowed ?? []);
   if (!need.size || !viewerAddress) return false;
-  const mine = new Set(await getAccountGroupIds(viewerAddress));
+  const mineKey = `qdeck:groups:${viewerAddress}`;
+  let mineArr = getCached<number[]>(mineKey);
+  if (!mineArr) {
+    mineArr = await getAccountGroupIds(viewerAddress);
+    setCached(mineKey, mineArr, 60_000);
+  }
+  const mine = new Set(mineArr);
   for (const id of need) if (mine.has(Number(id))) return true;
   return false;
 }
@@ -28,23 +35,111 @@ export async function canUserEditBoard(
   board: QDeckBoard,
   viewer: { name?: string; address?: string }
 ) {
+  const permKey = `qdeck:perm:edit:${board.boardId}:${board.updatedAt || board.seq || ''}:${
+    viewer.name || ''
+  }:${viewer.address || ''}`;
+  const cached = getCached<boolean>(permKey);
+  if (cached !== undefined) return cached;
+
+  const useEnhanced = board.featureFlags?.enhancedPerms === true;
+  const owners = new Set(
+    (board.owners && board.owners.length ? board.owners : [board.createdBy]).map((s) => s.trim())
+  );
+  const ownerGroups = new Set(board.ownerGroups ?? []);
+  const editors = new Set(board.editors ?? board.usersAllowed ?? []);
+  const editorGroups = new Set(
+    board.editorGroups && board.editorGroups.length
+      ? board.editorGroups
+      : (board.groupsAllowed ?? [])
+  );
+
+  if (
+    (viewer.name && owners.has(viewer.name)) ||
+    (viewer.address && owners.has(viewer.address)) ||
+    (viewer.address && ownerGroups.size && (await isAdminOfAnyGroup(viewer.address, ownerGroups)))
+  ) {
+    setCached(permKey, true, 60_000);
+    return true;
+  }
+
+  if (useEnhanced) {
+    if (
+      (viewer.name && editors.has(viewer.name)) ||
+      (viewer.address && editors.has(viewer.address)) ||
+      (viewer.address &&
+        editorGroups.size &&
+        (await isMemberOfAnyGroup(viewer.address, editorGroups)))
+    ) {
+      setCached(permKey, true, 60_000);
+      return true;
+    }
+  }
+
   // creator can always edit
   if (eq(board.createdBy, viewer.name) || eq(board.creatorAddress, viewer.address)) {
+    setCached(permKey, true, 60_000);
     return true;
   }
   // explicit allowlist
-  if (userInUsersAllowlist(board, viewer.name, viewer.address)) return true;
+  if (userInUsersAllowlist(board, viewer.name, viewer.address)) {
+    setCached(permKey, true, 60_000);
+    return true;
+  }
   // groups
-  if (await userInAllowedGroups(board, viewer.address)) return true;
-  return false;
+  let ok = await userInAllowedGroups(board, viewer.address);
+  // Fallback: open edit on public boards when no editor restrictions defined
+  const noExplicitEditors =
+    !useEnhanced &&
+    (!board.usersAllowed || board.usersAllowed.length === 0) &&
+    (!board.groupsAllowed || board.groupsAllowed.length === 0);
+  const noEnhancedEditors =
+    useEnhanced &&
+    (!board.editors || board.editors.length === 0) &&
+    (!board.editorGroups || board.editorGroups.length === 0) &&
+    (!board.usersAllowed || board.usersAllowed.length === 0) &&
+    (!board.groupsAllowed || board.groupsAllowed.length === 0);
+  if (!ok && board.visibility === 'public' && (noExplicitEditors || noEnhancedEditors)) {
+    ok = true;
+  }
+  setCached(permKey, ok, 60_000);
+  return ok;
 }
 
 /** VIEW permission rules — ONLY board visibility matters. */
 export async function canUserViewBoard(board: QDeckBoard, viewer: { address?: string }) {
-  if (board.visibility === 'public') return true;
+  const permKey = `qdeck:perm:view:${board.boardId}:${board.updatedAt || board.seq || ''}:${
+    viewer.address || ''
+  }`;
+  const cached = getCached<boolean>(permKey);
+  if (cached !== undefined) return cached;
+
+  const useEnhanced = board.featureFlags?.enhancedPerms === true;
+
+  if (board.visibility === 'public') {
+    setCached(permKey, true, 60_000);
+    return true;
+  }
   // private → must be in the one private group
-  if (userInUsersAllowlist(board, viewer.address, viewer.address)) return true;
-  return userInAllowedGroups(board, viewer.address);
+  if (userInUsersAllowlist(board, viewer.address, viewer.address)) {
+    setCached(permKey, true, 60_000);
+    return true;
+  }
+
+  if (useEnhanced && viewer.address) {
+    const editorGroups = new Set(
+      board.editorGroups && board.editorGroups.length
+        ? board.editorGroups
+        : (board.groupsAllowed ?? [])
+    );
+    if (editorGroups.size && (await isMemberOfAnyGroup(viewer.address, editorGroups))) {
+      setCached(permKey, true, 60_000);
+      return true;
+    }
+  }
+
+  const ok = await userInAllowedGroups(board, viewer.address);
+  setCached(permKey, ok, 60_000);
+  return ok;
 }
 
 export async function canUserDeleteBoard(
@@ -110,7 +205,9 @@ async function getNameData(name: string): Promise<{ name: string; owner: string 
   try {
     const res = await qortalRequest({ action: 'GET_NAME_DATA', name });
     if (res?.owner) return { name, owner: res.owner };
-  } catch {}
+  } catch {
+    /* empty */
+  }
   return null;
 }
 
@@ -118,7 +215,9 @@ async function getAccountPublicKey(address: string): Promise<string | null> {
   try {
     const data = await qortalRequest({ action: 'GET_ACCOUNT_DATA', address });
     if (data?.publicKey) return data.publicKey;
-  } catch {}
+  } catch {
+    /* empty */
+  }
   return null;
 }
 
@@ -134,6 +233,18 @@ async function resolveGroupMembers(
 
 function looksLikeAddress(s: string) {
   return /^Q[1-9A-HJ-NP-Za-km-z]{20,}$/.test(s);
+}
+
+async function isMemberOfAnyGroup(address: string, groupIds: Set<number>) {
+  if (!groupIds.size) return false;
+  const groups = await getAccountGroups(address).catch(() => []);
+  return groups.some((g) => groupIds.has(g.groupId));
+}
+
+async function isAdminOfAnyGroup(address: string, groupIds: Set<number>) {
+  if (!groupIds.size) return false;
+  const groups = await getAccountGroups(address).catch(() => []);
+  return groups.some((g) => g.isAdmin && groupIds.has(g.groupId));
 }
 
 async function resolveNameOrAddress(
@@ -178,7 +289,9 @@ export async function collectRecipientPublicKeys({
     try {
       const acct = await qortalRequest({ action: 'GET_USER_ACCOUNT' });
       myAddr = acct?.address;
-    } catch {}
+    } catch {
+      /* empty */
+    }
   }
 
   // 1) Gather raw candidates
@@ -326,10 +439,16 @@ export async function collectRecipientsForCreateDialogDirect(args: {
 }
 
 export async function resolveNameAddress(name: string): Promise<string | undefined> {
+  const key = `qdeck:nameaddr:${name.toLowerCase()}`;
+  const cached = getCached<string>(key);
+  if (cached !== undefined) return cached;
   try {
     const data = await qortalRequest({ action: 'GET_NAME_DATA', name });
-    return data?.owner; // address
+    const owner = data?.owner;
+    if (owner) setCached(key, owner, 300_000);
+    return owner; // address
   } catch {
+    setCached(key, undefined as any, 60_000);
     return undefined;
   }
 }

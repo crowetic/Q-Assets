@@ -26,6 +26,9 @@ export interface BoardsIndexDoc {
     title: string;
     createdAt: number;
     updatedAt: number;
+    issuerName?: string;
+    createdBy?: string;
+    creatorAddress?: string;
     // Recommended additions for your UI:
     visibility?: 'public' | 'private';
     service?: 'DOCUMENT' | 'DOCUMENT_PRIVATE';
@@ -61,8 +64,15 @@ export type CardsIndexDoc = {
   boardId: string;
   cardIds: string[]; // legacy
   entries?: Array<{ name: string; cardId: string }>; // new, multi-issuer
+  archivedIds?: string[]; // optional list of archived cardIds
   updatedAt: number;
   seq: number;
+};
+
+export type QDeckFeatureFlags = {
+  enhancedPerms?: boolean;
+  cardVariants?: boolean;
+  cardArchive?: boolean;
 };
 
 export interface QDeckBoard {
@@ -77,15 +87,23 @@ export interface QDeckBoard {
   creatorIsAdmin?: boolean;
   createdAt: number; // epoch ms
   updatedAt: number; // epoch ms
+  // Legacy permissions (kept for backward compatibility)
   groupsAllowed: number[]; // group ids that can create/edit
   usersAllowed?: string[]; // optional allowlist of names/addrs
+  // Enhanced permissions (opt-in via featureFlags.enhancedPerms)
+  owners?: string[]; // names who are admins
+  ownerGroups?: number[]; // groupIds whose admins are board admins
+  editors?: string[]; // names allowed to edit/publish
+  editorGroups?: number[]; // groupIds allowed to edit/publish
   adminOverride?: boolean; //optional - allow admins to override data on boards
+  preferredVariants?: Record<string, string>; // cardId -> publisher name
   // canonical list order (lists are schema-defined; cards link to listId)
   lists: QDeckList[];
   // optimistic concurrency
   seq: number; // monotonic int, increment on each edit
   visibility: QDeckVisibility; // 'public' | 'private'
   service: 'DOCUMENT' | 'DOCUMENT_PRIVATE';
+  featureFlags?: QDeckFeatureFlags;
   privateMeta?: {
     groupId?: number; // Qortal groupId used for encryption
     isAdmins?: boolean; // encrypt to admins only if true
@@ -133,9 +151,19 @@ export interface QDeckCard {
   hasBounty?: boolean;
   bountyInfo?: BountyInfo;
   upvotes?: UpvoteSummary;
+  archived?: boolean;
+  archivedAt?: number;
+  archivedBy?: string;
+  archiveReason?: string;
   createdAt: number;
   updatedAt: number;
   seq: number; // per-card optimistic version
+  variants?: Array<{
+    publisher: string;
+    updatedAt: number;
+    title?: string;
+    contentHash?: string;
+  }>;
 }
 
 export interface BountyInfo {

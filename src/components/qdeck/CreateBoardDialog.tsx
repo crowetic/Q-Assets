@@ -84,7 +84,7 @@ export const CreateBoardDialog: React.FC<CreateBoardDialogProps> = ({
       title: title.trim(),
       visibility,
       privateMeta: isPrivate ? { groupId: groupId ?? undefined, isAdmins } : undefined,
-      groupsAllowed, // already numbers
+      groupsAllowed,
       usersAllowed: usersAllowedList.length ? usersAllowedList : undefined,
     };
     await onCreate(payload);
@@ -166,10 +166,17 @@ export const CreateBoardDialog: React.FC<CreateBoardDialogProps> = ({
             multiple
             value={groupsAllowed}
             onChange={(e) => {
-              const vals = (e.target.value as (string | number)[]).map((v) => Number(v));
+              const raw = e.target.value as (string | number)[];
+              // If "__none" is selected, treat as open-edit (no groups)
+              if (raw.includes('__none')) {
+                setGroupsAllowed([]);
+                return;
+              }
+              const vals = raw.map((v) => Number(v)).filter((n) => Number.isFinite(n));
               setGroupsAllowed(vals);
             }}
             renderValue={(selected) => {
+              if (!selected || (selected as any[]).length === 0) return 'Anyone can edit';
               const ids = new Set(selected as number[]);
               const names = groupOptions
                 .filter((g) => ids.has(g.groupId))
@@ -177,6 +184,10 @@ export const CreateBoardDialog: React.FC<CreateBoardDialogProps> = ({
               return names.join(', ');
             }}
           >
+            <MenuItem value="__none">
+              <Checkbox checked={groupsAllowed.length === 0} />
+              <Typography sx={{ ml: 1 }}>No groups (public editable)</Typography>
+            </MenuItem>
             {groupOptions.map((g) => (
               <MenuItem key={g.groupId} value={g.groupId}>
                 <Checkbox checked={groupsAllowed.includes(g.groupId)} />
@@ -186,6 +197,11 @@ export const CreateBoardDialog: React.FC<CreateBoardDialogProps> = ({
               </MenuItem>
             ))}
           </Select>
+          {groupsAllowed.length === 0 && (
+            <Typography variant="caption" color="text.secondary">
+              Leave empty to allow anyone to edit this public board.
+            </Typography>
+          )}
         </FormControl>
 
         {/* Users allowed (names/addresses CSV) */}
@@ -196,6 +212,7 @@ export const CreateBoardDialog: React.FC<CreateBoardDialogProps> = ({
           onChange={(e) => setUsersAllowed(e.target.value)}
           size="small"
           fullWidth
+          helperText="Optional: restrict by names/addresses. Leave empty for open edits."
         />
       </DialogContent>
 

@@ -38,6 +38,7 @@ function canonicalizeJson(obj: unknown): string {
 
 // Hook for your local signer. Return a hex/base64 sig or undefined to skip.
 async function signJsonIfAvailable(_payloadCanonical: string): Promise<string | undefined> {
+  console.log(_payloadCanonical);
   // TODO: wire to your existing local signer (Qortal API Toolkit, etc.)
   return undefined;
 }
