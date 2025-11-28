@@ -70,6 +70,19 @@ export type NotificationDeliveryRequest = {
   links?: { label: string; href: string }[];
   policy?: NotifPolicyV1;
   payAssetId?: number;
+  qmailOptions?: {
+    batchSize?: number;
+    resumeFrom?: number;
+    onThrottle?: (ctx: {
+      sent: number;
+      total: number;
+      nextIndex: number;
+      attempt: number;
+      delayMs: number;
+      error: any;
+    }) => Promise<boolean> | boolean;
+    onProgress?: (ctx: { sent: number; total: number }) => void;
+  };
   deliveries?: {
     internal?: { enabled?: boolean; chatPingGroupId?: number; priority?: NotifPriority };
     qmail?: {
@@ -136,6 +149,10 @@ export async function sendNotification(
           recipients,
           subject,
           message,
+          batchSize: request.qmailOptions?.batchSize,
+          resumeFrom: request.qmailOptions?.resumeFrom,
+          onThrottle: request.qmailOptions?.onThrottle,
+          onProgress: request.qmailOptions?.onProgress,
         });
         results.qmail = { recipients: recipients.length };
       }
@@ -150,8 +167,11 @@ export async function sendNotification(
         bodyHtml: request.bodyHtml,
         resource: request.qdnResource,
       });
+    const chatPayload = { text: message };
     await Promise.all(
-      deliveries.chat.groups.map((groupId) => sendChatMessage({ groupId, fullContent: message }))
+      deliveries.chat.groups.map((groupId) =>
+        sendChatMessage({ groupId, fullContent: chatPayload })
+      )
     );
     results.chat = { groups: deliveries.chat.groups.length };
   }

@@ -87,9 +87,6 @@ export const UnconfirmedTxWidget: React.FC = () => {
     }
   }, [size]);
 
-  useEffect(() => endDrag, []);
-  useEffect(() => endResize, []);
-
   const list = useMemo(() => Object.values(state.byId), [state.byId]);
   const unconfirmed = list.filter((x) => x.status === 'unconfirmed');
   const confirmed = list.filter((x) => x.status === 'confirmed');
@@ -235,8 +232,14 @@ export const UnconfirmedTxWidget: React.FC = () => {
     const dy = e.clientY - ds.startY;
     const nextW = size?.width ?? 320;
     const nextH = size?.height ?? 320;
-    const nextX = Math.min(Math.max(0, ds.origX + dx), window.innerWidth - Math.min(nextW, window.innerWidth));
-    const nextY = Math.min(Math.max(0, ds.origY + dy), window.innerHeight - Math.min(nextH, window.innerHeight));
+    const nextX = Math.min(
+      Math.max(0, ds.origX + dx),
+      window.innerWidth - Math.min(nextW, window.innerWidth)
+    );
+    const nextY = Math.min(
+      Math.max(0, ds.origY + dy),
+      window.innerHeight - Math.min(nextH, window.innerHeight)
+    );
     const next = { x: nextX, y: nextY };
     setPosition(next);
   };
@@ -277,6 +280,11 @@ export const UnconfirmedTxWidget: React.FC = () => {
     window.removeEventListener('pointermove', onResize);
     window.removeEventListener('pointerup', endResize);
   };
+
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => endDrag, []);
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => endResize, []);
 
   return (
     <Box style={container} ref={containerRef}>

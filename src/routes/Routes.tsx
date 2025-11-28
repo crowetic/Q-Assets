@@ -1,4 +1,3 @@
-import * as React from 'react';
 import { createBrowserRouter, RouterProvider, Outlet, RouteObject } from 'react-router-dom';
 import { AppWrapper } from '../AppWrapper';
 import Home from '../pages/Home';
@@ -17,6 +16,9 @@ import { AlertProvider } from '../components/alerts';
 import AssetDataPage from '../pages/AssetDataPage';
 import QDeckAllBoards from '../pages/QDeckAllBoards';
 import QDeckHome from '../pages/QDeckHome';
+import QDeckMyBoards from '../pages/QDeckMyBoards';
+import QDeckPage from '../pages/QDeckPage';
+import { QDeckProvider } from '../components/qdeck/QDeckProvider';
 
 // --- Manage (new) ---
 import ManageHome from '../pages/manage/ManageHome';
@@ -26,21 +28,13 @@ import QDeckPermissionsPage from '../pages/manage/QDeckPermissions';
 import AdminPanel from '../pages/manage/AdminPanel';
 import PublishAssetNewsPage from '../pages/PublishAssetNews';
 import { SafeBoundary } from '../components/common/SafeBoundary';
-
-// --- Q-Deck (lazy) ---
-const QDeckIndex = React.lazy(() => import('../pages/QDeckMyBoards'));
-const QDeckPage = React.lazy(() => import('../pages/QDeckPage'));
-const QDeckProvider = React.lazy(() =>
-  import('../components/qdeck/QDeckProvider').then((m) => ({ default: m.QDeckProvider }))
-);
-// --- Data Management (lazy) ---
-const DataManagement = React.lazy(() => import('../pages/manage/DataManagement'));
-const MyPublishedData = React.lazy(() => import('../pages/manage/data/MyPublishedData'));
-const PublishData = React.lazy(() => import('../pages/manage/data/PublishData'));
-const BulkPublish = React.lazy(() => import('../pages/manage/data/BulkPublish'));
-const NameBasedAssetData = React.lazy(() => import('../pages/manage/data/NameBasedAssetData'));
-const DataExplorer = React.lazy(() => import('../pages/manage/data/DataExplorer'));
-const Archives = React.lazy(() => import('../pages/manage/data/Archives'));
+import DataManagement from '../pages/manage/DataManagement';
+import MyPublishedData from '../pages/manage/data/MyPublishedData';
+import PublishData from '../pages/manage/data/PublishData';
+import BulkPublish from '../pages/manage/data/BulkPublish';
+import NameBasedAssetData from '../pages/manage/data/NameBasedAssetData';
+import DataExplorer from '../pages/manage/data/DataExplorer';
+import Archives from '../pages/manage/data/Archives';
 
 function PortfolioProviderLayout() {
   return (
@@ -51,11 +45,7 @@ function PortfolioProviderLayout() {
 }
 
 function ManageDataLayout() {
-  return (
-    <React.Suspense fallback={<div style={{ padding: 16 }}>Loading Data Management…</div>}>
-      <Outlet />
-    </React.Suspense>
-  );
+  return <Outlet />;
 }
 
 declare global {
@@ -81,9 +71,7 @@ export function Routes() {
           <QortalLinkProvider>
             <QortalLinkHandler>
               <SafeBoundary fallback={<div style={{ padding: 16 }}>Loading…</div>}>
-                <React.Suspense fallback={<div style={{ padding: 16 }}>Loading…</div>}>
-                  <AppWrapper />
-                </React.Suspense>
+                <AppWrapper />
               </SafeBoundary>
             </QortalLinkHandler>
           </QortalLinkProvider>
@@ -135,14 +123,12 @@ export function Routes() {
         {
           path: 'qdeck',
           element: (
-            <React.Suspense fallback={<div style={{ padding: 16 }}>Loading Q-Deck…</div>}>
-              <QDeckProvider>
-                <QDeckHome />
-              </QDeckProvider>
-            </React.Suspense>
+            <QDeckProvider>
+              <QDeckHome />
+            </QDeckProvider>
           ),
           children: [
-            { index: true, element: <QDeckIndex /> },
+            { index: true, element: <QDeckMyBoards /> },
             { path: 'public', element: <QDeckAllBoards /> },
             { path: ':issuer/:boardId', element: <QDeckPage /> },
           ],

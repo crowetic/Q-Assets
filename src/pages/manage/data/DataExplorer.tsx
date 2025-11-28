@@ -233,7 +233,8 @@ const guessMimeTypeForResource = (resource: QdnResource) => {
   if (service.includes('DOCUMENT') || service.includes('BLOG') || service.includes('TEXT'))
     return 'text/plain';
   if (service.includes('HTML') || service.includes('WEBSITE')) return 'text/html';
-  const ext = (resource.identifier.split('.').pop() || '').toLowerCase();
+  const identifier = typeof resource.identifier === 'string' ? resource.identifier : '';
+  const ext = (identifier.split('.').pop() || '').toLowerCase();
   if (ext && extensionMimeHints[ext]) return extensionMimeHints[ext];
   return 'application/octet-stream';
 };

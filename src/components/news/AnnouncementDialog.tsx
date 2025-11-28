@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -13,6 +13,13 @@ import {
   FormControlLabel,
   Checkbox,
   Tooltip,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  CircularProgress,
+  FormHelperText,
+  type SelectChangeEvent,
 } from '@mui/material';
 import { useAuth } from 'qapp-core';
 import TiptapEditor from '../TipTapEditor';
@@ -22,6 +29,9 @@ import { sendNotification } from '../../notifications/notificationService';
 import { NOTIF_GROUP_ID } from '../../notifications/notifyIndex';
 import { qaAnnouncementPrefix } from '../../constants/qdnConstants';
 import { uniqueId6 } from '../../utils/ids';
+import { getAccountGroups, type GroupSummary } from '../../utils/qortalApi';
+import type { NotifScope } from '../../types/notifications';
+import { QmailPartialError } from '../../utils/qmailNotifications';
 
 type Props = {
   open: boolean;
@@ -30,6 +40,22 @@ type Props = {
 };
 
 const APP_HOME_LINK = 'qortal://APP/Q-Assets';
+
+type QmailPartial = {
+  title: string;
+  identifier: string;
+  sent: number;
+  total: number;
+  savedAt: number;
+};
+
+function saveQmailPartial(info: QmailPartial) {
+  try {
+    localStorage.setItem('qassets_qmail_partial', JSON.stringify(info));
+  } catch {
+    /* ignore */
+  }
+}
 
 export default function AnnouncementDialog({
   open,
@@ -45,6 +71,72 @@ export default function AnnouncementDialog({
   const { name: userName, address, authenticateUser } = useAuth();
   const [notifyMail, setNotifyMail] = useState(false);
   const [notifyChat, setNotifyChat] = useState(false);
+  const [groupOptions, setGroupOptions] = useState<GroupSummary[]>([]);
+  const [groupsLoading, setGroupsLoading] = useState(false);
+  const [notificationGroupId, setNotificationGroupId] = useState<number | ''>('');
+  const [qmailThrottle, setQmailThrottle] = useState<{
+    sent: number;
+    total: number;
+    secondsLeft: number;
+    resolver: (v: boolean) => void;
+    identifier: string;
+    title: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!qmailThrottle) return;
+    const id = setInterval(() => {
+      setQmailThrottle((prev) => {
+        if (!prev) return prev;
+        const next = prev.secondsLeft - 1;
+        if (next <= 0) {
+          prev.resolver(true);
+          return null;
+        }
+        return { ...prev, secondsLeft: next };
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [qmailThrottle]);
+
+  const cancelQmailThrottle = () => {
+    if (!qmailThrottle) return;
+    saveQmailPartial({
+      title: qmailThrottle.title,
+      identifier: qmailThrottle.identifier,
+      sent: qmailThrottle.sent,
+      total: qmailThrottle.total,
+      savedAt: Date.now(),
+    });
+    qmailThrottle.resolver(false);
+    setQmailThrottle(null);
+    setBusy(false);
+    setErr(
+      `Q-Mail paused after ${qmailThrottle.sent}/${qmailThrottle.total}. Saved for re-publish later.`
+    );
+  };
+
+  useEffect(() => {
+    if (!address) {
+      setGroupOptions([]);
+      return;
+    }
+    let aborted = false;
+    (async () => {
+      try {
+        setGroupsLoading(true);
+        const groups = await getAccountGroups(address);
+        if (!aborted) setGroupOptions(groups);
+      } catch {
+        if (!aborted) setGroupOptions([]);
+      } finally {
+        if (!aborted) setGroupsLoading(false);
+      }
+    })();
+    return () => {
+      aborted = true;
+    };
+  }, [address]);
 
   async function handlePublish() {
     setErr(null);
@@ -59,6 +151,7 @@ export default function AnnouncementDialog({
       setErr('You must be logged in with a Qortal name to publish.');
       return;
     }
+    let identifier = '';
     try {
       setBusy(true);
 
@@ -70,7 +163,7 @@ export default function AnnouncementDialog({
       };
 
       const prefix = publishIdentifierPrefix || qaAnnouncementPrefix;
-      const identifier = `${prefix}${uniqueId6()}`;
+      identifier = `${prefix}${uniqueId6()}`;
 
       await qortalRequest({
         action: 'PUBLISH_QDN_RESOURCE',
@@ -79,7 +172,40 @@ export default function AnnouncementDialog({
         data64: await objectToBase64(annPayload),
       });
 
+      const qmailOptions = () => ({
+        batchSize: 60,
+        onThrottle: (ctx: { sent: number; total: number; delayMs: number; nextIndex: number }) =>
+          new Promise<boolean>((resolve) => {
+            setQmailThrottle({
+              sent: ctx.sent,
+              total: ctx.total,
+              secondsLeft: Math.ceil(ctx.delayMs / 1000),
+              resolver: resolve,
+              identifier,
+              title,
+            });
+          }),
+        onProgress: ({ sent, total }: { sent: number; total: number }) =>
+          setQmailThrottle((prev) => (prev ? { ...prev, sent, total } : prev)),
+      });
+
       if ((notifyMail || notifyChat) && address) {
+        const extraGroupId =
+          notificationGroupId && Number.isFinite(Number(notificationGroupId))
+            ? Number(notificationGroupId)
+            : null;
+        const extraGroup =
+          extraGroupId != null ? groupOptions.find((g) => g.groupId === extraGroupId) : null;
+        const extraGroupScope: Extract<NotifScope, { kind: 'group' }> | null =
+          extraGroupId && extraGroup
+            ? {
+                kind: 'group',
+                groupId: extraGroupId,
+                privacy: extraGroup.isOpen ? 'public' : 'private',
+              }
+            : extraGroupId
+              ? { kind: 'group', groupId: extraGroupId }
+              : null;
         const links = [
           {
             label: 'View resource',
@@ -90,36 +216,86 @@ export default function AnnouncementDialog({
             href: APP_HOME_LINK,
           },
         ];
-        await sendNotification({
-          scope: { kind: 'global' },
-          title,
-          bodyHtml: prepared,
-          publisher: { name: userName, address, role: 'admin' },
-          qdnResource: { publisher: userName, identifier },
-          links,
-          deliveries: {
-            internal: { enabled: true, chatPingGroupId: notifyChat ? NOTIF_GROUP_ID : undefined },
-            qmail: notifyMail
-              ? {
-                  enabled: true,
-                  includeScopeSubscribers: true,
-                  subject: `Q-Assets: ${title}`,
-                }
-              : undefined,
-            chat: notifyChat ? { groups: [NOTIF_GROUP_ID] } : undefined,
-          },
-        });
+        const publisher = { name: userName, address, role: 'admin' as const };
+        const notifyTasks: Promise<unknown>[] = [];
+
+        notifyTasks.push(
+          sendNotification({
+            scope: { kind: 'global' },
+            title,
+            bodyHtml: prepared,
+            publisher,
+            qdnResource: { publisher: userName, identifier },
+            links,
+            qmailOptions: qmailOptions(),
+            deliveries: {
+              internal: { enabled: true, chatPingGroupId: notifyChat ? NOTIF_GROUP_ID : undefined },
+              qmail: notifyMail
+                ? {
+                    enabled: true,
+                    includeScopeSubscribers: true,
+                    subject: `Q-Assets: ${title}`,
+                  }
+                : undefined,
+              chat: notifyChat ? { groups: [NOTIF_GROUP_ID] } : undefined,
+            },
+          })
+        );
+
+        if (extraGroupScope && extraGroupScope.groupId !== NOTIF_GROUP_ID) {
+          notifyTasks.push(
+            sendNotification({
+              scope: extraGroupScope,
+              title,
+              bodyHtml: prepared,
+              publisher,
+              qdnResource: { publisher: userName, identifier },
+              links,
+              qmailOptions: qmailOptions(),
+              deliveries: {
+                internal: { enabled: true },
+                qmail: notifyMail
+                  ? {
+                      enabled: true,
+                      includeScopeSubscribers: true,
+                      subject: `Q-Assets: ${title}`,
+                    }
+                  : undefined,
+                chat: notifyChat ? { groups: [extraGroupScope.groupId] } : undefined,
+              },
+            })
+          );
+        }
+
+        if (notifyTasks.length) {
+          await Promise.all(notifyTasks);
+        }
       }
 
       onClose();
       setNotifyMail(false);
       setNotifyChat(false);
+      setNotificationGroupId('');
       setContentHtml('');
       setTitle('');
     } catch (e: any) {
-      setErr(e?.message || 'Failed to publish announcement.');
+      if (e instanceof QmailPartialError || e?.code === 'QMAIL_PARTIAL') {
+        saveQmailPartial({
+          title,
+          identifier,
+          sent: e.sent ?? 0,
+          total: e.total ?? 0,
+          savedAt: Date.now(),
+        });
+        setErr(
+          e?.message ||
+            `Q-Mail paused after ${e.sent ?? 0}/${e.total ?? 0}. Saved progress for re-publish.`
+        );
+      } else {
+        setErr(e?.message || 'Failed to publish announcement.');
+      }
     } finally {
-      setBusy(false);
+      if (!qmailThrottle) setBusy(false);
     }
   }
 
@@ -181,6 +357,71 @@ export default function AnnouncementDialog({
               }
             />
           </Box>
+          <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+            <FormControl sx={{ minWidth: 260 }}>
+              <InputLabel id="announcement-group-select">Additional group (optional)</InputLabel>
+              <Select
+                labelId="announcement-group-select"
+                label="Additional group (optional)"
+                value={notificationGroupId === '' ? '' : notificationGroupId}
+                onChange={(e: SelectChangeEvent<number | ''>) => {
+                  const val = e.target.value;
+                  setNotificationGroupId(val === '' ? '' : Number(val));
+                }}
+                disabled={groupsLoading || !address}
+              >
+                <MenuItem value="">
+                  {notifyMail || notifyChat
+                    ? 'None (global subscribers only)'
+                    : 'Enable mail or chat to send notifications'}
+                </MenuItem>
+                {groupsLoading && (
+                  <MenuItem value="" disabled>
+                    <CircularProgress size={16} sx={{ mr: 1 }} /> Loading groups…
+                  </MenuItem>
+                )}
+                {!groupsLoading && groupOptions.length === 0 && (
+                  <MenuItem value="" disabled>
+                    No groups found for your account
+                  </MenuItem>
+                )}
+                {groupOptions.map((g) => (
+                  <MenuItem key={g.groupId} value={g.groupId}>
+                    {g.groupName} (#{g.groupId}) {g.isAdmin ? '— admin' : ''}{' '}
+                    {g.isOpen ? '(Public)' : '(Private)'}
+                  </MenuItem>
+                ))}
+              </Select>
+              <FormHelperText>
+                Send announcement notifications to a specific group in addition to Q-Assets
+                subscribers.
+              </FormHelperText>
+            </FormControl>
+          </Box>
+          {qmailThrottle && (
+            <Box
+              sx={{
+                p: 1,
+                border: (t) => `1px solid ${t.palette.warning.main}`,
+                borderRadius: 1,
+                bgcolor: (t) => t.palette.warning.light,
+                color: (t) => t.palette.getContrastText(t.palette.warning.light),
+              }}
+            >
+              <Typography variant="body2" fontWeight={700}>
+                Q-Mail throttled
+              </Typography>
+              <Typography variant="body2">
+                Sent {qmailThrottle.sent}/{qmailThrottle.total}. Auto-retrying in{' '}
+                {qmailThrottle.secondsLeft}s.
+              </Typography>
+              <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
+                <Button variant="contained" color="warning" onClick={cancelQmailThrottle}>
+                  Cancel / Pause
+                </Button>
+              </Box>
+            </Box>
+          )}
           {err && <Box sx={{ color: 'error.main', fontSize: 13 }}>{err}</Box>}
         </Box>
       </DialogContent>

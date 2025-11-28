@@ -64,7 +64,7 @@ type BoardCardsState = {
 };
 
 export default function QDeckPermissionsPanel() {
-  const { name: myName } = useAuth() as any;
+  const { name: myName, address: myAddress } = useAuth() as any;
   const [boards, setBoards] = useState<EditableBoard[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -127,11 +127,14 @@ export default function QDeckPermissionsPanel() {
   }, [myName]);
 
   useEffect(() => {
-    if (!myName) return;
-    getAccountGroups(myName)
+    if (!myAddress) {
+      setMyGroups([]);
+      return;
+    }
+    getAccountGroups(myAddress)
       .then((gs) => setMyGroups(gs))
       .catch(() => setMyGroups([]));
-  }, [myName]);
+  }, [myAddress]);
 
   const updateFlag = (boardId: string, flag: keyof NonNullable<QDeckBoard['featureFlags']>) => {
     setBoards((prev) =>

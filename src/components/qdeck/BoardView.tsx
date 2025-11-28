@@ -66,8 +66,9 @@ import {
   tempQAssetEscrowAccountAddress,
 } from '../../constants/qdeckIdentifiers';
 import { Refresh } from '@mui/icons-material';
-// import { useAlert } from '../alerts';
+import { useAlert } from '../alerts';
 // import { canUserEditBoard } from '../../utils/qdeckAccess';
+import { getGroupById, type GroupSummary } from '../../utils/qortalApi';
 
 type NewCardDraft = {
   title: string;
@@ -202,6 +203,58 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
     refreshBoard,
     archiveCard,
   } = useQDeck();
+  const { alert } = useAlert();
+
+  const editorGroupIds = useMemo(() => {
+    if (!board) return [] as number[];
+    const ids = new Set<number>();
+    const useEnhanced = board.featureFlags?.enhancedPerms === true;
+    const source = useEnhanced
+      ? board.editorGroups && board.editorGroups.length
+        ? board.editorGroups
+        : board.groupsAllowed
+      : board.groupsAllowed;
+    for (const g of source ?? []) {
+      const n = Number(g);
+      if (Number.isFinite(n)) ids.add(n);
+    }
+    return Array.from(ids.values());
+  }, [board]);
+
+  const [editorGroups, setEditorGroups] = useState<GroupSummary[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!editorGroupIds.length) {
+      setEditorGroups([]);
+      return;
+    }
+    (async () => {
+      const details = await Promise.all(
+        editorGroupIds.map((id) => getGroupById(id).catch(() => null))
+      );
+      if (!cancelled) setEditorGroups(details.filter(Boolean) as GroupSummary[]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [editorGroupIds]);
+
+  const handleJoinGroup = useCallback(
+    async (group: { groupId: number; groupName?: string }) => {
+      try {
+        await qortalRequest({ action: 'JOIN_GROUP', groupId: group.groupId } as any);
+        await alert(
+          `Join request sent for ${group.groupName ? `${group.groupName} (#${group.groupId})` : `group #${group.groupId}`}.`,
+          'Join group',
+          { severity: 'success' }
+        );
+      } catch (e: any) {
+        await alert(e?.message || 'Failed to join group.', 'Join group', { severity: 'error' });
+      }
+    },
+    [alert]
+  );
 
   // --- header state ---
   const [editingTitle, setEditingTitle] = useState(false);
@@ -715,19 +768,78 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
                       <AddCardInline
                         listId={list.listId}
                         onCancel={() => setAddingForListId(null)}
-                        onSubmit={(draft) => {
+                        onSubmit={async (draft) => {
                           // keep this callback stable with useCallback if you want
                           const nextIndex = cardsByList[list.listId]?.length ?? 0;
-                          void createCard({
-                            title: draft.title,
-                            statusListId: list.listId,
-                            order: nextIndex,
-                            quickDescription: draft.quickDescription,
-                            priority: draft.priority,
-                            estimatedCompletionTimeMinutes: draft.estimatedMinutes,
-                            tags: draft.tags,
-                          });
-                          setAddingForListId(null);
+                          try {
+                            await createCard({
+                              title: draft.title,
+                              statusListId: list.listId,
+                              order: nextIndex,
+                              quickDescription: draft.quickDescription,
+                              priority: draft.priority,
+                              estimatedCompletionTimeMinutes: draft.estimatedMinutes,
+                              tags: draft.tags,
+                            });
+                            setAddingForListId(null);
+                          } catch (e: any) {
+                            console.error('Failed to create card', e);
+                            const groupsToShow: Array<{
+                              groupId: number;
+                              groupName?: string;
+                              isOpen?: boolean;
+                            }> = editorGroups.length
+                              ? editorGroups
+                              : editorGroupIds.map((id) => ({ groupId: id, isOpen: false }));
+                            const errText =
+                              e?.message ||
+                              'You are not a member of any of the editor groups for this board.';
+                            await alert(
+                              <Box sx={{ display: 'grid', gap: 1 }}>
+                                <Typography variant="body2">{errText}</Typography>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                  Editor groups:
+                                </Typography>
+                                {groupsToShow?.length ? (
+                                  <Box sx={{ display: 'grid', gap: 0.75 }}>
+                                    {groupsToShow.map((g) => (
+                                      <Box
+                                        key={g.groupId}
+                                        sx={{ display: 'flex', alignItems: 'center', gap: 1 }}
+                                      >
+                                        <Typography variant="body2">
+                                          {g.groupName
+                                            ? `${g.groupName} (#${g.groupId})`
+                                            : `Group #${g.groupId}`}{' '}
+                                          {g.isOpen ? '(Public)' : '(Private)'}
+                                        </Typography>
+                                        {g.isOpen && (
+                                          <Button
+                                            size="small"
+                                            variant="outlined"
+                                            onClick={() =>
+                                              handleJoinGroup({
+                                                groupId: g.groupId,
+                                                groupName: g.groupName,
+                                              })
+                                            }
+                                          >
+                                            Join group
+                                          </Button>
+                                        )}
+                                      </Box>
+                                    ))}
+                                  </Box>
+                                ) : (
+                                  <Typography variant="body2">
+                                    No editor groups are configured on this board.
+                                  </Typography>
+                                )}
+                              </Box>,
+                              'Not allowed to add cards',
+                              { severity: 'error' }
+                            );
+                          }
                         }}
                       />
                     ) : (
