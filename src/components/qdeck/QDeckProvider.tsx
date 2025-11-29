@@ -9,8 +9,6 @@ import React, {
 } from 'react';
 import { QDeckBoard, QDeckCard, CardCommentThread, CardsIndexDoc } from '../../types/qdeck';
 import {
-  saveBoardDoc,
-  saveCardDoc,
   saveCommentsDoc,
   appendPaymentLine,
   QUserIdentity,
@@ -23,7 +21,10 @@ import {
   resolveBoardForReadWithMeta,
   discoverComments,
   loadCommentsDoc,
-  updateCardArchiveState,
+  buildCardPublishPayload,
+  buildCardsIndexPublishPayload,
+  buildBoardPublishPayload,
+  repairCardsIndex as repairCardsIndexDoc,
 } from '../../utils/qdeckApi';
 import { useAuth } from 'qapp-core';
 import { deleteBoard as apiDeleteBoard } from '../../utils/qdeckApi'; // path as needed
@@ -37,6 +38,9 @@ import {
 import { QDeckId } from '../../constants/qdeckIdentifiers';
 import { useFetchTracker } from '../../state/global/fetchTracker';
 import pLimit from 'p-limit';
+import { useAlert } from '../alerts';
+import { useQdnBatchPublisher } from '../../utils/useQdnBatchPublisher';
+import type { BatchPublishResource } from '../../utils/useQdnBatchPublisher';
 // import QDeckPermissionsPanel from './QDeckPermissionsPanel';
 
 // ---- Types ----
@@ -44,6 +48,39 @@ type LoadOpts = {
   visibility?: 'public' | 'private';
   groupId?: number;
   isAdmins?: boolean;
+};
+
+type PublishMode = 'immediate' | 'batch';
+const QUEUE_STORAGE_KEY = 'qdeck_publish_queue_v1';
+const PUBLISH_MODE_STORAGE_KEY = 'qdeck_publish_mode_v1';
+
+const readPublishQueueFromStorage = (): Record<string, BatchPublishResource[]> => {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.sessionStorage.getItem(QUEUE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const out: Record<string, BatchPublishResource[]> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!Array.isArray(value)) continue;
+      out[key] = value.filter((item) => item && typeof item === 'object') as BatchPublishResource[];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+};
+
+const readPublishModeFromStorage = (): PublishMode => {
+  if (typeof window === 'undefined') return 'immediate';
+  try {
+    const raw = window.sessionStorage.getItem(PUBLISH_MODE_STORAGE_KEY);
+    if (raw === 'batch') return 'batch';
+  } catch {
+    /* ignore */
+  }
+  return 'immediate';
 };
 
 type QDeckCtx = {
@@ -82,6 +119,14 @@ type QDeckCtx = {
 
   loadCommentsForCard: (cardId: string) => Promise<void>;
 
+  publishMode: PublishMode;
+  setPublishMode: (mode: PublishMode) => void;
+  pendingPublishCount: (boardId: string) => number;
+  publishPendingResources: (boardId: string) => Promise<void>;
+  isPublishingQueue: (boardId: string) => boolean;
+  isRepairingIndex: boolean;
+  repairCardsIndex: () => Promise<void>;
+
   recordPayment: (line: Parameters<typeof appendPaymentLine>[2]) => Promise<void>;
   deleteBoard: (opts?: { cascadeCards?: boolean; cascadeComments?: boolean }) => Promise<void>;
 };
@@ -104,6 +149,91 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [cardVariants, setCardVariants] = useState<Record<string, QDeckCard[]>>({});
   const [archivedCardIds, setArchivedCardIds] = useState<Set<string>>(new Set());
   const [comments, setComments] = useState<Record<string, CardCommentThread>>({});
+  const { publish: publishResources } = useQdnBatchPublisher();
+  const { alert } = useAlert();
+  const [publishQueue, setPublishQueue] = useState<Record<string, BatchPublishResource[]>>(() =>
+    readPublishQueueFromStorage()
+  );
+  const [publishMode, setPublishMode] = useState<PublishMode>(() => readPublishModeFromStorage());
+  const [publishingBoardId, setPublishingBoardId] = useState<string | null>(null);
+  const [repairingIndex, setRepairingIndex] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.sessionStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(publishQueue));
+    } catch {
+      /* ignore */
+    }
+  }, [publishQueue]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.sessionStorage.setItem(PUBLISH_MODE_STORAGE_KEY, publishMode);
+    } catch {
+      /* ignore */
+    }
+  }, [publishMode]);
+
+  const enqueuePublishResources = useCallback(
+    (boardId: string, resources: BatchPublishResource[]) => {
+      if (!boardId || resources.length === 0) return;
+      setPublishQueue((prev) => {
+        const existing = prev[boardId] ?? [];
+        return { ...prev, [boardId]: [...existing, ...resources] };
+      });
+    },
+    []
+  );
+
+  const clearPublishQueueForBoard = useCallback((boardId: string) => {
+    setPublishQueue((prev) => {
+      if (!prev[boardId]) return prev;
+      const next = { ...prev };
+      delete next[boardId];
+      return next;
+    });
+  }, []);
+
+  const pendingPublishCount = useCallback(
+    (boardId: string) => publishQueue[boardId]?.length ?? 0,
+    [publishQueue]
+  );
+
+  const queueOrPublishResources = useCallback(
+    async (boardId: string, resources: BatchPublishResource[]) => {
+      if (!boardId || resources.length === 0) return;
+      if (publishMode === 'batch') {
+        enqueuePublishResources(boardId, resources);
+        return;
+      }
+      await publishResources(resources);
+    },
+    [publishMode, enqueuePublishResources, publishResources]
+  );
+
+  const publishPendingResources = useCallback(
+    async (boardId: string) => {
+      if (!boardId) return;
+      const resources = publishQueue[boardId];
+      if (!resources?.length) return;
+      setPublishingBoardId(boardId);
+      try {
+        await publishResources(resources);
+        clearPublishQueueForBoard(boardId);
+        await alert('Queued updates published.', 'Publish queue', { severity: 'success' });
+      } finally {
+        setPublishingBoardId(null);
+      }
+    },
+    [alert, clearPublishQueueForBoard, publishQueue, publishResources]
+  );
+
+  const isPublishingQueue = useCallback(
+    (boardId: string) => Boolean(boardId && publishingBoardId === boardId),
+    [publishingBoardId]
+  );
 
   const doneListId = useMemo(
     () => board?.lists.find((l) => l.title?.toLowerCase().includes('done'))?.listId,
@@ -136,6 +266,17 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return false;
     },
     [collapsedCardPrefs, doneListId]
+  );
+
+  const normalizeCardCollapse = useCallback(
+    (card: QDeckCard) => {
+      const collapsed = isCardCollapsed(card.cardId, card);
+      if (card.isCollapsed === collapsed) {
+        return card;
+      }
+      return { ...card, isCollapsed: collapsed };
+    },
+    [isCardCollapsed]
   );
 
   const identity: QUserIdentity = {
@@ -258,6 +399,24 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     [identity.address, cardLimiter]
   );
 
+  const repairCardsIndex = useCallback(async () => {
+    if (!board) throw new Error('No board loaded');
+    const issuer = board.createdBy || identity.name;
+    if (!issuer) throw new Error('Identity missing for repair');
+    setRepairingIndex(true);
+    try {
+      await repairCardsIndexDoc(issuer, board);
+      await alert('Cards index repaired.', 'Repair index', { severity: 'success' });
+      await track(loadCardsForBoard(issuer, board), `qdeck:repair:${board.boardId}`);
+    } catch (e: any) {
+      await alert(e?.message || 'Failed to repair cards index', 'Repair index', {
+        severity: 'error',
+      });
+    } finally {
+      setRepairingIndex(false);
+    }
+  }, [alert, board, identity.name, loadCardsForBoard, track]);
+
   const loadBoardById = useCallback<QDeckCtx['loadBoardById']>(
     async (ns, boardIdOrIdent, visibility /*_opts*/) => {
       const issuer = (ns || '').trim();
@@ -345,10 +504,12 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const persistBoard = useCallback<QDeckCtx['persistBoard']>(
     async (nextBoard) => {
-      await saveBoardDoc(auth.name!, nextBoard);
+      const publisher = auth.name ?? identity.name ?? nextBoard.createdBy;
+      const boardPayload = await buildBoardPublishPayload(publisher, nextBoard);
+      await queueOrPublishResources(nextBoard.boardId, [boardPayload]);
       setBoard(nextBoard);
     },
-    [identity.name]
+    [identity.name, auth.name, queueOrPublishResources]
   );
 
   const refreshBoard = useCallback(
@@ -418,12 +579,24 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         collapsedWhenDone: true,
       };
 
-      setCards((prev) => ({ ...prev, [c.cardId]: c }));
-      await saveCardDoc(auth.name ? auth.name : identity.name, board, c);
-      await addCardToIndex(auth.name ? auth.name : identity.name, board, c.cardId);
+      setCards((prev) => ({ ...prev, [c.cardId]: normalizeCardCollapse(c) }));
+      const publisher = auth.name ? auth.name : identity.name;
+      const indexDoc = await addCardToIndex(publisher, board, c.cardId, undefined, {
+        skipPublish: true,
+      });
+      const cardPayload = await buildCardPublishPayload(publisher, board, c);
+      const indexPayload = await buildCardsIndexPublishPayload(publisher, board, indexDoc);
+      await queueOrPublishResources(board.boardId, [cardPayload, indexPayload]);
       return c;
     },
-    [board, identity.name, identity.address]
+    [
+      board,
+      identity.name,
+      identity.address,
+      auth.name,
+      queueOrPublishResources,
+      normalizeCardCollapse,
+    ]
   );
 
   const moveCard = useCallback<QDeckCtx['moveCard']>(
@@ -439,10 +612,12 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updatedAt: Date.now(),
         seq: c.seq + 1,
       };
-      setCards((prev) => ({ ...prev, [cardId]: next }));
-      await saveCardDoc(auth.name ? auth.name : identity.name, board, next);
+      setCards((prev) => ({ ...prev, [cardId]: normalizeCardCollapse(next) }));
+      const publisher = auth.name ? auth.name : identity.name;
+      const payload = await buildCardPublishPayload(publisher, board, next);
+      await queueOrPublishResources(board.boardId, [payload]);
     },
-    [board, cards]
+    [board, cards, auth.name, identity.name, queueOrPublishResources, normalizeCardCollapse]
   );
 
   const increaseCardSeq = (seq: number) => {
@@ -463,19 +638,54 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (current && card.seq <= current.seq) throw new Error('Stale write (seq too low)');
       // card.seq + 1;
       card.seq = increaseCardSeq(card.seq);
-      setCards((prev) => ({ ...prev, [card.cardId]: card }));
-      // if (!auth.name) alert('Authentication failure', 'error', { severity: 'error' });
-      // if (!auth || !auth.name || !identity.name) return;
-      await saveCardDoc(auth.name ? auth.name : identity.name, board, card);
+      setCards((prev) => ({ ...prev, [card.cardId]: normalizeCardCollapse(card) }));
+      const publisher = auth.name ? auth.name : identity.name;
+      const payload = await buildCardPublishPayload(publisher, board, card);
+      await queueOrPublishResources(board.boardId, [payload]);
     },
-    [board, cards]
+    [board, cards, auth.name, identity.name, queueOrPublishResources, normalizeCardCollapse]
   );
 
   const archiveCard = useCallback<QDeckCtx['archiveCard']>(
     async (cardId, archived) => {
       if (!board) throw new Error('No board loaded');
       if (!auth.name || !identity.name) throw new Error('Authentication Failed');
-      await updateCardArchiveState(auth.name ? auth.name : identity.name, board, cardId, archived);
+      const c = cards[cardId];
+      if (!c) return;
+      const publisher = auth.name ? auth.name : identity.name;
+
+      const nextCard: QDeckCard = {
+        ...c,
+        archived,
+        archivedAt: archived ? Date.now() : undefined,
+        archivedBy: archived ? publisher : undefined,
+        updatedAt: Date.now(),
+        seq: c.seq + 1,
+      };
+
+      const currentIndex = (await loadCardsIndex(publisher, board)) ?? {
+        _type: 'QDECK_CARDS_INDEX' as const,
+        version: 1,
+        boardId: board.boardId,
+        cardIds: [],
+        entries: [],
+        archivedIds: [],
+        updatedAt: 0,
+        seq: 0,
+      };
+      const archivedSet = new Set(currentIndex.archivedIds ?? []);
+      if (archived) archivedSet.add(cardId);
+      else archivedSet.delete(cardId);
+      const nextIndexDoc: CardsIndexDoc = {
+        ...currentIndex,
+        archivedIds: Array.from(archivedSet),
+        updatedAt: Date.now(),
+        seq: (currentIndex.seq ?? 0) + 1,
+      };
+
+      const cardPayload = await buildCardPublishPayload(publisher, board, nextCard);
+      const indexPayload = await buildCardsIndexPublishPayload(publisher, board, nextIndexDoc);
+      await queueOrPublishResources(board.boardId, [cardPayload, indexPayload]);
       setArchivedCardIds((prev) => {
         const next = new Set(prev);
         if (archived) next.add(cardId);
@@ -501,7 +711,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       }
     },
-    [board, cardVariants]
+    [board, cardVariants, auth.name, identity.name, cards, queueOrPublishResources]
   );
 
   const setPreferredVariant = useCallback<QDeckCtx['setPreferredVariant']>(
@@ -517,7 +727,9 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updatedAt: Date.now(),
         seq: board.seq + 1,
       };
-      await saveBoardDoc(auth.name ?? board.createdBy, nextBoard);
+      publisher = auth.name ?? board.createdBy;
+      const boardPayload = await buildBoardPublishPayload(publisher, nextBoard);
+      await queueOrPublishResources(nextBoard.boardId, [boardPayload]);
       setBoard(nextBoard);
       const variants = cardVariants[cardId];
       if (variants?.length) {
@@ -528,7 +740,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (chosen) setCards((prev) => ({ ...prev, [cardId]: chosen }));
       }
     },
-    [board, cardVariants]
+    [board, cardVariants, auth.name, queueOrPublishResources]
   );
 
   const addComment = useCallback<QDeckCtx['addComment']>(
@@ -701,6 +913,13 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setPreferredVariant,
       addComment,
       loadCommentsForCard,
+      publishMode,
+      setPublishMode,
+      pendingPublishCount,
+      publishPendingResources,
+      isPublishingQueue,
+      isRepairingIndex: repairingIndex,
+      repairCardsIndex,
       recordPayment,
       deleteBoard: deleteBoardImpl,
     }),
@@ -723,6 +942,13 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setPreferredVariant,
       addComment,
       loadCommentsForCard,
+      publishMode,
+      setPublishMode,
+      pendingPublishCount,
+      publishPendingResources,
+      isPublishingQueue,
+      repairingIndex,
+      repairCardsIndex,
       recordPayment,
       deleteBoardImpl,
     ]

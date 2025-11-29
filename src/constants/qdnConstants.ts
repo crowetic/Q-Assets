@@ -4,7 +4,7 @@ import { uniqueId6 } from '../utils/ids';
 
 export const Q_ASSETS_OWNER_ADDRESS = 'QWZDZBKafP19Hin4HivuV6WXgWaBaWUMrN';
 export const Q_ASSET_APP_PUBLISHER: string = 'Q-Assets';
-export const Q_ASSET_APP_VERSION: number = 0.72;
+export const Q_ASSET_APP_VERSION: number = 0.73;
 export const isBeta: boolean = true;
 
 export const Q_ASSETS_VERSION: string = isBeta
@@ -29,7 +29,7 @@ export const assetDividendHeadId = (assetId: number) => `asset_dividend_head__${
 export const qaAnnouncementPrefix = 'qa_announcement__'; // per-entry
 export const qaAnnouncementHeadId = 'qa_announcement_head';
 
-// Global paid promotion identifiers (JSON documents)
+// Global paid promotion identifiers ( documents)
 export const qaPaidPromoPrefix = 'qa_paid_promo__'; // per-entry
 export const qaPaidPromoHeadId = 'qa_paid_promo_head';
 export const qaPromoRequestPrefix = 'qa_promo_req__'; // user-submitted requests

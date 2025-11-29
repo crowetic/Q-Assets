@@ -48,6 +48,8 @@ import {
   InputLabel,
   Select,
   Stack,
+  ToggleButton,
+  ToggleButtonGroup,
   useTheme,
   useMediaQuery,
 } from '@mui/material';
@@ -72,9 +74,12 @@ import {
   tempQAssetEscrowAccountAddress,
 } from '../../constants/qdeckIdentifiers';
 import { Refresh } from '@mui/icons-material';
-import { useAlert } from '../alerts';
 // import { canUserEditBoard } from '../../utils/qdeckAccess';
 import { getGroupById, type GroupSummary } from '../../utils/qortalApi';
+import SettingsBackupRestoreIcon from '@mui/icons-material/SettingsBackupRestore';
+import SecurityIcon from '@mui/icons-material/Security';
+import { useAlert } from '../alerts';
+import { useNavigate } from 'react-router-dom';
 
 type NewCardDraft = {
   title: string;
@@ -230,7 +235,15 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
     deleteBoard,
     refreshBoard,
     archiveCard,
+    publishMode,
+    setPublishMode,
+    pendingPublishCount,
+    publishPendingResources,
+    isPublishingQueue,
+    isRepairingIndex,
+    repairCardsIndex,
   } = useQDeck();
+  const navigate = useNavigate();
   const { alert } = useAlert();
 
   const editorGroupIds = useMemo(() => {
@@ -690,6 +703,12 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
   const qAssetEscrowAddress = tempQAssetEscrowAccountAddress;
   const qAssRevAddr = qAssetsRevenueAddress;
   // const fetchedBoardOwnerAddress = await qDeckBoardOwnerAddress(board.createdBy);
+  const currentBoardId = board.boardId;
+  const queuedCount = pendingPublishCount(currentBoardId);
+  const queuePublishing = isPublishingQueue(currentBoardId);
+  const queueButtonLabel = queuePublishing
+    ? 'Publishing…'
+    : `Publish queued changes${queuedCount ? ` (${queuedCount})` : ''}`;
 
   return (
     <Box
@@ -764,6 +783,37 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
           )}
         </Box>
 
+        <Box
+          sx={{
+            flex: '1 1 auto',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 1,
+            flexWrap: 'wrap',
+          }}
+        >
+          <ToggleButtonGroup
+            size="small"
+            value={publishMode}
+            exclusive
+            onChange={(_event, value) => value && setPublishMode(value)}
+          >
+            <ToggleButton value="immediate">Publish actively</ToggleButton>
+            <ToggleButton value="batch">Queue updates</ToggleButton>
+          </ToggleButtonGroup>
+          <Button
+            variant="contained"
+            color="success"
+            size="small"
+            onClick={() => publishPendingResources(currentBoardId)}
+            disabled={publishMode !== 'batch' || queuedCount === 0 || queuePublishing}
+            sx={{ whiteSpace: 'nowrap' }}
+          >
+            {queueButtonLabel}
+          </Button>
+        </Box>
+
         {/* Quick actions */}
         {/* <Button size="small" variant="outlined" startIcon={<PlaylistAddIcon />} onClick={addList}>
           Add list
@@ -826,6 +876,29 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
           >
             <ListAltIcon fontSize="small" style={{ marginRight: '0.75rem' }} />
             Manage lists…
+          </MenuItem>
+          <MenuItem
+            onClick={() => {
+              repairCardsIndex();
+              handleCloseMenu();
+            }}
+            disabled={isRepairingIndex}
+          >
+            <ListItemIcon>
+              <SettingsBackupRestoreIcon fontSize="small" />
+            </ListItemIcon>
+            {isRepairingIndex ? 'Repairing index…' : 'Repair cards index…'}
+          </MenuItem>
+          <MenuItem
+            onClick={() => {
+              navigate('/manage/qdeck-permissions');
+              handleCloseMenu();
+            }}
+          >
+            <ListItemIcon>
+              <SecurityIcon fontSize="small" />
+            </ListItemIcon>
+            Permissions panel…
           </MenuItem>
           <MenuItem
             onClick={() => {

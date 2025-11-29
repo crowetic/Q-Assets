@@ -63,7 +63,7 @@ export function ManagementManifestEditor({ disabled, onChange }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
-  const { address } = useAuth();
+  const { address, name: authName } = useAuth();
   const [groupOptions, setGroupOptions] = useState<GroupSummary[]>([]);
 
   useEffect(() => {
@@ -257,7 +257,10 @@ export function ManagementManifestEditor({ disabled, onChange }: Props) {
     if (!manifest) return;
     setPublishing(true);
     try {
-      await publishManagementManifest(manifest);
+      if (!authName) {
+        throw new Error('Authenticate with a QDN name before publishing.');
+      }
+      await publishManagementManifest(manifest, authName);
       await load();
     } catch (e: any) {
       setError(e?.message || 'Failed to publish manifest.');

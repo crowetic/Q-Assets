@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Card,
@@ -34,6 +34,7 @@ import {
   resolveBoardForRead,
   saveBoardDoc,
   updateCardArchiveState,
+  repairCardsIndex,
 } from '../../utils/qdeckApi';
 import { useAuth } from 'qapp-core';
 import pLimit from 'p-limit';
@@ -71,6 +72,8 @@ export default function QDeckPermissionsPanel() {
   const [cardsState, setCardsState] = useState<Record<string, BoardCardsState>>({});
   const limit = useMemo(() => pLimit(6), []);
   const [myGroups, setMyGroups] = useState<GroupSummary[]>([]);
+  const [repairingBoards, setRepairingBoards] = useState<Record<string, boolean>>({});
+  const [repairedBoardId, setRepairedBoardId] = useState<string | null>(null);
   // const isPrivate = (b: QDeckBoard) => b.visibility === 'private';
 
   const load = async () => {
@@ -250,6 +253,34 @@ export default function QDeckPermissionsPanel() {
       setLoading(false);
     }
   };
+
+  const repairIndex = useCallback(
+    async (entry: EditableBoard) => {
+      if (!myName) return setError('Authenticate first.');
+      setError(null);
+      setRepairedBoardId(null);
+      setRepairingBoards((prev) => ({ ...prev, [entry.boardId]: true }));
+      try {
+        const resolved =
+          entry.visibility === 'private'
+            ? null
+            : await resolveBoardForRead(myName, entry.boardId, entry.visibility ?? 'public');
+        if (!resolved) throw new Error('Failed to load board for repair');
+        await repairCardsIndex(resolved.createdBy, resolved);
+        await loadCardsForBoard(entry);
+        setRepairedBoardId(entry.boardId);
+      } catch (e: any) {
+        setError(e?.message || 'Failed to repair cards index');
+      } finally {
+        setRepairingBoards((prev) => {
+          const next = { ...prev };
+          delete next[entry.boardId];
+          return next;
+        });
+      }
+    },
+    [loadCardsForBoard, myName]
+  );
 
   const setPreferred = (boardId: string, cardId: string, publisher: string) => {
     setCardsState((prev) => {
@@ -658,22 +689,37 @@ export default function QDeckPermissionsPanel() {
                     <>
                       <Stack
                         direction="row"
-                        alignItems="center"
+                        alignItems="flex-start"
                         justifyContent="space-between"
                         mb={1}
                       >
                         <Typography variant="body2" fontWeight={700}>
                           Cards & Variants
                         </Typography>
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          onClick={() => loadCardsForBoard(b)}
-                          disabled={loading}
-                        >
-                          Load cards
-                        </Button>
+                        <Stack direction="row" spacing={1}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => loadCardsForBoard(b)}
+                            disabled={loading}
+                          >
+                            Load cards
+                          </Button>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => repairIndex(b)}
+                            disabled={isPriv || loading || !!repairingBoards[b.boardId]}
+                          >
+                            {repairingBoards[b.boardId] ? 'Repairing…' : 'Repair index'}
+                          </Button>
+                        </Stack>
                       </Stack>
+                      {!!repairedBoardId && repairedBoardId === b.boardId && (
+                        <Typography variant="caption" color="success.main" sx={{ mb: 1 }}>
+                          Index repaired
+                        </Typography>
+                      )}
 
                       {cardsState[b.boardId] ? (
                         <List dense>

@@ -87,7 +87,15 @@ export const UnconfirmedTxWidget: React.FC = () => {
     }
   }, [size]);
 
-  const list = useMemo(() => Object.values(state.byId), [state.byId]);
+  const list = useMemo(
+    () =>
+      Object.values(state.byId).slice().sort((a, b) => {
+        const aTime = a.firstSeen ?? 0;
+        const bTime = b.firstSeen ?? 0;
+        return bTime - aTime;
+      }),
+    [state.byId]
+  );
   const unconfirmed = list.filter((x) => x.status === 'unconfirmed');
   const confirmed = list.filter((x) => x.status === 'confirmed');
 

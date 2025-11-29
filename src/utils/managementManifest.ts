@@ -203,7 +203,7 @@ async function fetchManifestHit(): Promise<{ name: string; service: Service } | 
     .sort((a, b) => (b.updated || b.created || 0) - (a.updated || a.created || 0));
   const latest = sorted[0];
   if (!latest) return null;
-  return { name: latest.name, service: (latest.service as Service) || 'JSON' };
+  return { name: latest.name, service: (latest.service as Service) || 'DOCUMENT' };
 }
 
 export async function loadManagementManifest(): Promise<ManagementManifest> {
@@ -226,7 +226,7 @@ export async function loadManagementManifest(): Promise<ManagementManifest> {
   }
 }
 
-export async function publishManagementManifest(manifest: ManagementManifest) {
+export async function publishManagementManifest(manifest: ManagementManifest, publisher: string) {
   const payload = await objectToBase64({
     ...manifest,
     version: CURRENT_VERSION,
@@ -234,7 +234,8 @@ export async function publishManagementManifest(manifest: ManagementManifest) {
   });
   await qortalRequest({
     action: 'PUBLISH_QDN_RESOURCE',
-    service: 'JSON',
+    service: 'DOCUMENT',
+    name: publisher,
     identifier: qaManagementManifestId,
     data64: payload,
   });

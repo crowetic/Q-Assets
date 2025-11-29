@@ -1,3 +1,4 @@
+import type { Service } from 'qapp-core';
 import {
   QDeckBoard,
   QDeckCard,
@@ -30,8 +31,15 @@ import { searchSimpleByFullId, searchSimpleByIdPrefixOnly } from './searchSimple
 import { fileToBase64 } from './data';
 import { guessImageMimeFromBase64 } from './fetchAssetAvatar';
 import { transferAsset } from './qortalApi';
-import { canUserDeleteBoard, collectRecipientPublicKeys } from './qdeckAccess';
+import {
+  canUserDeleteBoard,
+  collectRecipientPublicKeys,
+  canPublisherPublishToBoard,
+  cardAuthHeaderMatchesPublisher,
+} from './qdeckAccess';
 import { getCached, setCached, LruTtl } from './cache';
+import type { BatchPublishResource } from './useQdnBatchPublisher';
+import pLimit from 'p-limit';
 
 export type QUserIdentity = {
   name?: string; // QDN name (issuer)
@@ -171,12 +179,69 @@ export async function saveCardsIndex(issuerName: string, board: QDeckBoard, doc:
   });
 }
 
+export async function repairCardsIndex(
+  issuerName: string,
+  board: QDeckBoard,
+  opts?: { concurrency?: number }
+): Promise<CardsIndexDoc> {
+  const current = (await loadCardsIndex(issuerName, board)) ?? {
+    _type: 'QDECK_CARDS_INDEX' as const,
+    version: 1 as const,
+    boardId: board.boardId,
+    cardIds: [],
+    entries: [],
+    archivedIds: [],
+    updatedAt: 0,
+    seq: 0,
+  };
+  const refs = await discoverCardRefsBySearch(board);
+  const limit = opts?.concurrency ? pLimit(opts.concurrency) : pLimit(6);
+  const seen = new Set<string>();
+  const entries: Array<{ name: string; cardId: string }> = [];
+  const cardIds = new Set<string>(current.cardIds ?? []);
+
+  await Promise.all(
+    refs.map((ref) =>
+      limit(async () => {
+        const key = `${ref.name}::${ref.cardId}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        try {
+          const doc = await loadCardDoc(ref.name, board, ref.cardId);
+          if (!doc || (doc as any)._type === 'QDECK_TOMBSTONE') return;
+          if (!cardAuthHeaderMatchesPublisher(doc as QDeckCard, ref.name)) return;
+          if (!(await canPublisherPublishToBoard(board, { name: ref.name }))) return;
+          entries.push({ name: ref.name, cardId: ref.cardId });
+          cardIds.add(ref.cardId);
+        } catch {
+          /* ignore */
+        }
+      })
+    )
+  );
+
+  const next: CardsIndexDoc = {
+    _type: 'QDECK_CARDS_INDEX',
+    version: 1,
+    boardId: board.boardId,
+    cardIds: Array.from(cardIds),
+    entries,
+    archivedIds: current.archivedIds ?? [],
+    updatedAt: Date.now(),
+    seq: (current.seq ?? 0) + 1,
+  };
+
+  await saveCardsIndex(issuerName, board, next);
+  return next;
+}
+
 export async function addCardToIndex(
   issuerName: string, // issuer we're writing the index under (usually board.createdBy)
   board: QDeckBoard,
   cardId: string,
-  publisherName?: string // the *card's* publisher (defaults to issuerName for legacy)
-) {
+  publisherName?: string, // the *card's* publisher (defaults to issuerName for legacy)
+  opts?: { skipPublish?: boolean }
+): Promise<CardsIndexDoc> {
   const doc = (await loadCardsIndex(issuerName, board)) ?? {
     _type: 'QDECK_CARDS_INDEX' as const,
     version: 1 as const,
@@ -202,7 +267,12 @@ export async function addCardToIndex(
   doc.updatedAt = Date.now();
   doc.seq = (doc.seq ?? 0) + 1;
 
+  if (opts?.skipPublish) {
+    return doc;
+  }
+
   await saveCardsIndex(issuerName, board, doc);
+  return doc;
 }
 
 export async function removeCardFromIndex(issuerName: string, board: QDeckBoard, cardId: string) {
@@ -283,6 +353,142 @@ async function encryptForRecipients(base64: string, publicKeys: string[]) {
   return enc;
 }
 
+type PrivatePayloadOptions = {
+  payloadBase64: string;
+  mode?: 'group' | 'direct';
+  groupId?: number;
+  isAdmins?: boolean;
+  recipients?: string[];
+};
+
+async function encryptPrivatePayload(opts: PrivatePayloadOptions) {
+  const { payloadBase64, mode, groupId, isAdmins, recipients } = opts;
+  const effMode = mode ?? (groupId != null ? 'group' : 'direct');
+  if (effMode === 'group') {
+    if (groupId == null) throw new Error('Group mode requires groupId');
+    const enc: string = await qortalRequestWithTimeout(
+      {
+        action: 'ENCRYPT_QORTAL_GROUP_DATA',
+        base64: payloadBase64,
+        groupId,
+        isAdmins: !!isAdmins,
+      },
+      240_000
+    );
+    if (!enc) throw new Error('ENCRYPT_QORTAL_GROUP_DATA failed');
+    return addPrivateMagic(enc);
+  }
+  if (!recipients?.length) throw new Error('Direct mode requires recipients');
+  const enc = await encryptForRecipients(payloadBase64, recipients);
+  return addPrivateMagic(enc);
+}
+
+type PublishPayloadParams = {
+  name: string;
+  identifier: string;
+  object: object;
+  isPrivate?: boolean;
+  groupId?: number;
+  isAdmins?: boolean;
+  mode?: 'group' | 'direct';
+  recipients?: string[];
+  service?: Service;
+};
+
+async function preparePublishPayload(params: PublishPayloadParams): Promise<BatchPublishResource> {
+  const { name, identifier, object, isPrivate, groupId, isAdmins, mode, recipients, service } =
+    params;
+  const data64 = await objectToBase64(object);
+  if (isPrivate) {
+    const encrypted = await encryptPrivatePayload({
+      payloadBase64: data64,
+      mode,
+      groupId,
+      isAdmins,
+      recipients,
+    });
+    return {
+      name,
+      service: service ?? 'DOCUMENT_PRIVATE',
+      identifier,
+      data64: encrypted,
+    };
+  }
+  return {
+    name,
+    service: service ?? 'DOCUMENT',
+    identifier,
+    data64,
+  };
+}
+
+export async function buildCardPublishPayload(
+  issuerName: string,
+  board: QDeckBoard,
+  card: QDeckCard
+): Promise<BatchPublishResource> {
+  const identifier =
+    board.visibility === 'public'
+      ? QDeckId.cardPublic(board.boardId, card.cardId)
+      : QDeckId.cardPrivate(board.boardId, card.cardId);
+  return preparePublishPayload({
+    name: issuerName,
+    identifier,
+    object: card,
+    isPrivate: board.visibility === 'private',
+    groupId: board.privateMeta?.groupId,
+    isAdmins: board.privateMeta?.isAdmins,
+    mode: board.privateMeta?.mode,
+    recipients: board.privateMeta?.recipients,
+    service: board.visibility === 'private' ? 'DOCUMENT_PRIVATE' : 'DOCUMENT',
+  });
+}
+
+export async function buildCardsIndexPublishPayload(
+  issuerName: string,
+  board: QDeckBoard,
+  doc: CardsIndexDoc
+): Promise<BatchPublishResource> {
+  const identifier = QDeckId.cardsIndex(board.boardId);
+  return preparePublishPayload({
+    name: issuerName,
+    identifier,
+    object: doc,
+    isPrivate: board.visibility === 'private',
+    groupId: board.privateMeta?.groupId,
+    isAdmins: board.privateMeta?.isAdmins,
+    mode: board.privateMeta?.mode,
+    recipients: board.privateMeta?.recipients,
+    service: board.visibility === 'private' ? 'DOCUMENT_PRIVATE' : 'DOCUMENT',
+  });
+}
+
+export async function buildBoardPublishPayload(
+  issuerName: string,
+  board: QDeckBoard
+): Promise<BatchPublishResource> {
+  const identifier =
+    board.visibility === 'public'
+      ? QDeckId.boardPublic(board.boardId)
+      : QDeckId.boardPrivate(
+          board.boardId,
+          board.privateMeta?.mode ?? 'group',
+          board.privateMeta?.isAdmins,
+          board.privateMeta?.groupId
+        );
+  return preparePublishPayload({
+    name: issuerName,
+    identifier,
+    object: board,
+    isPrivate: board.visibility === 'private',
+    groupId: board.privateMeta?.groupId,
+    isAdmins: board.privateMeta?.isAdmins,
+    mode: board.privateMeta?.mode,
+    recipients: board.privateMeta?.recipients,
+    service: board.visibility === 'private' ? 'DOCUMENT_PRIVATE' : 'DOCUMENT',
+  });
+}
+
 async function decryptDirect(encryptedData: string) {
   const clear: string | null = await qortalRequest({
     action: 'DECRYPT_DATA',
@@ -355,13 +561,18 @@ async function fetchPrivate<T>(opts: {
 }): Promise<T | null> {
   const { identifier, issuerName, mode, groupId, isAdmins } = opts;
 
-  let base64: string | null = await qortalRequest({
-    action: 'FETCH_QDN_RESOURCE',
-    name: issuerName,
-    service: 'DOCUMENT_PRIVATE',
-    identifier,
-    encoding: 'base64',
-  });
+  let base64: string | null = null;
+  try {
+    base64 = await qortalRequest({
+      action: 'FETCH_QDN_RESOURCE',
+      name: issuerName,
+      service: 'DOCUMENT_PRIVATE',
+      identifier,
+      encoding: 'base64',
+    });
+  } catch {
+    return null;
+  }
   if (!base64) return null;
 
   if (mode === 'group') {
@@ -423,13 +634,18 @@ export async function qdeckFetch<T>(
   // console.log('passed service',service)
 
   // PUBLIC: fetch + decode JSON
-  const res: string | null = await qortalRequest({
-    action: 'FETCH_QDN_RESOURCE',
-    name,
-    service: 'DOCUMENT', // for public reads we always use DOCUMENT
-    identifier,
-    encoding: 'base64',
-  });
+  let res: string | null = null;
+  try {
+    res = await qortalRequest({
+      action: 'FETCH_QDN_RESOURCE',
+      name,
+      service: 'DOCUMENT',
+      identifier,
+      encoding: 'base64',
+    });
+  } catch {
+    return null;
+  }
   if (!res) return null;
 
   try {
@@ -469,27 +685,23 @@ export async function qdeckPublish(
   mode?: 'direct' | 'group',
   recipients?: string[]
 ) {
-  const data64 = await objectToBase64(object);
-
-  if (isPrivate) {
-    const effMode: 'direct' | 'group' = mode ?? (groupId != null ? 'group' : 'direct');
-    return publishPrivate({
-      identifier,
-      payloadBase64: data64,
-      mode: effMode,
-      groupId,
-      isAdmins,
-      recipients,
-      issuerName: name,
-    });
-  }
-
-  return qortalRequest({
-    action: 'PUBLISH_QDN_RESOURCE',
-    service: 'DOCUMENT',
+  const payload = await preparePublishPayload({
     name,
     identifier,
-    data64,
+    object,
+    isPrivate,
+    groupId,
+    isAdmins,
+    mode,
+    recipients,
+    service: isPrivate ? 'DOCUMENT_PRIVATE' : 'DOCUMENT',
+  });
+  return qortalRequest({
+    action: 'PUBLISH_QDN_RESOURCE',
+    service: payload.service,
+    name,
+    identifier,
+    data64: payload.data64,
   });
 }
 

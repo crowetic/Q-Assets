@@ -14,7 +14,7 @@ export function priorityMeta(theme: Theme, p: Priority) {
         bg: theme.palette.error.dark,
         fg: theme.palette.error.contrastText,
         border: theme.palette.error.main,
-        label: 'crit',
+        label: 'critical',
       };
     case 'HIGH':
       return {
@@ -30,7 +30,7 @@ export function priorityMeta(theme: Theme, p: Priority) {
         bg: theme.palette.info.dark,
         fg: theme.palette.info.contrastText,
         border: theme.palette.info.main,
-        label: 'norm',
+        label: 'normal',
       };
     case 'LOW':
     default:
