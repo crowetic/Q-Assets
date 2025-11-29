@@ -1,4 +1,12 @@
-import React, { createContext, useContext, useMemo, useRef, useState, useCallback } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  useCallback,
+  useEffect,
+} from 'react';
 import { QDeckBoard, QDeckCard, CardCommentThread, CardsIndexDoc } from '../../types/qdeck';
 import {
   saveBoardDoc,
@@ -46,6 +54,8 @@ type QDeckCtx = {
   cardVariants: Record<string, QDeckCard[]>;
   archivedCardIds: Set<string>;
   comments: Record<string, CardCommentThread>;
+  isCardCollapsed: (cardId: string, card?: QDeckCard) => boolean;
+  setCardCollapsed: (cardId: string, collapsed: boolean) => void;
 
   loadBoardById: (
     issuerName: string,
@@ -94,6 +104,39 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [cardVariants, setCardVariants] = useState<Record<string, QDeckCard[]>>({});
   const [archivedCardIds, setArchivedCardIds] = useState<Set<string>>(new Set());
   const [comments, setComments] = useState<Record<string, CardCommentThread>>({});
+
+  const doneListId = useMemo(
+    () => board?.lists.find((l) => l.title?.toLowerCase().includes('done'))?.listId,
+    [board?.lists]
+  );
+  const [collapsedCardPrefs, setCollapsedCardPrefs] = useState<Record<string, boolean>>({});
+  const boardIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const currentBoardId = board?.boardId ?? null;
+    if (boardIdRef.current !== currentBoardId) {
+      setCollapsedCardPrefs({});
+      boardIdRef.current = currentBoardId;
+    }
+  }, [board?.boardId]);
+
+  const setCardCollapsed = useCallback((cardId: string, value: boolean) => {
+    setCollapsedCardPrefs((prev) => {
+      if (prev[cardId] === value) return prev;
+      return { ...prev, [cardId]: value };
+    });
+  }, []);
+
+  const isCardCollapsed = useCallback(
+    (cardId: string, card?: QDeckCard) => {
+      const isDone = Boolean(card?.isDone);
+      const inDoneList = !!doneListId && card?.statusListId === doneListId;
+      if (isDone || inDoneList) return true;
+      const override = collapsedCardPrefs[cardId];
+      if (override !== undefined) return override;
+      return false;
+    },
+    [collapsedCardPrefs, doneListId]
+  );
 
   const identity: QUserIdentity = {
     name: auth?.name as string,
@@ -365,12 +408,14 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         statusListId: partial.statusListId ?? board.lists[0].listId,
         order: partial.order ?? 0,
         isDone: false,
+        completedAt: undefined,
         hasBounty: !!partial.hasBounty,
         bountyInfo: partial.hasBounty ? partial.bountyInfo : undefined,
         upvotes: partial.upvotes ?? { currency: 'QASSET', count: 0, totalAmount: '0' },
         createdAt: now,
         updatedAt: now,
         seq: 1,
+        collapsedWhenDone: true,
       };
 
       setCards((prev) => ({ ...prev, [c.cardId]: c }));
@@ -644,6 +689,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       cardVariants,
       archivedCardIds,
       comments,
+      isCardCollapsed,
+      setCardCollapsed,
       loadBoardById,
       persistBoard,
       refreshBoard,
@@ -664,6 +711,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       cardVariants,
       archivedCardIds,
       comments,
+      isCardCollapsed,
+      setCardCollapsed,
       loadBoardById,
       persistBoard,
       refreshBoard,

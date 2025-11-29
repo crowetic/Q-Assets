@@ -1,4 +1,10 @@
-import { createBrowserRouter, RouterProvider, Outlet, RouteObject } from 'react-router-dom';
+import {
+  createBrowserRouter,
+  RouterProvider,
+  Outlet,
+  RouteObject,
+  Navigate,
+} from 'react-router-dom';
 import { AppWrapper } from '../AppWrapper';
 import Home from '../pages/Home';
 import AssetExplorer from '../pages/AssetExplorer';
@@ -70,7 +76,7 @@ export function Routes() {
         <AlertProvider>
           <QortalLinkProvider>
             <QortalLinkHandler>
-              <SafeBoundary fallback={<div style={{ padding: 16 }}>Loading…</div>}>
+              <SafeBoundary fallback={<Navigate to="/" replace />}>
                 <AppWrapper />
               </SafeBoundary>
             </QortalLinkHandler>

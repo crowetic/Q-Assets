@@ -91,8 +91,6 @@ export const UnconfirmedTxWidget: React.FC = () => {
   const unconfirmed = list.filter((x) => x.status === 'unconfirmed');
   const confirmed = list.filter((x) => x.status === 'confirmed');
 
-  if (list.length === 0) return null;
-
   const detailValue = (value: unknown) => {
     if (value === undefined || value === null) return null;
     if (typeof value === 'string') return value || null;
@@ -281,10 +279,10 @@ export const UnconfirmedTxWidget: React.FC = () => {
     window.removeEventListener('pointerup', endResize);
   };
 
-  // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => endDrag, []);
-  // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => endResize, []);
+
+  if (list.length === 0) return null;
 
   return (
     <Box style={container} ref={containerRef}>

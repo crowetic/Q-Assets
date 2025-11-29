@@ -1,50 +1,167 @@
-import * as React from 'react';
 import { useQDeck } from './QDeckProvider';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Paper, Box, Typography, IconButton, Avatar, Chip, Stack, Tooltip } from '@mui/material';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
+import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
+import ArchiveIcon from '@mui/icons-material/Archive';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { fetchAccountAvatarDataUrl } from '../../utils/qdnAvatar';
 import { resolvePrimaryImageDataUrl } from '../../utils/qdeckApi';
 import { priorityMeta, formatMinutes } from './ui';
 import { useTheme } from '@mui/material';
+import { alpha } from '@mui/material/styles';
+import { CSSProperties, FC, MouseEvent, useCallback, useEffect, useMemo, useState } from 'react';
 
 type DraggableProps = {
   cardId: string;
   listId: string;
   onClick?: (cardId: string) => void;
+  index: number;
+  totalCards: number;
+  onManualReorder?: () => void;
+  forceMinimized?: boolean;
 };
 
-// function colorFor(name: string) {
-//   let h = 0;
-//   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
-//   return `hsl(${((h % 360) + 360) % 360} 70% 45%)`;
-// }
-
-export const DraggableCard: React.FC<DraggableProps> = ({ cardId, listId, onClick }) => {
+export const DraggableCard: FC<DraggableProps> = ({
+  cardId,
+  listId,
+  onClick,
+  index,
+  totalCards,
+  onManualReorder,
+  forceMinimized,
+}) => {
   const theme = useTheme();
-  const { board, cards } = useQDeck();
+  const { board, cards, moveCard, archiveCard, updateCard, isCardCollapsed, setCardCollapsed } =
+    useQDeck();
   const card = cards[cardId];
+
+  const [minimized, setMinimized] = useState(false);
+
+  useEffect(() => {
+    if (forceMinimized !== undefined) {
+      setMinimized(forceMinimized);
+      return;
+    }
+    const collapsed = isCardCollapsed(cardId, card);
+    setMinimized(Boolean(collapsed));
+  }, [forceMinimized, cardId, card, isCardCollapsed]);
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `${cardId}::${listId}`,
   });
 
-  const style: React.CSSProperties = {
+  const pMeta = priorityMeta(theme, card.priority);
+  const PriIcon = pMeta.icon;
+  const isDone = Boolean(card?.isDone);
+  const cardBorder = isDone ? theme.palette.success.main : pMeta.border;
+  const cardBg = isDone ? alpha(theme.palette.success.light, 0.25) : pMeta.bg;
+  const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.6 : 1,
     cursor: 'default',
   };
 
+  const persistCollapse = useCallback(
+    (value: boolean, event?: MouseEvent<HTMLButtonElement>) => {
+      event?.stopPropagation();
+      setCardCollapsed(cardId, value);
+      setMinimized(value);
+    },
+    [cardId, setCardCollapsed]
+  );
+
+  const moveInDirection = useCallback(
+    async (direction: 'up' | 'down') => {
+      const lastIndex = Math.max(0, totalCards - 1);
+      const target = direction === 'up' ? Math.max(0, index - 1) : Math.min(lastIndex, index + 1);
+      if (target === index) return;
+      try {
+        await moveCard(cardId, listId, target);
+        onManualReorder?.();
+      } catch (err) {
+        console.error('Failed to move card', err);
+      }
+    },
+    [cardId, index, listId, moveCard, onManualReorder, totalCards]
+  );
+
+  const toggleMinimized = useCallback(
+    (event: MouseEvent<HTMLButtonElement>) => {
+      persistCollapse(!minimized, event);
+    },
+    [minimized, persistCollapse]
+  );
+
+  const doneListId = useMemo(() => {
+    const lists = board?.lists ?? [];
+    const doneList = lists.find((l) => l.title?.toLowerCase().includes('done'));
+    return doneList?.listId;
+  }, [board?.lists]);
+
+  const handleArchive = useCallback(
+    async (event: MouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation();
+      try {
+        await archiveCard(cardId, true);
+      } catch (err) {
+        console.error('Failed to archive card', err);
+      }
+    },
+    [archiveCard, cardId]
+  );
+
+  const handleToggleComplete = useCallback(
+    async (event: MouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation();
+      if (!card) return;
+      const nextIsDone = !card.isDone;
+      const nextCard: typeof card = {
+        ...card,
+        isDone: nextIsDone,
+        updatedAt: Date.now(),
+        completedAt: nextIsDone ? Date.now() : undefined,
+        isCollapsed: nextIsDone,
+        collapsedWhenDone: nextIsDone,
+      };
+      nextCard.seq = card.seq + 1;
+      if (nextIsDone && doneListId && doneListId !== card.statusListId) {
+        const doneOrder = Object.values(cards).filter((c) => c.statusListId === doneListId).length;
+        nextCard.statusListId = doneListId;
+        nextCard.order = doneOrder;
+      }
+      try {
+        await updateCard(nextCard);
+      } catch (err: any) {
+        if (err?.message?.includes('Stale write')) {
+          console.warn('Retrying complete toggle after stale seq', err);
+          nextCard.seq += 1;
+          try {
+            await updateCard(nextCard);
+          } catch (retryErr) {
+            console.error('Failed to toggle complete on retry', retryErr);
+          }
+        } else {
+          console.error('Failed to toggle complete', err);
+        }
+      }
+    },
+    [card, cards, doneListId, updateCard]
+  );
+
   const author = card?.createdBy ?? 'U';
   const initial = author.slice(0, 1).toUpperCase();
-  const [avatarUrl, setAvatarUrl] = React.useState<string | undefined>();
-  const [primaryImg, setPrimaryImg] = React.useState<string | undefined>();
+  const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
+  const [primaryImg, setPrimaryImg] = useState<string | undefined>();
 
   // Resolve avatar
-  React.useEffect(() => {
+  useEffect(() => {
     let alive = true;
     (async () => {
       try {
@@ -60,7 +177,7 @@ export const DraggableCard: React.FC<DraggableProps> = ({ cardId, listId, onClic
   }, [author]);
 
   // Resolve primary image (supports url string or encrypted ref)
-  React.useEffect(() => {
+  useEffect(() => {
     let alive = true;
     (async () => {
       try {
@@ -87,9 +204,6 @@ export const DraggableCard: React.FC<DraggableProps> = ({ cardId, listId, onClic
     };
   }, [card, board]);
 
-  const pMeta = priorityMeta(theme, card.priority);
-  const PriIcon = pMeta.icon;
-
   return (
     <Paper
       ref={setNodeRef}
@@ -103,10 +217,10 @@ export const DraggableCard: React.FC<DraggableProps> = ({ cardId, listId, onClic
         p: '0.4rem',
         mb: '0.6rem',
         position: 'relative',
-        minHeight: '5.75rem',
+        minHeight: minimized ? '3.5rem' : '5.75rem',
         height: '100%',
-        borderLeft: `0.42rem solid ${pMeta.border}`,
-        bgColor: pMeta.bg,
+        borderLeft: `0.42rem solid ${cardBorder}`,
+        bgColor: cardBg,
         '&:hover': { boxShadow: 4, border: '0.1rem', borderColor: 'primary.main.contrastText' },
         cursor: 'pointer',
       }}
@@ -126,87 +240,140 @@ export const DraggableCard: React.FC<DraggableProps> = ({ cardId, listId, onClic
       {/* click surface */}
       <Box
         onClick={() => onClick?.(cardId)}
-        sx={{ pl: '2rem', pr: '2.75rem', width: '100%', maxWidth: '100%', minWidth: 0 }}
+        sx={{
+          pl: '2rem',
+          pr: minimized ? '2rem' : '2.25rem',
+          width: '100%',
+          maxWidth: '100%',
+          minWidth: 0,
+        }}
       >
-        <Box
-          sx={{
-            position: 'absolute',
-            top: '5%',
-            right: '1%',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: 0.5, // space between ETA pill and avatar
-            pointerEvents: 'none', // let clicks pass through
-            zIndex: 2,
-          }}
+        <Stack
+          direction="row"
+          alignItems="flex-start"
+          justifyContent="space-between"
+          spacing={1}
+          sx={{ mb: minimized ? 0.3 : 0.6 }}
         >
-          {/* author avatar */}
-          <Avatar
-            src={avatarUrl}
-            sx={{
-              width: '1.6rem',
-              height: '1.6rem',
-              // bgcolor: colorFor(author),
-
-              fontSize: '0.82rem',
-            }}
-          >
-            {initial}
-          </Avatar>
-          {/* </Box> */}
-          {/* <Box
-          sx={{
-            position: 'absolute',
-            top: '35%',
-            right: 6,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 0.1, // space between ETA pill and avatar
-            pointerEvents: 'none', // let clicks pass through
-            zIndex: 2,
-          }}
-        > */}
-          <Chip
-            size="small"
-            label={pMeta.label}
-            icon={<PriIcon sx={{ color: pMeta.fg }} />}
-            sx={{
-              height: '1.35rem',
-              '& .MuiChip-label': {
-                px: '0.4rem',
-                color: pMeta.fg,
-                fontWeight: 300,
-                fontSize: '0.8rem',
-              },
-              '& .MuiChip-icon': { color: pMeta.fg, ml: '0.2rem' },
-              bgcolor: pMeta.bg,
-            }}
-          />
-          {/* </Box> */}
-          {/* <Box
-          sx={{
-            position: 'absolute',
-            top: '65%',
-            right: 6,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 0.1, // space between ETA pill and avatar
-            pointerEvents: 'none', // let clicks pass through
-            zIndex: 2,
-          }}
-        > */}
-          {!!card.estimatedCompletionTimeMinutes && (
-            <Tooltip title="Estimated completion time">
+          <Stack direction="row" alignItems="center" spacing={0.5} sx={{ pointerEvents: 'none' }}>
+            <Avatar
+              src={avatarUrl}
+              sx={{
+                width: '1.6rem',
+                height: '1.6rem',
+                fontSize: '0.82rem',
+              }}
+            >
+              {initial}
+            </Avatar>
+            <Stack direction="row" spacing={0.35} alignItems="center" sx={{ flexWrap: 'wrap' }}>
               <Chip
                 size="small"
-                icon={<AccessTimeIcon />}
-                label={formatMinutes(card.estimatedCompletionTimeMinutes)}
-                sx={{ height: '1.35rem' }}
+                label={pMeta.label}
+                icon={<PriIcon sx={{ color: pMeta.fg }} />}
+                sx={{
+                  height: '1.35rem',
+                  '& .MuiChip-label': {
+                    px: '0.35rem',
+                    color: pMeta.fg,
+                    fontWeight: 300,
+                    fontSize: '0.8rem',
+                  },
+                  '& .MuiChip-icon': { color: pMeta.fg, ml: '0.2rem' },
+                  bgcolor: pMeta.bg,
+                }}
               />
+              {!!card.estimatedCompletionTimeMinutes && (
+                <Tooltip title="Estimated completion time">
+                  <Chip
+                    size="small"
+                    icon={<AccessTimeIcon />}
+                    label={formatMinutes(card.estimatedCompletionTimeMinutes)}
+                    sx={{ height: '1.35rem' }}
+                  />
+                </Tooltip>
+              )}
+            </Stack>
+          </Stack>
+          <Stack
+            direction="row"
+            spacing={0.2}
+            sx={{
+              pointerEvents: 'auto',
+              minWidth: 'auto',
+            }}
+          >
+            <Tooltip title={minimized ? 'Expand card' : 'Minimize card'}>
+              <span style={{ display: 'inline-flex' }}>
+                <IconButton
+                  size="small"
+                  onClick={(event) => toggleMinimized(event)}
+                  aria-label={minimized ? 'Expand card' : 'Minimize card'}
+                >
+                  {minimized ? (
+                    <ExpandMoreIcon fontSize="small" />
+                  ) : (
+                    <ExpandLessIcon fontSize="small" />
+                  )}
+                </IconButton>
+              </span>
             </Tooltip>
-          )}
-        </Box>
+            <Tooltip title="Move card up">
+              <span style={{ display: 'inline-flex' }}>
+                <IconButton
+                  size="small"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void moveInDirection('up');
+                  }}
+                  disabled={index === 0}
+                  aria-label="Move card up"
+                >
+                  <ArrowUpwardIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title="Move card down">
+              <span style={{ display: 'inline-flex' }}>
+                <IconButton
+                  size="small"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void moveInDirection('down');
+                  }}
+                  disabled={index >= totalCards - 1}
+                  aria-label="Move card down"
+                >
+                  <ArrowDownwardIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title={card?.isDone ? 'Mark incomplete' : 'Mark complete'}>
+              <span style={{ display: 'inline-flex' }}>
+                <IconButton
+                  size="small"
+                  onClick={handleToggleComplete}
+                  aria-label={card?.isDone ? 'Mark incomplete' : 'Mark complete'}
+                  color={card?.isDone ? 'success' : 'default'}
+                >
+                  <CheckCircleIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title="Archive card">
+              <span style={{ display: 'inline-flex' }}>
+                <IconButton
+                  size="small"
+                  color="error"
+                  onClick={handleArchive}
+                  aria-label="Archive card"
+                >
+                  <ArchiveIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>
+        </Stack>
 
         <Typography
           variant="subtitle1"
@@ -216,12 +383,15 @@ export const DraggableCard: React.FC<DraggableProps> = ({ cardId, listId, onClic
             // 🔽 stop long words/URLs from forcing width
             overflowWrap: 'anywhere',
             wordBreak: 'break-word',
+            whiteSpace: minimized ? 'nowrap' : 'normal',
+            overflow: minimized ? 'hidden' : 'visible',
+            textOverflow: minimized ? 'ellipsis' : 'unset',
           }}
         >
           {card.title}
         </Typography>
 
-        {card.quickDescription && (
+        {!minimized && card.quickDescription && (
           <Typography
             variant="body2"
             sx={{
@@ -236,7 +406,7 @@ export const DraggableCard: React.FC<DraggableProps> = ({ cardId, listId, onClic
           </Typography>
         )}
 
-        {primaryImg && (
+        {!minimized && primaryImg && (
           <Box
             component="img"
             src={primaryImg}
@@ -255,7 +425,7 @@ export const DraggableCard: React.FC<DraggableProps> = ({ cardId, listId, onClic
         )}
 
         {/* tags – subtle but visible */}
-        {card.tags?.length ? (
+        {!minimized && card.tags?.length ? (
           <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">
             {card.tags.map((t) => (
               <Chip

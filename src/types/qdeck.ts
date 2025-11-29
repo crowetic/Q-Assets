@@ -147,7 +147,9 @@ export interface QDeckCard {
   statusListId: string; // which list it lives in
   order: number; // position within list
   isDone: boolean; // DONE list will auto-set true
-  collapsedWhenDone?: boolean; // This should be default
+  collapsedWhenDone?: boolean; // old field kept for compatibility
+  isCollapsed?: boolean;
+  completedAt?: number;
   hasBounty?: boolean;
   bountyInfo?: BountyInfo;
   upvotes?: UpvoteSummary;

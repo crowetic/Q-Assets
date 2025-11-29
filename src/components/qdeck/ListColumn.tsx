@@ -7,11 +7,15 @@ export function ListColumn({
   list,
   cardIds,
   onCardClick,
+  forceMinimized,
+  onManualReorder,
 }: {
   issuerName: string;
   list: any;
   cardIds: string[];
   onCardClick?: (cardId: string) => void;
+  onManualReorder?: () => void;
+  forceMinimized?: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `list::${list.listId}` });
 
@@ -35,8 +39,17 @@ export function ListColumn({
         borderRadius: '0.25rem',
       }}
     >
-      {cardIds.map((cid) => (
-        <DraggableCard key={cid} cardId={cid} listId={list.listId} onClick={onCardClick} />
+      {cardIds.map((cid, index) => (
+        <DraggableCard
+          key={cid}
+          cardId={cid}
+          listId={list.listId}
+          onClick={onCardClick}
+          index={index}
+          totalCards={cardIds.length}
+          onManualReorder={onManualReorder}
+          forceMinimized={forceMinimized}
+        />
       ))}
     </Box>
   );

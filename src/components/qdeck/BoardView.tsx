@@ -8,6 +8,8 @@ import {
   useMemo,
   ReactNode,
   CSSProperties,
+  MouseEvent,
+  KeyboardEvent,
 } from 'react';
 
 import { useQDeck } from './QDeckProvider';
@@ -34,6 +36,7 @@ import {
   MenuItem,
   List as MList,
   ListItem,
+  ListItemIcon,
   // ListItemText,
   Dialog,
   DialogTitle,
@@ -56,6 +59,9 @@ import ListAltIcon from '@mui/icons-material/ListAlt';
 import PlaylistAddIcon from '@mui/icons-material/PlaylistAdd';
 import ArchiveIcon from '@mui/icons-material/Archive';
 import UnarchiveIcon from '@mui/icons-material/Unarchive';
+import TuneIcon from '@mui/icons-material/Tune';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import { ListColumn } from './ListColumn';
 import { Priority } from '../../types/qdeck';
 import CardDialog from './CardDialog';
@@ -82,6 +88,28 @@ type AddCardInlineProps = {
   listId: string;
   onCancel: () => void;
   onSubmit: (draft: NewCardDraft) => void;
+};
+
+type AddPosition = 'top' | 'bottom';
+
+type AddFormState = {
+  listId: string;
+  position: AddPosition;
+};
+
+const priorityRank = (priority?: Priority) => {
+  switch (priority) {
+    case 'CRITICAL':
+      return 0;
+    case 'HIGH':
+      return 1;
+    case 'NORMAL':
+      return 2;
+    case 'LOW':
+      return 3;
+    default:
+      return 4;
+  }
 };
 
 export const AddCardInline = memo(function AddCardInline({
@@ -273,13 +301,95 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
 
   // Manage Lists – drafts keyed by listId
   const [listTitleDrafts, setListTitleDrafts] = useState<Record<string, string>>({});
-
   // --- per-list inline rename state ---
   const [editingListId, setEditingListId] = useState<string | null>(null);
   const [editingListTitle, setEditingListTitle] = useState('');
 
   // quick-add per-list
-  const [addingForListId, setAddingForListId] = useState<string | null>(null);
+  const [addingForList, setAddingForList] = useState<AddFormState | null>(null);
+
+  const handleListTitleDraftChange = useCallback((listId: string, value: string) => {
+    setListTitleDrafts((prev) => ({ ...prev, [listId]: value }));
+  }, []);
+
+  const renameList = useCallback(
+    async (listId: string, newTitleRaw: string) => {
+      if (!board) return;
+      const newTitle = newTitleRaw.trim().toUpperCase();
+      if (!newTitle) return; // ignore empty
+      const lists = board.lists.map((l) => (l.listId === listId ? { ...l, title: newTitle } : l));
+      await persistBoard({ ...board, lists, updatedAt: Date.now() });
+    },
+    [board, persistBoard]
+  );
+
+  const commitListRename = useCallback(
+    async (listId: string, fallbackTitle: string) => {
+      const draft = (listTitleDrafts[listId] ?? fallbackTitle).trim();
+      if (!draft || draft === fallbackTitle) return;
+      await renameList(listId, draft);
+    },
+    [listTitleDrafts, renameList]
+  );
+
+  const handleListTitleKeyDown = useCallback(
+    async (
+      event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement | HTMLDivElement>,
+      listId: string,
+      baseTitle: string
+    ) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        await commitListRename(listId, baseTitle);
+        setEditingListId(null);
+      } else if (event.key === 'Escape') {
+        setEditingListId(null);
+      }
+    },
+    [commitListRename]
+  );
+
+  const handleListTitleBlur = useCallback(
+    async (listId: string, baseTitle: string) => {
+      await commitListRename(listId, baseTitle);
+      setEditingListId(null);
+    },
+    [commitListRename]
+  );
+
+  const handleListTitleSave = useCallback(
+    async (listId: string, baseTitle: string) => {
+      await commitListRename(listId, baseTitle);
+      setEditingListId(null);
+    },
+    [commitListRename]
+  );
+
+  const handleCancelListEdit = useCallback(() => {
+    setEditingListId(null);
+  }, []);
+
+  const startEditingList = useCallback(
+    (list: { listId: string; title: string }) => {
+      setEditingListId(list.listId);
+      setEditingListTitle(list.title);
+      handleListTitleDraftChange(list.listId, list.title);
+    },
+    [handleListTitleDraftChange]
+  );
+
+  const [sortByPriority, setSortByPriority] = useState(true);
+  const markManualReorder = useCallback(() => setSortByPriority(false), []);
+
+  const [viewMode, setViewMode] = useState<'full' | 'minimal'>('full');
+  const [viewMenuAnchor, setViewMenuAnchor] = useState<null | HTMLElement>(null);
+  const isMinimalView = viewMode === 'minimal';
+  const openViewMenu = (event: MouseEvent<HTMLElement>) => setViewMenuAnchor(event.currentTarget);
+  const closeViewMenu = () => setViewMenuAnchor(null);
+  const handleSelectViewMode = (mode: 'full' | 'minimal') => {
+    setViewMode(mode);
+    closeViewMenu();
+  };
 
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -321,11 +431,11 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
   }, [editingTitle, board?.title]);
 
   useEffect(() => {
-    if (addingForListId && inputRef.current) {
+    if (addingForList && inputRef.current) {
       const t = setTimeout(() => inputRef.current?.focus(), 30);
       return () => clearTimeout(t);
     }
-  }, [addingForListId]);
+  }, [addingForList]);
 
   useEffect(() => {
     if (manageListsOpen && board) {
@@ -355,11 +465,108 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
     for (const c of Object.values(cards)) {
       (byList[c.statusListId] ||= []).push(c.cardId);
     }
+    const comparator = (a: string, b: string) => {
+      if (sortByPriority) {
+        const diff = priorityRank(cards[a]?.priority) - priorityRank(cards[b]?.priority);
+        if (diff !== 0) return diff;
+      }
+      return (cards[a]?.order ?? 0) - (cards[b]?.order ?? 0);
+    };
     for (const listId of Object.keys(byList)) {
-      byList[listId].sort((a, b) => cards[a].order - cards[b].order);
+      byList[listId].sort(comparator);
     }
     return byList;
-  }, [cards]);
+  }, [cards, sortByPriority]);
+
+  const getOrderForPosition = useCallback(
+    (listId: string, position: AddPosition) => {
+      const ids = cardsByList[listId] ?? [];
+      if (position === 'top') {
+        if (!ids.length) return 0;
+        return (cards[ids[0]]?.order ?? 0) - 1;
+      }
+      return ids.length;
+    },
+    [cards, cardsByList]
+  );
+
+  const handleCreateCard = useCallback(
+    async (listId: string, position: AddPosition, draft: NewCardDraft) => {
+      const order = getOrderForPosition(listId, position);
+      try {
+        await createCard({
+          title: draft.title,
+          quickDescription: draft.quickDescription,
+          priority: draft.priority,
+          estimatedCompletionTimeMinutes: draft.estimatedMinutes,
+          tags: draft.tags,
+          statusListId: listId,
+          order,
+        });
+        setAddingForList(null);
+        if (position === 'top') {
+          markManualReorder();
+        }
+      } catch (e: any) {
+        console.error('Failed to create card', e);
+        const groupsToShow: Array<{ groupId: number; groupName?: string; isOpen?: boolean }> =
+          editorGroups.length
+            ? editorGroups
+            : editorGroupIds.map((id) => ({ groupId: id, isOpen: false }));
+        const errText =
+          e?.message || 'You are not a member of any of the editor groups for this board.';
+        await alert(
+          <Box sx={{ display: 'grid', gap: 1 }}>
+            <Typography variant="body2">{errText}</Typography>
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              Editor groups:
+            </Typography>
+            {groupsToShow?.length ? (
+              <Box sx={{ display: 'grid', gap: 0.75 }}>
+                {groupsToShow.map((g) => (
+                  <Box key={g.groupId} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Typography variant="body2">
+                      {g.groupName ? `${g.groupName} (#${g.groupId})` : `Group #${g.groupId}`}{' '}
+                      {g.isOpen ? '(Public)' : '(Private)'}
+                    </Typography>
+                    {g.isOpen && (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() =>
+                          handleJoinGroup({
+                            groupId: g.groupId,
+                            groupName: g.groupName,
+                          })
+                        }
+                      >
+                        Join group
+                      </Button>
+                    )}
+                  </Box>
+                ))}
+              </Box>
+            ) : (
+              <Typography variant="body2">
+                No editor groups are configured on this board.
+              </Typography>
+            )}
+          </Box>,
+          'Not allowed to add cards',
+          { severity: 'error' }
+        );
+      }
+    },
+    [
+      alert,
+      createCard,
+      editorGroupIds,
+      editorGroups,
+      getOrderForPosition,
+      handleJoinGroup,
+      markManualReorder,
+    ]
+  );
 
   const sortedLists = useMemo(() => lists.slice().sort((a, b) => a.order - b.order), [lists]);
 
@@ -390,10 +597,12 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
       const newIndex = over.data?.current?.sortable?.index ?? oldIndex;
       if (oldIndex !== newIndex) {
         await moveCard(cardId, dstListId, newIndex);
+        markManualReorder();
       }
     } else {
       const newIndex = cardsByList[dstListId]?.length ?? 0;
       await moveCard(cardId, dstListId, newIndex);
+      markManualReorder();
     }
   };
 
@@ -410,17 +619,6 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
     setDialogOpen(true);
   }, []);
   const closeCard = () => setDialogOpen(false);
-
-  const renameList = useCallback(
-    async (listId: string, newTitleRaw: string) => {
-      if (!board) return;
-      const newTitle = newTitleRaw.trim().toUpperCase();
-      if (!newTitle) return; // ignore empty
-      const lists = board.lists.map((l) => (l.listId === listId ? { ...l, title: newTitle } : l));
-      await persistBoard({ ...board, lists, updatedAt: Date.now() });
-    },
-    [board, persistBoard]
-  );
 
   if (!board) return <Typography>Loading board…</Typography>;
 
@@ -572,6 +770,15 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
         </Button> */}
         <Button
           size="small"
+          variant="outlined"
+          startIcon={<TuneIcon />}
+          onClick={openViewMenu}
+          sx={{ width: { xs: '100%', sm: 'auto' } }}
+        >
+          View: {isMinimalView ? 'Minimal' : 'Full'}
+        </Button>
+        <Button
+          size="small"
           variant="contained"
           startIcon={<Refresh />}
           onClick={() => refreshBoard()}
@@ -579,6 +786,30 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
         >
           Refresh
         </Button>
+
+        <Menu
+          anchorEl={viewMenuAnchor}
+          open={Boolean(viewMenuAnchor)}
+          onClose={closeViewMenu}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        >
+          <MenuItem selected={viewMode === 'full'} onClick={() => handleSelectViewMode('full')}>
+            <ListItemIcon>
+              <VisibilityIcon fontSize="small" />
+            </ListItemIcon>
+            Full view
+          </MenuItem>
+          <MenuItem
+            selected={viewMode === 'minimal'}
+            onClick={() => handleSelectViewMode('minimal')}
+          >
+            <ListItemIcon>
+              <VisibilityOffIcon fontSize="small" />
+            </ListItemIcon>
+            Minimal view
+          </MenuItem>
+        </Menu>
 
         <Tooltip title="Board actions">
           <IconButton onClick={handleOpenMenu} aria-label="board actions">
@@ -676,36 +907,23 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
                         <TextField
                           size="small"
                           value={editingListTitle}
-                          onChange={(e) => setEditingListTitle(e.target.value)}
-                          onKeyDown={async (e) => {
-                            if (e.key === 'Enter') {
-                              await renameList(list.listId, editingListTitle);
-                              setEditingListId(null);
-                            } else if (e.key === 'Escape') {
-                              setEditingListId(null);
-                            }
+                          onChange={(e) => {
+                            setEditingListTitle(e.target.value);
+                            handleListTitleDraftChange(list.listId, e.target.value);
                           }}
-                          onBlur={async () => {
-                            // commit on blur if title changed
-                            if (editingListTitle.trim() && editingListTitle.trim() !== list.title) {
-                              await renameList(list.listId, editingListTitle);
-                            }
-                            setEditingListId(null);
-                          }}
+                          onKeyDown={(e) => handleListTitleKeyDown(e, list.listId, list.title)}
+                          onBlur={() => handleListTitleBlur(list.listId, list.title)}
                           autoFocus
                           sx={{ flex: 1, minWidth: 0 }}
                         />
                         <Button
                           size="small"
                           variant="contained"
-                          onClick={async () => {
-                            await renameList(list.listId, editingListTitle);
-                            setEditingListId(null);
-                          }}
+                          onClick={() => handleListTitleSave(list.listId, list.title)}
                         >
                           Save
                         </Button>
-                        <Button size="small" onClick={() => setEditingListId(null)}>
+                        <Button size="small" onClick={handleCancelListEdit}>
                           Cancel
                         </Button>
                       </>
@@ -714,22 +932,25 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
                         <Typography
                           variant="h6"
                           sx={{ flex: 1, minWidth: 0, lineHeight: 1.3, userSelect: 'none' }}
-                          onDoubleClick={() => {
-                            setEditingListId(list.listId);
-                            setEditingListTitle(list.title);
-                          }}
+                          onDoubleClick={() => startEditingList(list)}
                           title="Double-click to rename"
                         >
                           {list.title}
                         </Typography>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={() => setAddingForList({ listId: list.listId, position: 'top' })}
+                          disabled={
+                            addingForList?.listId === list.listId &&
+                            addingForList.position === 'top'
+                          }
+                          sx={{ textTransform: 'none' }}
+                        >
+                          Add card
+                        </Button>
                         <Tooltip title="Rename list">
-                          <IconButton
-                            size="small"
-                            onClick={() => {
-                              setEditingListId(list.listId);
-                              setEditingListTitle(list.title);
-                            }}
-                          >
+                          <IconButton size="small" onClick={() => startEditingList(list)}>
                             {/* You can swap for an Edit icon if you prefer */}
                             <MoreVertIcon fontSize="small" />
                           </IconButton>
@@ -738,6 +959,15 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
                     )}
                   </Box>
 
+                  {addingForList?.listId === list.listId && addingForList.position === 'top' && (
+                    <Box sx={{ px: '0.75rem', pb: '0.5rem' }}>
+                      <AddCardInline
+                        listId={list.listId}
+                        onCancel={() => setAddingForList(null)}
+                        onSubmit={(draft) => handleCreateCard(list.listId, 'top', draft)}
+                      />
+                    </Box>
+                  )}
                   <ListDroppable id={`list::${list.listId}`}>
                     <SortableContext
                       items={listCardIds.map((cid) => `${cid}::${list.listId}`)}
@@ -759,94 +989,27 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
                           list={list}
                           cardIds={listCardIds}
                           onCardClick={openCard}
+                          onManualReorder={markManualReorder}
+                          forceMinimized={isMinimalView}
                         />
                       </Box>
                     </SortableContext>
                   </ListDroppable>
                   <Box sx={{ p: '0.5rem', borderTop: (t) => `1px solid ${t.palette.divider}` }}>
-                    {addingForListId === list.listId ? (
+                    {addingForList?.listId === list.listId &&
+                    addingForList.position === 'bottom' ? (
                       <AddCardInline
                         listId={list.listId}
-                        onCancel={() => setAddingForListId(null)}
-                        onSubmit={async (draft) => {
-                          // keep this callback stable with useCallback if you want
-                          const nextIndex = cardsByList[list.listId]?.length ?? 0;
-                          try {
-                            await createCard({
-                              title: draft.title,
-                              statusListId: list.listId,
-                              order: nextIndex,
-                              quickDescription: draft.quickDescription,
-                              priority: draft.priority,
-                              estimatedCompletionTimeMinutes: draft.estimatedMinutes,
-                              tags: draft.tags,
-                            });
-                            setAddingForListId(null);
-                          } catch (e: any) {
-                            console.error('Failed to create card', e);
-                            const groupsToShow: Array<{
-                              groupId: number;
-                              groupName?: string;
-                              isOpen?: boolean;
-                            }> = editorGroups.length
-                              ? editorGroups
-                              : editorGroupIds.map((id) => ({ groupId: id, isOpen: false }));
-                            const errText =
-                              e?.message ||
-                              'You are not a member of any of the editor groups for this board.';
-                            await alert(
-                              <Box sx={{ display: 'grid', gap: 1 }}>
-                                <Typography variant="body2">{errText}</Typography>
-                                <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                                  Editor groups:
-                                </Typography>
-                                {groupsToShow?.length ? (
-                                  <Box sx={{ display: 'grid', gap: 0.75 }}>
-                                    {groupsToShow.map((g) => (
-                                      <Box
-                                        key={g.groupId}
-                                        sx={{ display: 'flex', alignItems: 'center', gap: 1 }}
-                                      >
-                                        <Typography variant="body2">
-                                          {g.groupName
-                                            ? `${g.groupName} (#${g.groupId})`
-                                            : `Group #${g.groupId}`}{' '}
-                                          {g.isOpen ? '(Public)' : '(Private)'}
-                                        </Typography>
-                                        {g.isOpen && (
-                                          <Button
-                                            size="small"
-                                            variant="outlined"
-                                            onClick={() =>
-                                              handleJoinGroup({
-                                                groupId: g.groupId,
-                                                groupName: g.groupName,
-                                              })
-                                            }
-                                          >
-                                            Join group
-                                          </Button>
-                                        )}
-                                      </Box>
-                                    ))}
-                                  </Box>
-                                ) : (
-                                  <Typography variant="body2">
-                                    No editor groups are configured on this board.
-                                  </Typography>
-                                )}
-                              </Box>,
-                              'Not allowed to add cards',
-                              { severity: 'error' }
-                            );
-                          }
-                        }}
+                        onCancel={() => setAddingForList(null)}
+                        onSubmit={(draft) => handleCreateCard(list.listId, 'bottom', draft)}
                       />
                     ) : (
                       <Button
                         size="small"
                         variant="outlined"
-                        onClick={() => setAddingForListId(list.listId)}
+                        onClick={() =>
+                          setAddingForList({ listId: list.listId, position: 'bottom' })
+                        }
                       >
                         Add card
                       </Button>
