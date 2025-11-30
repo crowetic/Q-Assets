@@ -55,6 +55,7 @@ interface PortfolioContextValue extends PortfolioState {
   addWallet: (address: string, label?: string) => boolean;
   addWalletByNameOrAddress: (input: string, label?: string) => Promise<boolean>;
   removeWallet: (address: string) => void;
+  setWallets: (wallets: Wallet[]) => void;
   refreshHoldings: () => Promise<void>;
 }
 
@@ -107,6 +108,19 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     },
     [state.wallets]
   );
+
+  const setWallets = useCallback((wallets: Wallet[]) => {
+    const unique: Wallet[] = [];
+    const seen = new Set<string>();
+    wallets.forEach((w) => {
+      if (!w.address) return;
+      const addr = w.address.trim();
+      if (!addr || seen.has(addr)) return;
+      seen.add(addr);
+      unique.push({ address: addr, label: w.label, name: w.name });
+    });
+    dispatch({ type: 'SET_WALLETS', wallets: unique });
+  }, []);
 
   // helpers at top of file (or a small utils module)
   const isQortalAddress = (s: string) => /^Q[0-9A-Za-z]{25,}$/.test(s);
@@ -248,9 +262,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       addWallet,
       addWalletByNameOrAddress,
       removeWallet,
+      setWallets,
       refreshHoldings,
     }),
-    [state, addWallet, addWalletByNameOrAddress, removeWallet, refreshHoldings]
+    [state, addWallet, addWalletByNameOrAddress, removeWallet, setWallets, refreshHoldings]
   );
 
   useEffect(() => {

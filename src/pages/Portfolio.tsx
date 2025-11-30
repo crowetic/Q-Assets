@@ -3,7 +3,9 @@ import { usePortfolio } from '../portfolio/PortfolioProvider';
 import {
   Box,
   Button,
+  Divider,
   Paper,
+  Stack,
   TextField,
   Typography,
   CircularProgress,
@@ -21,10 +23,71 @@ import { transferAsset } from '../utils/qortalApi';
 import { resolveRecipientStrict } from '../utils/address';
 import SendAssetDialog from '../portfolio/SendAssetDialog';
 import TransactionsPanel from '../portfolio/TransactionsPanel';
+import TxDetailsDialog from '../portfolio/TxDetailsDialog';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
-import TxDetailsDialog from '../portfolio/TxDetailsDialog';
+import type { Wallet } from '../portfolio/portfolioTypes';
+import { objectToBase64 } from '../utils/data';
+import { useQdnBatchPublisher } from '../utils/useQdnBatchPublisher';
+import { addPrivateMagic } from '../constants/qdeckIdentifiers';
 
+const SAVED_SET_STORAGE_KEY = 'qa_portfolio_saved_wallet_sets';
+
+type SavedWalletSet = {
+  id: string;
+  name: string;
+  wallets: Wallet[];
+  savedAt: number;
+};
+
+const normalizeStoredWallet = (raw: any): Wallet | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const address = typeof raw.address === 'string' ? raw.address.trim() : '';
+  if (!address) return null;
+  return {
+    address,
+    label: typeof raw.label === 'string' && raw.label ? raw.label : undefined,
+    name: typeof raw.name === 'string' && raw.name ? raw.name : undefined,
+  };
+};
+
+const normalizeStoredSet = (raw: any): SavedWalletSet | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+  if (!name) return null;
+
+  const walletsRaw = Array.isArray(raw.wallets) ? raw.wallets : [];
+  const wallets = walletsRaw
+    .map((w: Wallet) => normalizeStoredWallet(w))
+    .filter((w: Wallet): w is Wallet => Boolean(w));
+  if (!wallets.length) return null;
+
+  const savedAt =
+    typeof raw.savedAt === 'number' && Number.isFinite(raw.savedAt) ? raw.savedAt : Date.now();
+  const id =
+    typeof raw.id === 'string' && raw.id.trim()
+      ? raw.id.trim()
+      : `set-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+
+  return { id, name, wallets, savedAt };
+};
+
+const QA_PORTFOLIO_QDN_PREFIX = 'qa_portfolio_saved_sets';
+
+const buildSavedSetsIdentifier = (address: string) =>
+  `${QA_PORTFOLIO_QDN_PREFIX}__${address.toLowerCase()}`;
+
+const encryptForPublicKey = async (data64: string, publicKey: string) => {
+  const encrypted: string | null = await qortalRequest({
+    action: 'ENCRYPT_DATA',
+    base64: data64,
+    publicKeys: [publicKey],
+  });
+  if (!encrypted || typeof encrypted !== 'string') {
+    throw new Error('Failed to encrypt saved tracked sets.');
+  }
+  return addPrivateMagic(encrypted);
+};
 export default function PortfolioPage() {
   const {
     wallets,
@@ -35,6 +98,7 @@ export default function PortfolioPage() {
     addWalletByNameOrAddress,
     removeWallet,
     refreshHoldings,
+    setWallets,
   } = usePortfolio();
 
   const [newAddr, setNewAddr] = useState('');
@@ -53,6 +117,134 @@ export default function PortfolioPage() {
     open: false,
     tx: null,
   });
+  const [savedSets, setSavedSets] = useState<SavedWalletSet[]>([]);
+  const [saveSetName, setSaveSetName] = useState('');
+  const [savingSet, setSavingSet] = useState(false);
+  const [savedSetMsg, setSavedSetMsg] = useState<string | null>(null);
+  const [publishingSets, setPublishingSets] = useState(false);
+  const [publishStatus, setPublishStatus] = useState<string | null>(null);
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const { publish } = useQdnBatchPublisher();
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SAVED_SET_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      const normalized = parsed
+        .map(normalizeStoredSet)
+        .filter((set): set is SavedWalletSet => Boolean(set));
+      if (normalized.length) setSavedSets(normalized);
+    } catch {
+      setSavedSets([]);
+    }
+  }, []);
+
+  const persistSavedSets = (next: SavedWalletSet[]) => {
+    try {
+      localStorage.setItem(SAVED_SET_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // ignore
+    }
+    setSavedSets(next);
+  };
+
+  const handleSaveCurrentSet = () => {
+    setPublishStatus(null);
+    setPublishError(null);
+    const name = saveSetName.trim();
+    if (!name) {
+      setSavedSetMsg('Provide a name before saving.');
+      return;
+    }
+    if (!wallets.length) {
+      setSavedSetMsg('Add at least one tracked wallet first.');
+      return;
+    }
+    setSavingSet(true);
+    try {
+      const newSet: SavedWalletSet = {
+        id: `set-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        name,
+        wallets: wallets.map((w) => ({ ...w })),
+        savedAt: Date.now(),
+      };
+      const nextSets = [newSet, ...savedSets.filter((set) => set.name !== name)];
+      persistSavedSets(nextSets);
+      setSaveSetName('');
+      setSavedSetMsg(`Saved set "${name}".`);
+    } finally {
+      setSavingSet(false);
+    }
+  };
+
+  const handleLoadSavedSet = (set: SavedWalletSet) => {
+    setWallets(set.wallets.map((w) => ({ ...w })));
+    setSavedSetMsg(`Loaded set "${set.name}".`);
+    setPublishStatus(null);
+    setPublishError(null);
+  };
+
+  const handleDeleteSavedSet = (id: string) => {
+    const next = savedSets.filter((set) => set.id !== id);
+    persistSavedSets(next);
+    setSavedSetMsg('Saved set removed.');
+    setPublishStatus(null);
+    setPublishError(null);
+  };
+
+  const handleClearTracked = () => {
+    setWallets([]);
+    localStorage.setItem('qa_portfolio_skip_mine', '1');
+    setSavedSetMsg('Tracked wallets cleared.');
+    setPublishStatus(null);
+    setPublishError(null);
+  };
+
+  const handlePublishSavedSets = async () => {
+    setPublishStatus(null);
+    setPublishError(null);
+    if (!authAddress || !authPublicKey) {
+      setPublishError('Sign in to publish saved sets.');
+      return;
+    }
+    if (!savedSets.length) {
+      setPublishError('No saved tracked sets to publish.');
+      return;
+    }
+    setPublishingSets(true);
+    try {
+      const payload = {
+        owner: authAddress,
+        savedAt: Date.now(),
+        sets: savedSets.map((set) => ({
+          id: set.id,
+          name: set.name,
+          savedAt: set.savedAt,
+          wallets: set.wallets.map((wallet) => ({
+            address: wallet.address,
+            label: wallet.label,
+            name: wallet.name,
+          })),
+        })),
+      };
+      const base64 = await objectToBase64(payload);
+      const encrypted = await encryptForPublicKey(base64, authPublicKey);
+      await publish([
+        {
+          name: userName || authAddress,
+          service: 'DOCUMENT_PRIVATE',
+          identifier: buildSavedSetsIdentifier(authAddress),
+          data64: encrypted,
+        },
+      ]);
+      setPublishStatus('Saved sets published to QDN.');
+    } catch (e: any) {
+      setPublishError(e?.message || 'Failed to publish saved sets.');
+    } finally {
+      setPublishingSets(false);
+    }
+  };
 
   const navigate = useNavigate();
 
@@ -722,10 +914,107 @@ export default function PortfolioPage() {
             <Button variant="outlined" onClick={() => refreshHoldings()} disabled={loading}>
               Refresh
             </Button>
+            <Button
+              variant="outlined"
+              color="secondary"
+              onClick={handleClearTracked}
+              disabled={loading}
+            >
+              New set
+            </Button>
             {error && (
               <Typography color="error" sx={{ alignSelf: 'center' }}>
                 {error}
               </Typography>
+            )}
+          </Box>
+          <Divider sx={{ my: 2 }} />
+          <Box display="grid" gap={1}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+              <TextField
+                size="small"
+                fullWidth
+                label="Save tracked set as"
+                value={saveSetName}
+                onChange={(e) => setSaveSetName(e.target.value)}
+              />
+              <Button variant="contained" onClick={handleSaveCurrentSet} disabled={savingSet}>
+                {savingSet ? 'Saving…' : 'Save Set'}
+              </Button>
+            </Stack>
+            {savedSetMsg && (
+              <Typography variant="caption" color="text.secondary">
+                {savedSetMsg}
+              </Typography>
+            )}
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={handlePublishSavedSets}
+                disabled={publishingSets || !savedSets.length}
+              >
+                {publishingSets ? 'Publishing…' : 'Publish saved sets'}
+              </Button>
+              {publishError ? (
+                <Typography variant="caption" color="error.main">
+                  {publishError}
+                </Typography>
+              ) : publishStatus ? (
+                <Typography variant="caption" color="success.main">
+                  {publishStatus}
+                </Typography>
+              ) : null}
+            </Stack>
+            <Typography variant="subtitle2" sx={{ mt: 0.5 }}>
+              Saved Tracked Sets
+            </Typography>
+            {savedSets.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                No saved tracked account sets yet.
+              </Typography>
+            ) : (
+              <Stack spacing={1}>
+                {savedSets.map((set) => (
+                  <Paper key={set.id} variant="outlined" sx={{ p: 1.25 }}>
+                    <Stack direction="row" alignItems="flex-start" spacing={1}>
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Typography variant="subtitle2">{set.name}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {set.wallets.length} wallet{set.wallets.length === 1 ? '' : 's'} · saved{' '}
+                          {new Date(set.savedAt).toLocaleDateString()}
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{
+                            display: 'block',
+                            mt: 0.5,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                          title={set.wallets.map((w) => w.name ?? w.address).join(', ')}
+                        >
+                          {set.wallets.map((w) => w.name ?? w.address).join(', ')}
+                        </Typography>
+                      </Box>
+                      <Stack direction="row" spacing={0.5}>
+                        <Button size="small" onClick={() => handleLoadSavedSet(set)}>
+                          Load
+                        </Button>
+                        <Button
+                          size="small"
+                          color="error"
+                          onClick={() => handleDeleteSavedSet(set.id)}
+                        >
+                          Delete
+                        </Button>
+                      </Stack>
+                    </Stack>
+                  </Paper>
+                ))}
+              </Stack>
             )}
           </Box>
         </Paper>
