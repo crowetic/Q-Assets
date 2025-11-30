@@ -58,7 +58,7 @@ const DELETED_SENTINEL_LEN: number = 10;
 
 const MAX_DEPTH = 8; // safety cap for replies
 const AVATAR_SIZE = '3rem';
-const INDENT_STEP = '1.25rem';
+const INDENT_STEP = '1rem';
 
 // Prevent content (images/code/long URLs/tables) from stretching the layout
 const CONTENT_SX = {
@@ -1161,6 +1161,8 @@ function ThreadNodeView({
 }) {
   const depth = Number.isFinite(node.depth) ? (node.depth as number) : 0;
   const kids = Array.isArray(node.children) ? node.children : [];
+  const isReply = depth > 0;
+  const indentDepth = isReply ? 1 : 0;
   const author = typeof node.author === 'string' && node.author ? node.author : 'unknown';
   // const ts = node.ts;
   const html = typeof node.html === 'string' ? node.html : '';
@@ -1171,15 +1173,25 @@ function ThreadNodeView({
   return (
     <Paper
       variant="outlined"
-      sx={{
+      sx={(theme) => ({
         p: '0.75rem',
         display: 'grid',
         gridTemplateColumns: 'auto 1fr',
         columnGap: '0.75rem',
         alignItems: 'flex-start',
-        ml: `calc(${depth} * ${INDENT_STEP})`,
+        ml: `calc(${indentDepth} * ${INDENT_STEP})`,
         opacity: isDeleted ? 0.7 : 1,
-      }}
+        backgroundColor: isReply
+          ? theme.palette.mode === 'dark'
+            ? 'rgba(255,255,255,0.03)'
+            : 'rgba(0,0,0,0.03)'
+          : undefined,
+        borderLeft: isReply
+          ? `2px solid ${
+              theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.12)'
+            }`
+          : undefined,
+      })}
     >
       <Avatar
         src={avatarUrl || undefined}

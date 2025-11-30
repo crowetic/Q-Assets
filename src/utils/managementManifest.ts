@@ -122,8 +122,106 @@ const defaultManifest = (): ManagementManifest => ({
   ],
 });
 
+const toCurrencyCode = (value: unknown): CurrencyCode | null =>
+  value === 'QORT' ? 'QORT' : value === 'QASSET' ? 'QASSET' : null;
+
+const DEFAULT_FEE_ENTRY: FeeEntry = {
+  baseAmount: 0,
+  currencies: ['QORT'] as CurrencyCode[],
+};
+
+const cloneFeeEntry = (entry: FeeEntry): FeeEntry => ({
+  baseAmount: entry.baseAmount,
+  currencies: [...entry.currencies],
+  ...(entry.allow1to1 !== undefined ? { allow1to1: entry.allow1to1 } : {}),
+});
+
+const cloneFeeRecord = (source: Record<string, FeeEntry>): Record<string, FeeEntry> =>
+  Object.fromEntries(Object.entries(source).map(([key, value]) => [key, cloneFeeEntry(value)]));
+
+const parseFees = (
+  input: unknown,
+  fallbackFees: Record<string, FeeEntry>
+): Record<string, FeeEntry> => {
+  const fallbackRecord: Record<string, FeeEntry> =
+    Object.keys(fallbackFees).length > 0 ? fallbackFees : { default: DEFAULT_FEE_ENTRY };
+  const fallbackEntries = Object.values(fallbackRecord);
+  const defaultFallbackEntry = fallbackEntries[0] ?? DEFAULT_FEE_ENTRY;
+
+  if (!input || typeof input !== 'object') {
+    return cloneFeeRecord(fallbackRecord);
+  }
+
+  const parsed: Record<string, FeeEntry> = {};
+  for (const [key, raw] of Object.entries(input)) {
+    if (!raw || typeof raw !== 'object') continue;
+    const value = raw as {
+      baseAmount?: number | string;
+      currencies?: unknown;
+      allow1to1?: unknown;
+    };
+
+    const rawBase = value.baseAmount;
+    const parsedBase =
+      typeof rawBase === 'number' ? rawBase : typeof rawBase === 'string' ? Number(rawBase) : NaN;
+
+    const currencyList =
+      Array.isArray(value.currencies) && value.currencies.length
+        ? value.currencies.map(toCurrencyCode).filter((c): c is CurrencyCode => Boolean(c))
+        : [];
+
+    const allow1to1 = typeof value.allow1to1 === 'boolean' ? value.allow1to1 : undefined;
+
+    const fallback = key in fallbackRecord ? fallbackRecord[key] : defaultFallbackEntry;
+
+    const entry: FeeEntry = {
+      baseAmount: Number.isFinite(parsedBase) ? parsedBase : fallback.baseAmount,
+      currencies: currencyList.length ? currencyList : fallback.currencies,
+    };
+    const allowValue = allow1to1 ?? fallback.allow1to1;
+    if (allowValue !== undefined) {
+      entry.allow1to1 = allowValue;
+    }
+    parsed[key] = entry;
+  }
+
+  return Object.keys(parsed).length ? parsed : cloneFeeRecord(fallbackRecord);
+};
+
+const parseDiscountTier = (raw: any): DiscountTier | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const assetId = Number(raw.assetId);
+  const min = Number(raw.min);
+  const percent = Number(raw.percent);
+  const maxRaw = raw.max;
+  const maxValue =
+    maxRaw === '' || maxRaw === null || maxRaw === undefined ? undefined : Number(maxRaw);
+  if (!Number.isFinite(assetId) || !Number.isFinite(min) || !Number.isFinite(percent)) {
+    return null;
+  }
+  const tier: DiscountTier = {
+    assetId,
+    min,
+    percent,
+  };
+  if (Number.isFinite(maxValue)) {
+    tier.max = maxValue;
+  }
+  return tier;
+};
+
+const parseDiscountTiers = (input: any, fallbackTiers: DiscountTier[]): DiscountTier[] => {
+  if (!Array.isArray(input)) return fallbackTiers;
+  const parsed = input.map(parseDiscountTier).filter((tier): tier is DiscountTier => tier !== null);
+  return parsed.length ? parsed : fallbackTiers;
+};
+
 const coerceManifest = (input: any): ManagementManifest => {
   if (!input || typeof input !== 'object') return defaultManifest();
+  const fallbackManifest = defaultManifest();
+  const fallbackFees = fallbackManifest.fees ?? {};
+  const fallbackDiscounts = fallbackManifest.discounts ?? [];
+
   const manifest: ManagementManifest = {
     version: Number(input.version) || CURRENT_VERSION,
     updatedAt: Number(input.updatedAt) || Date.now(),
@@ -183,10 +281,15 @@ const coerceManifest = (input: any): ManagementManifest => {
           })
           .filter(Boolean) as ManifestScope[])
       : [],
+    fees: parseFees(input.fees, fallbackFees),
+    discounts: parseDiscountTiers(input.discounts, fallbackDiscounts),
   };
 
-  if (!manifest.roles.length) manifest.roles = defaultManifest().roles;
-  if (!manifest.scopes.length) manifest.scopes = defaultManifest().scopes;
+  if (!manifest.roles.length) manifest.roles = fallbackManifest.roles;
+  if (!manifest.scopes.length) manifest.scopes = fallbackManifest.scopes;
+  if (!manifest.fees || !Object.keys(manifest.fees).length) manifest.fees = { ...fallbackFees };
+  if (!manifest.discounts || !manifest.discounts.length)
+    manifest.discounts = [...fallbackDiscounts];
   return manifest;
 };
 

@@ -83,7 +83,6 @@ function parsePaidPromotionPayload(payload: any, identifier: string): PaidPromot
 async function searchResourcesForPrefix(prefix: string, limit = 120): Promise<SearchResult[]> {
   const results = await qortalRequest({
     action: 'SEARCH_QDN_RESOURCES',
-    service: 'DOCUMENT',
     identifier: prefix,
     limit,
     offset: 0,
