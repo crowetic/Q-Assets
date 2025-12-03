@@ -19,6 +19,10 @@ export function ExplorerHeader({
   manifestError,
   onPublishManifest,
 }: ExplorerHeaderProps) {
+  const totals = manifestDoc?.totals;
+  const resourceCount = totals?.resources ?? 0;
+  const structuredCount = totals?.structuredFiles ?? 0;
+  const generatedText = manifestDoc?.generatedAt ? formatDate(manifestDoc.generatedAt) : '—';
   return (
     <Box>
       <Stack spacing={1}>
@@ -31,11 +35,10 @@ export function ExplorerHeader({
         </Typography>
       </Stack>
 
-      {manifestDoc && !manifestDirty && activeName && (
+      {manifestDoc && totals && !manifestDirty && activeName && (
         <Alert severity="success" sx={{ mt: 2 }}>
-          Manifest loaded for <strong>{activeName}</strong> • {manifestDoc.totals.resources}{' '}
-          resources / {manifestDoc.totals.structuredFiles} structured files • generated{' '}
-          {formatDate(manifestDoc.generatedAt)}
+          Manifest loaded for <strong>{activeName}</strong> • {resourceCount} resources /{' '}
+          {structuredCount} structured files • generated {generatedText}
           {manifestDoc.lastSynced ? ` • cached through ${formatDate(manifestDoc.lastSynced)}` : ''}
         </Alert>
       )}

@@ -58,7 +58,7 @@ const DELETED_SENTINEL_LEN: number = 10;
 
 const MAX_DEPTH = 8; // safety cap for replies
 const AVATAR_SIZE = '3rem';
-const INDENT_STEP = '1rem';
+const INDENT_STEP = '0.15rem';
 
 // Prevent content (images/code/long URLs/tables) from stretching the layout
 const CONTENT_SX = {
@@ -959,6 +959,7 @@ export default function CommentsSection({
                           editMode && userName === (node.author || '') && !asWithFlags(node).deleted
                         }
                         isDeleted={Boolean(asWithFlags(node).deleted)}
+                        isRootNode
                       />
                     ))}
                   </Stack>
@@ -1150,6 +1151,8 @@ function ThreadNodeView({
   onDelete,
   canEdit,
   isDeleted,
+  isRootNode = false,
+  isFirstReplyInThread = false,
 }: {
   node: import('../../utils/thread').ThreadNode;
   avatars: Record<string, string | null>;
@@ -1158,28 +1161,31 @@ function ThreadNodeView({
   onDelete: OnNode;
   canEdit: boolean;
   isDeleted: boolean;
+  isRootNode?: boolean;
+  isFirstReplyInThread?: boolean;
 }) {
   const depth = Number.isFinite(node.depth) ? (node.depth as number) : 0;
   const kids = Array.isArray(node.children) ? node.children : [];
   const isReply = depth > 0;
-  const indentDepth = isReply ? 1 : 0;
+  // Only indent the thread's very first reply.
+  const indentDepth = isFirstReplyInThread ? 1 : 0;
   const author = typeof node.author === 'string' && node.author ? node.author : 'unknown';
   // const ts = node.ts;
   const html = typeof node.html === 'string' ? node.html : '';
   const avatarUrl = avatars[author] ?? null;
   const isEdited =
     Number.isFinite(node.updatedTs) && (node.updatedTs as number) > (node.ts as number);
+  const contentIndent = indentDepth ? { ml: `calc(${indentDepth} * ${INDENT_STEP})` } : undefined;
 
   return (
     <Paper
       variant="outlined"
       sx={(theme) => ({
-        p: '0.75rem',
+        p: '0.1rem',
         display: 'grid',
-        gridTemplateColumns: 'auto 1fr',
-        columnGap: '0.75rem',
+        gridTemplateColumns: 'auto autofr',
+        columnGap: '0.15rem',
         alignItems: 'flex-start',
-        ml: `calc(${indentDepth} * ${INDENT_STEP})`,
         opacity: isDeleted ? 0.7 : 1,
         backgroundColor: isReply
           ? theme.palette.mode === 'dark'
@@ -1187,7 +1193,7 @@ function ThreadNodeView({
             : 'rgba(0,0,0,0.03)'
           : undefined,
         borderLeft: isReply
-          ? `2px solid ${
+          ? `0px solid ${
               theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.12)'
             }`
           : undefined,
@@ -1200,7 +1206,7 @@ function ThreadNodeView({
         {!avatarUrl ? (author[0]?.toUpperCase() ?? '?') : null}
       </Avatar>
 
-      <Box>
+      <Box sx={contentIndent}>
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
           {new Date(node.ts).toLocaleString()} — {author}
           {isEdited ? ` — edited ${new Date(node.updatedTs!).toLocaleString()}` : ''}
@@ -1271,7 +1277,7 @@ function ThreadNodeView({
 
         {kids.length > 0 && (
           <Stack spacing={1} sx={{ mt: '0.5rem' }}>
-            {kids.map((child) => (
+            {kids.map((child, index) => (
               <ThreadNodeView
                 key={`${child.identifier || child.rootId}::${child.id}`}
                 node={child}
@@ -1281,6 +1287,8 @@ function ThreadNodeView({
                 onDelete={onDelete}
                 canEdit={canEdit && author === (child.author || '') && !(child as any).deleted}
                 isDeleted={Boolean((child as any).deleted)}
+                isRootNode={false}
+                isFirstReplyInThread={isRootNode && index === 0}
               />
             ))}
           </Stack>

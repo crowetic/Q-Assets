@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
@@ -29,6 +29,7 @@ import {
   Typography,
   Checkbox,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import FolderOpenRoundedIcon from '@mui/icons-material/FolderOpenRounded';
 import InsertDriveFileRoundedIcon from '@mui/icons-material/InsertDriveFileRounded';
 import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded';
@@ -40,6 +41,7 @@ import CodeRoundedIcon from '@mui/icons-material/CodeRounded';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
 import PublishRoundedIcon from '@mui/icons-material/PublishRounded';
+import PublicRoundedIcon from '@mui/icons-material/PublicRounded';
 import { useAccountNames } from '../../../hooks/useAccountNames';
 import { useQdnResources, type QdnResource } from '../../../hooks/useQdnResources';
 import {
@@ -89,6 +91,7 @@ import { ExplorerHeader } from './components/ExplorerHeader';
 import { ExplorerSidebar } from './components/ExplorerSidebar';
 import { CreateFolderDialog } from './components/CreateFolderDialog';
 import { MoveToNewFolderDialog } from './components/MoveToNewFolderDialog';
+import { EditManifestDialog } from './components/EditManifestDialog';
 import { sendNotification } from '../../../notifications/notificationService';
 import type { NotificationRecipient } from '../../../utils/notificationRecipients';
 import {
@@ -136,8 +139,11 @@ const createPreviewDialogState = (): PreviewDialogState => ({
   loading: false,
 });
 
+const PUBLISH_MODE_STORAGE_KEY = 'qassets_publish_mode_preference_v1';
+
 const SERVICE_OPTIONS = ALL_QDN_SERVICES;
 const PENDING_FOLDERS_KEY = 'qassets_data_pending_folders_v1';
+const MANIFEST_REFRESH_COOLDOWN = 90 * 1000;
 const MAX_FILE_IDENTIFIER_LENGTH = QASSETS_FILE_ID_MAX;
 const MANIFEST_SERVICE = ensurePrivateService('DOCUMENT_PRIVATE');
 type ResourceSort =
@@ -721,6 +727,15 @@ const buildFolderMap = (
   return map;
 };
 
+const matchesFolderSegments = (segments: string[], prefix: string[]) => {
+  if (!prefix.length) return segments.length === 0;
+  if (segments.length < prefix.length) return false;
+  for (let i = 0; i < prefix.length; i += 1) {
+    if (segments[i] !== prefix[i]) return false;
+  }
+  return true;
+};
+
 const tryDecryptLegacyBase64 = async (
   base64: string,
   groups: GroupSummary[]
@@ -793,7 +808,16 @@ export default function DataExplorer() {
     loading: namesLoading,
     error: namesError,
     reload: reloadNames,
+    primaryName,
+    primaryNameError,
   } = useAccountNames();
+  const orderedEntries = useMemo(() => {
+    if (!primaryName || primaryNameError) return entries;
+    const index = entries.findIndex((entry) => entry.name === primaryName);
+    if (index <= 0) return entries;
+    const rest = entries.filter((_entry, idx) => idx !== index);
+    return [entries[index], ...rest];
+  }, [entries, primaryName, primaryNameError]);
   const [activeName, setActiveName] = useState<string | null>(null);
   const [activeService, setActiveService] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -822,7 +846,15 @@ export default function DataExplorer() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedResourceId, setSelectedResourceId] = useState<string | null>(null);
   const [publishAnchor, setPublishAnchor] = useState<null | HTMLElement>(null);
-  const [publishMode, setPublishMode] = useState<'immediate' | 'batch'>('immediate');
+  const [publishMode, setPublishMode] = useState<'immediate' | 'batch'>(() => {
+    if (typeof window === 'undefined') return 'immediate';
+    const stored = window.localStorage.getItem(PUBLISH_MODE_STORAGE_KEY);
+    return stored === 'batch' ? 'batch' : 'immediate';
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(PUBLISH_MODE_STORAGE_KEY, publishMode);
+  }, [publishMode]);
   const [resourceSort, setResourceSort] = useState<ResourceSort>('updated-desc');
   const [publishDialog, setPublishDialog] = useState<{
     open: boolean;
@@ -859,11 +891,9 @@ export default function DataExplorer() {
   const [manifestDialog, setManifestDialog] = useState<{
     open: boolean;
     entry: StructuredEntry | null;
-    folderPath: string;
-    fileName: string;
     saving: boolean;
     error: string | null;
-  }>({ open: false, entry: null, folderPath: '', fileName: '', saving: false, error: null });
+  }>({ open: false, entry: null, saving: false, error: null });
   const [shareDialog, setShareDialog] = useState<{ open: boolean; mode: 'group' | 'direct' }>({
     open: false,
     mode: 'group',
@@ -876,12 +906,32 @@ export default function DataExplorer() {
   const [systemSaveLoading, setSystemSaveLoading] = useState(false);
   const [filesActionLoading, setFilesActionLoading] = useState<'remove' | 'delete' | null>(null);
   const [pendingFolders, setPendingFolders] = useState<string[]>([]);
+  const userSelectedName = useRef(false);
+  const pendingFoldersLoadedFor = useRef<string | null>(null);
+  const handleSelectName = useCallback(
+    (name: string) => {
+      userSelectedName.current = true;
+      setActiveName(name);
+    },
+    [setActiveName]
+  );
   const [pendingMoves, setPendingMoves] = useState<
     Record<string, { path: string; fileName: string }>
   >({});
   const [pendingDeletes, setPendingDeletes] = useState<string[]>([]);
+  const [pendingPublishRequests, setPendingPublishRequests] = useState<BatchPublishResource[]>([]);
+  const [renameFolderDialog, setRenameFolderDialog] = useState({
+    open: false,
+    newName: '',
+    error: null as string | null,
+  });
+  const [deleteFolderDialogOpen, setDeleteFolderDialogOpen] = useState(false);
   // const [publishQueue, setPublishQueue] = useState<PublishTask[]>([]);
   const { publish: publishResources } = useQdnBatchPublisher();
+  const theme = useTheme();
+  const breadcrumbColor = theme.palette.text.secondary;
+  const shareColor = (theme.palette as any).link?.main || theme.palette.primary.main;
+  const moveColor = theme.palette.warning.main;
   const [createFolderDialog, setCreateFolderDialog] = useState<{
     open: boolean;
     basePath: string;
@@ -905,10 +955,28 @@ export default function DataExplorer() {
   const [nameSuggestions, setNameSuggestions] = useState<string[]>([]);
   const [nameSearchLoading, setNameSearchLoading] = useState(false);
   const [nameSearchError, setNameSearchError] = useState<string | null>(null);
+  const queueOrPublishResources = useCallback(
+    async (resources: BatchPublishResource[]) => {
+      if (!resources.length) return;
+      if (publishMode === 'immediate') {
+        await publishResources(resources);
+        return;
+      }
+      setPendingPublishRequests((prev) => prev.concat(resources));
+    },
+    [publishMode, publishResources]
+  );
+  const flushPendingPublishRequests = useCallback(async () => {
+    if (!pendingPublishRequests.length) return;
+    const requests = [...pendingPublishRequests];
+    setPendingPublishRequests([]);
+    await publishResources(requests);
+  }, [pendingPublishRequests, publishResources]);
   const [manifestDoc, setManifestDoc] = useState<ManifestDoc | null>(null);
   const [manifestDirty, setManifestDirty] = useState(false);
   const [manifestPublishing, setManifestPublishing] = useState(false);
   const [manifestError, setManifestError] = useState<string | null>(null);
+  const [manifestRefreshBlockedUntil, setManifestRefreshBlockedUntil] = useState(0);
   const [ignoreManifestCache, setIgnoreManifestCache] = useState(false);
   const [loadingAllPages, setLoadingAllPages] = useState(false);
   const [detectedTypes, setDetectedTypes] = useState<Record<string, string>>({});
@@ -983,7 +1051,7 @@ export default function DataExplorer() {
       tags?: string[];
     }) => {
       const { resource, data64, metadata, tags } = params;
-      await publishResources([
+      await queueOrPublishResources([
         {
           name: resource.name,
           service: resource.service as Service,
@@ -996,7 +1064,7 @@ export default function DataExplorer() {
         },
       ]);
     },
-    [publishResources]
+    [queueOrPublishResources]
   );
 
   const handleFolderDialogOpen = () => {
@@ -1144,7 +1212,12 @@ export default function DataExplorer() {
   }, [authenticateUser]);
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !activeName) return;
+    if (
+      typeof window === 'undefined' ||
+      !activeName ||
+      pendingFoldersLoadedFor.current !== activeName
+    )
+      return;
     try {
       const raw = window.sessionStorage.getItem(PENDING_FOLDERS_KEY);
       const parsed = raw && typeof raw === 'string' ? JSON.parse(raw) : {};
@@ -1199,13 +1272,22 @@ export default function DataExplorer() {
       applyManifestState(null, false);
       return;
     }
+    if (Date.now() < manifestRefreshBlockedUntil) return;
     try {
       const doc = await fetchManifestDoc();
+      if (
+        doc &&
+        manifestDoc?.generatedAt &&
+        doc.generatedAt &&
+        doc.generatedAt <= manifestDoc.generatedAt
+      ) {
+        return;
+      }
       applyManifestState(doc, false);
     } catch {
       applyManifestState(null, true);
     }
-  }, [activeName, fetchManifestDoc, applyManifestState]);
+  }, [activeName, fetchManifestDoc, applyManifestState, manifestDoc, manifestRefreshBlockedUntil]);
 
   useEffect(() => {
     if (!activeName) {
@@ -1236,13 +1318,25 @@ export default function DataExplorer() {
   }, [userAddress]);
 
   useEffect(() => {
-    if (!activeName && entries.length > 0) setActiveName(entries[0].name);
-  }, [entries, activeName]);
+    if (userSelectedName.current) return;
+    const defaultName = orderedEntries[0]?.name ?? null;
+    if (!defaultName) return;
+    setActiveName(defaultName);
+  }, [orderedEntries, setActiveName]);
 
   useEffect(() => {
+    if (!activeName) {
+      setPendingFolders([]);
+      setPendingMoves({});
+      setPendingDeletes([]);
+      pendingFoldersLoadedFor.current = null;
+      setManifestRefreshBlockedUntil(0);
+      return;
+    }
     setPendingFolders(loadPendingFolders(activeName));
     setPendingMoves({});
     setPendingDeletes([]);
+    pendingFoldersLoadedFor.current = activeName;
   }, [activeName, loadPendingFolders]);
 
   const {
@@ -1266,9 +1360,28 @@ export default function DataExplorer() {
     [activeName, reload, loadAll, refreshManifestDoc]
   );
 
+  const autoRefreshedNames = useRef(new Set<string>());
+  useEffect(() => {
+    if (!activeName) return;
+    if (autoRefreshedNames.current.has(activeName)) return;
+    autoRefreshedNames.current.add(activeName);
+    void refreshResources();
+  }, [activeName, refreshResources]);
+
   const manifestResourceRows = useMemo(
     () => hydrateManifestResources(manifestDoc).filter((res) => !isTombstoneResource(res)),
     [manifestDoc]
+  );
+  const manifestResourceIdentifiers = useMemo(() => {
+    const set = new Set<string>();
+    manifestResourceRows.forEach((resource) => {
+      if (resource.identifier) set.add(resource.identifier);
+    });
+    return set;
+  }, [manifestResourceRows]);
+  const isNewResource = useCallback(
+    (resource: QdnResource) => !manifestResourceIdentifiers.has(resource.identifier),
+    [manifestResourceIdentifiers]
   );
 
   const combinedResources = useMemo(() => {
@@ -1355,6 +1468,30 @@ export default function DataExplorer() {
       };
     });
   }, [baseStructuredEntries, pendingMoves]);
+
+  const applyFolderPathTransformation = useCallback(
+    (oldPath: string, targetBaseSegments: string[]) => {
+      const oldSegments = normalizePathSegments(oldPath);
+      const overrides: Record<string, { path: string; fileName: string }> = {};
+      setPendingMoves((prev) => {
+        const next = { ...prev };
+        let changed = false;
+        allStructuredEntries.forEach((entry) => {
+          if (!matchesFolderSegments(entry.folderSegments, oldSegments)) return;
+          const suffix = entry.folderSegments.slice(oldSegments.length);
+          const merged = normalizePathSegments([...targetBaseSegments, ...suffix].join('/'));
+          const nextPath = merged.join('/');
+          overrides[entry.resource.identifier] = { path: nextPath, fileName: entry.fileName };
+          if (prev[entry.resource.identifier]?.path === nextPath) return;
+          next[entry.resource.identifier] = { path: nextPath, fileName: entry.fileName };
+          changed = true;
+        });
+        return changed ? next : prev;
+      });
+      return overrides;
+    },
+    [allStructuredEntries]
+  );
 
   const baseStructuredEntryMap = useMemo(() => {
     const map = new Map<string, StructuredEntry>();
@@ -1558,6 +1695,13 @@ export default function DataExplorer() {
     [selectedResourceIds, allStructuredEntryMap]
   );
   const movableEntries = selectedStructuredEntries;
+  const deleteSelectionLabel = selectedStructuredEntries.length
+    ? selectedStructuredEntries.length > 1
+      ? `Delete ${selectedStructuredEntries.length} Files`
+      : 'Delete'
+    : bulkSelectedResources.length > 1
+      ? `Delete ${bulkSelectedResources.length} Resources`
+      : 'Delete service data';
 
   const manifestServiceBuckets = useMemo(() => {
     if (!manifestDoc) return [];
@@ -1658,6 +1802,95 @@ export default function DataExplorer() {
     return merged;
   }, [allFolderDescriptors]);
 
+  const activeFolderSegments = normalizePathSegments(activeFilePath);
+  const activeFolderPath = activeFolderSegments.join('/');
+  const activeFolderName = activeFolderSegments[activeFolderSegments.length - 1] || '';
+  const parentFolderSegments = activeFolderSegments.slice(0, -1);
+  const parentFolderPath = parentFolderSegments.join('/');
+  const openRenameFolderDialog = () => {
+    if (!activeFolderPath) return;
+    setRenameFolderDialog({
+      open: true,
+      newName: activeFolderName || '',
+      error: null,
+    });
+  };
+  const closeRenameFolderDialog = () => {
+    setRenameFolderDialog({ open: false, newName: '', error: null });
+  };
+  const openDeleteFolderDialog = () => {
+    if (!activeFolderPath) return;
+    setDeleteFolderDialogOpen(true);
+  };
+  const closeDeleteFolderDialog = () => {
+    setDeleteFolderDialogOpen(false);
+  };
+  const handleFolderRenameConfirm = async () => {
+    if (!activeFolderPath) return;
+    const newName = renameFolderDialog.newName.trim();
+    if (!newName) {
+      setRenameFolderDialog((prev) => ({ ...prev, error: 'Enter a folder name.' }));
+      return;
+    }
+    if (newName.includes('/')) {
+      setRenameFolderDialog((prev) => ({ ...prev, error: 'Folder names cannot contain slashes.' }));
+      return;
+    }
+    if (!activeFolderSegments.length) {
+      setRenameFolderDialog((prev) => ({ ...prev, error: 'Cannot rename root folder.' }));
+      return;
+    }
+    const normalizedNewSegments = normalizePathSegments(
+      [...parentFolderSegments, newName].join('/')
+    );
+    const normalizedNew = normalizedNewSegments.join('/');
+    if (normalizedNew === activeFolderPath) {
+      closeRenameFolderDialog();
+      return;
+    }
+    if (knownFolderPaths.has(normalizedNew)) {
+      setRenameFolderDialog((prev) => ({ ...prev, error: 'Folder already exists.' }));
+      return;
+    }
+    const structuredOverrides = applyFolderPathTransformation(
+      activeFolderPath,
+      normalizedNewSegments
+    );
+    setPendingFolders((prev) => {
+      const cleaned = prev.filter((path) => path !== activeFolderPath);
+      return cleaned.includes(normalizedNew) ? cleaned : [...cleaned, normalizedNew];
+    });
+    if (publishMode === 'immediate') {
+      await handlePublishManifest({
+        structured: structuredOverrides,
+        folders: [{ path: normalizedNew, name: newName }],
+      });
+    } else {
+      setManifestDirty(true);
+    }
+    setActiveFilePath(normalizedNew);
+    closeRenameFolderDialog();
+  };
+  const handleFolderDeleteConfirm = async () => {
+    if (!activeFolderPath) return;
+    if (!activeFolderSegments.length) {
+      closeDeleteFolderDialog();
+      return;
+    }
+    const structuredOverrides = applyFolderPathTransformation(
+      activeFolderPath,
+      parentFolderSegments
+    );
+    setPendingFolders((prev) => prev.filter((path) => path !== activeFolderPath));
+    if (publishMode === 'immediate') {
+      await handlePublishManifest({ structured: structuredOverrides });
+    } else {
+      setManifestDirty(true);
+    }
+    setActiveFilePath(parentFolderPath);
+    closeDeleteFolderDialog();
+  };
+
   const folderOptions = useMemo(
     () =>
       Array.from(knownFolderPaths).sort((a, b) =>
@@ -1685,6 +1918,7 @@ export default function DataExplorer() {
       childKeys: [],
       files: [],
     };
+  const currentFolderHasFiles = currentFolder.files.length > 0;
   const childFolders = currentFolder.childKeys
     .map((key) => folderMap.get(key))
     .filter((node): node is FolderNode => Boolean(node))
@@ -1774,6 +2008,9 @@ export default function DataExplorer() {
     [allStructuredEntryMap, selectedResourceId]
   );
   const detailTags = selectedResource ? getDisplayTags(selectedResource) : [];
+  const selectedResourceFileType = selectedResource
+    ? detectedTypes[selectedResource.identifier] || selectedResource.service || '—'
+    : null;
 
   const ensureFolderPathAllowed = useCallback(
     (path: string) => {
@@ -2410,8 +2647,6 @@ export default function DataExplorer() {
     setManifestDialog({
       open: true,
       entry,
-      folderPath: entry.folderSegments.join('/'),
-      fileName: entry.fileName,
       saving: false,
       error: null,
     });
@@ -2422,18 +2657,22 @@ export default function DataExplorer() {
     setManifestDialog({
       open: false,
       entry: null,
-      folderPath: '',
-      fileName: '',
       saving: false,
       error: null,
     });
   };
 
-  const handleManifestSave = async () => {
+  const handleManifestSave = async ({
+    folderPath,
+    fileName,
+  }: {
+    folderPath: string;
+    fileName: string;
+  }) => {
     if (!manifestDialog.entry) return;
     const entry = manifestDialog.entry;
-    const normalizedPath = normalizePathSegments(manifestDialog.folderPath).join('/');
-    const nextFileName = manifestDialog.fileName.trim() || entry.fileName;
+    const normalizedPath = normalizePathSegments(folderPath).join('/');
+    const nextFileName = fileName.trim() || entry.fileName;
     setManifestDialog((prev) => ({ ...prev, saving: true, error: null }));
     try {
       const data64 = await resolveResourceBase64(entry.resource);
@@ -2451,6 +2690,19 @@ export default function DataExplorer() {
       };
       await republishWithMetadata({ resource: entry.resource, data64, metadata, tags });
       await refreshResources();
+      const manifestOverrides: ManifestOverrides = {
+        structured: {
+          [entry.resource.identifier]: {
+            path: normalizedPath,
+            fileName: nextFileName,
+          },
+        },
+      };
+      if (publishMode === 'immediate') {
+        await handlePublishManifest(manifestOverrides);
+      } else {
+        setManifestDirty(true);
+      }
       handleManifestDialogClose();
     } catch (e: any) {
       setManifestDialog((prev) => ({
@@ -2528,6 +2780,7 @@ export default function DataExplorer() {
       setManifestPublishing(true);
       setManifestError(null);
       try {
+        await flushPendingPublishRequests();
         const manifestPayload = buildManifestPayload(overrides);
         const data64 = await objectToBase64(manifestPayload);
         const publisherAddress = await resolvePublisherAddress();
@@ -2560,6 +2813,7 @@ export default function DataExplorer() {
             metadata,
           },
         ]);
+        setManifestRefreshBlockedUntil(Date.now() + MANIFEST_REFRESH_COOLDOWN);
         setManifestDoc(manifestPayload);
         setManifestDirty(false);
       } catch (e: any) {
@@ -2568,7 +2822,14 @@ export default function DataExplorer() {
         setManifestPublishing(false);
       }
     },
-    [activeName, authName, buildManifestPayload, publishResources, resolvePublisherAddress]
+    [
+      activeName,
+      authName,
+      buildManifestPayload,
+      publishResources,
+      resolvePublisherAddress,
+      flushPendingPublishRequests,
+    ]
   );
 
   const openShareDialogForResources = (resources: QdnResource[]) => {
@@ -2839,6 +3100,7 @@ export default function DataExplorer() {
       return;
     }
     openShareDialogForResources(bulkSelectedResources);
+    handleClearSelection();
   };
 
   const handleBulkMove = () => {
@@ -2847,6 +3109,7 @@ export default function DataExplorer() {
       return;
     }
     openMoveDialogForEntries(movableEntries);
+    handleClearSelection();
   };
 
   const handleBulkPreview = () => {
@@ -2859,14 +3122,21 @@ export default function DataExplorer() {
       }
     }
     if (selectedResource) handlePreviewResource(selectedResource);
+    handleClearSelection();
   };
 
   const handleBulkDelete = () => {
-    if (!selectedStructuredEntries.length) {
-      alert('Select structured files to delete.');
+    if (selectedStructuredEntries.length) {
+      void handleDeleteFilesCopy(selectedStructuredEntries);
+      handleClearSelection();
       return;
     }
-    void handleDeleteFilesCopy(selectedStructuredEntries);
+    if (bulkSelectedResources.length) {
+      void handleDeleteServiceResources();
+      handleClearSelection();
+      return;
+    }
+    alert('Select at least one resource to delete.');
   };
 
   const handleBulkSaveToSystem = async () => {
@@ -2886,6 +3156,7 @@ export default function DataExplorer() {
       await saveResourceToSystem(resource, entry);
     }
     setSystemSaveStatus('Saved selection to your system.');
+    handleClearSelection();
   };
 
   const [contextMenu, setContextMenu] = useState<{
@@ -2924,6 +3195,7 @@ export default function DataExplorer() {
     if (!contextMenu.resource) return handleContextMenuClose();
     const entry = allStructuredEntryMap.get(contextMenu.resource.identifier);
     if (entry) void handleDeleteFilesCopy([entry]);
+    else void handleDeleteServiceResources([contextMenu.resource]);
     handleContextMenuClose();
   };
 
@@ -2950,6 +3222,53 @@ export default function DataExplorer() {
       setFilesActionLoading(null);
     }
   };
+
+  const applyManifestDeletes = useCallback(
+    async (removedIdentifiers: string[]) => {
+      if (!removedIdentifiers.length) return;
+      if (publishMode === 'immediate') {
+        await handlePublishManifest({
+          removeStructuredIdentifiers: removedIdentifiers,
+          removeResourceIdentifiers: removedIdentifiers,
+        });
+        return;
+      }
+      setManifestDoc((prev) => {
+        if (!prev) return prev;
+        const nextStructured = prev.structuredFiles
+          ? prev.structuredFiles.filter((entry) => !removedIdentifiers.includes(entry.identifier))
+          : prev.structuredFiles;
+        const nextResources = prev.resources
+          ? prev.resources.filter((entry) => !removedIdentifiers.includes(entry.identifier))
+          : prev.resources;
+        if (nextStructured === prev.structuredFiles && nextResources === prev.resources) {
+          return prev;
+        }
+        return { ...prev, structuredFiles: nextStructured, resources: nextResources };
+      });
+      setManifestDirty(true);
+    },
+    [publishMode, handlePublishManifest]
+  );
+
+  const prunePendingMoves = useCallback(
+    (removedIdentifiers: string[]) => {
+      if (!removedIdentifiers.length) return;
+      setPendingMoves((prev) => {
+        if (!Object.keys(prev).length) return prev;
+        const next = { ...prev };
+        let changed = false;
+        removedIdentifiers.forEach((id) => {
+          if (next[id]) {
+            delete next[id];
+            changed = true;
+          }
+        });
+        return changed ? next : prev;
+      });
+    },
+    [setPendingMoves]
+  );
 
   const handleDeleteFilesCopy = async (entries?: StructuredEntry[]) => {
     const primaryEntry = selectedStructuredEntry;
@@ -3005,49 +3324,107 @@ export default function DataExplorer() {
           tags: ['qassets-tombstone'],
         });
       }
-      await publishResources(resources);
-      if (publishMode === 'immediate') {
-        await handlePublishManifest({
-          removeStructuredIdentifiers: removedIdentifiers,
-          removeResourceIdentifiers: removedIdentifiers,
-        });
-      } else {
-        setManifestDoc((prev) => {
-          if (!prev) return prev;
-          const nextStructured = prev.structuredFiles
-            ? prev.structuredFiles.filter((entry) => !removedIdentifiers.includes(entry.identifier))
-            : prev.structuredFiles;
-          const nextResources = prev.resources
-            ? prev.resources.filter((entry) => !removedIdentifiers.includes(entry.identifier))
-            : prev.resources;
-          if (nextStructured === prev.structuredFiles && nextResources === prev.resources)
-            return prev;
-          return { ...prev, structuredFiles: nextStructured, resources: nextResources };
-        });
-        setManifestDirty(true);
-      }
-      setPendingMoves((prev) => {
-        if (!Object.keys(prev).length) return prev;
-        const next = { ...prev };
-        let changed = false;
-        removedIdentifiers.forEach((id) => {
-          if (next[id]) {
-            delete next[id];
-            changed = true;
-          }
-        });
-        return changed ? next : prev;
-      });
+      await queueOrPublishResources(resources);
+      await applyManifestDeletes(removedIdentifiers);
+      prunePendingMoves(removedIdentifiers);
       setSelectedResourceId(null);
       setSelectedResourceIds((prev) => prev.filter((id) => !removedIdentifiers.includes(id)));
       await refreshResources();
       setPendingDeletes((prev) => prev.filter((id) => !removedIdentifiers.includes(id)));
-      setSystemSaveStatus('Deleted Files copy.');
+      const successMsg =
+        publishMode === 'batch' ? 'Delete queued for manifest publish.' : 'Deleted Files copy.';
+      setSystemSaveStatus(successMsg);
     } catch (e: any) {
       setPendingDeletes((prev) =>
         prev.filter((id) => !targets.some((entry) => entry.resource.identifier === id))
       );
       setSystemSaveStatus(e?.message || 'Failed to delete Files copy.');
+    } finally {
+      setFilesActionLoading(null);
+    }
+  };
+
+  const handleDeleteServiceResources = async (resources?: QdnResource[]) => {
+    const primaryResource = selectedResource;
+    const bulkResources = resources?.length
+      ? resources
+      : selectedResourceIds.length
+        ? bulkSelectedResources
+        : primaryResource
+          ? [primaryResource]
+          : [];
+    if (!bulkResources.length) return;
+    setFilesActionLoading('delete');
+    setSystemSaveStatus(null);
+    setPendingDeletes((prev) => {
+      const set = new Set(prev);
+      bulkResources.forEach((resource) => set.add(resource.identifier));
+      return Array.from(set);
+    });
+    try {
+      const requests: BatchPublishResource[] = [];
+      const removedIdentifiers: string[] = [];
+      for (const resource of bulkResources) {
+        const deletedAt = Date.now();
+        const entry = allStructuredEntryMap.get(resource.identifier) || null;
+        const path =
+          entry?.folderSegments.join('/') ||
+          resource.metadata?.qassetsFs?.path ||
+          resource.metadata?.folderPath ||
+          '';
+        const fileName =
+          entry?.fileName ||
+          resource.metadata?.qassetsFs?.fileName ||
+          resource.metadata?.title ||
+          resource.identifier ||
+          'resource';
+        const tombstone = {
+          qassets: { tombstone: true, version: 1 },
+          deleted: true,
+          deletedAt,
+          name: resource.name,
+          service: resource.service,
+          identifier: resource.identifier,
+          reason: 'user-delete',
+        };
+        const data64 = await objectToBase64(tombstone);
+        removedIdentifiers.push(resource.identifier);
+        requests.push({
+          name: resource.name,
+          service: resource.service as Service,
+          identifier: resource.identifier,
+          data64,
+          title: 'TOMBSTONE',
+          description: 'Resource removed by publisher',
+          metadata: {
+            tags: ['qassets-tombstone'],
+            qassetsTombstone: {
+              version: 1,
+              deleted: true,
+              deletedAt,
+              reason: 'user-delete',
+              path,
+              fileName,
+            },
+          },
+          tags: ['qassets-tombstone'],
+        });
+      }
+      await queueOrPublishResources(requests);
+      await applyManifestDeletes(removedIdentifiers);
+      prunePendingMoves(removedIdentifiers);
+      setSelectedResourceId(null);
+      setSelectedResourceIds((prev) => prev.filter((id) => !removedIdentifiers.includes(id)));
+      await refreshResources();
+      setPendingDeletes((prev) => prev.filter((id) => !removedIdentifiers.includes(id)));
+      const successMsg =
+        publishMode === 'batch' ? 'Delete queued for manifest publish.' : 'Deleted service data.';
+      setSystemSaveStatus(successMsg);
+    } catch (e: any) {
+      setPendingDeletes((prev) =>
+        prev.filter((id) => !bulkResources.some((resource) => resource.identifier === id))
+      );
+      setSystemSaveStatus(e?.message || 'Failed to delete service data.');
     } finally {
       setFilesActionLoading(null);
     }
@@ -3070,6 +3447,7 @@ export default function DataExplorer() {
             p: 0,
             cursor: activeSection !== 'services' || activeService ? 'pointer' : 'default',
             fontWeight: activeSection === 'services' && !activeService ? 600 : 500,
+            color: breadcrumbColor,
           }}
         >
           {activeName}
@@ -3079,7 +3457,7 @@ export default function DataExplorer() {
 
     if (activeSection === 'services' && activeService) {
       crumbs.push(
-        <Typography key="service" color="text.primary" fontWeight={600}>
+        <Typography key="service" sx={{ color: breadcrumbColor, fontWeight: 600 }}>
           {serviceLabels(activeService)}
         </Typography>
       );
@@ -3097,6 +3475,7 @@ export default function DataExplorer() {
             p: 0,
             cursor: activeFilePath ? 'pointer' : 'default',
             fontWeight: activeFilePath ? 500 : 600,
+            color: breadcrumbColor,
           }}
         >
           Files
@@ -3116,6 +3495,7 @@ export default function DataExplorer() {
               p: 0,
               cursor: idx === segments.length - 1 ? 'default' : 'pointer',
               fontWeight: idx === segments.length - 1 ? 600 : 500,
+              color: breadcrumbColor,
             }}
           >
             {segment}
@@ -3126,7 +3506,7 @@ export default function DataExplorer() {
 
     if (activeSection === 'shares') {
       crumbs.push(
-        <Typography key="shares" color="text.primary" fontWeight={600}>
+        <Typography key="shares" sx={{ color: breadcrumbColor, fontWeight: 600 }}>
           Shares
         </Typography>
       );
@@ -3200,7 +3580,7 @@ export default function DataExplorer() {
         sx={{ mt: 2, alignItems: 'stretch', minHeight: { lg: 'calc(100vh - 180px)' } }}
       >
         <ExplorerSidebar
-          entries={entries}
+          entries={orderedEntries}
           activeName={activeName}
           namesLoading={namesLoading}
           namesError={namesError}
@@ -3211,7 +3591,7 @@ export default function DataExplorer() {
           visibleStructuredCount={visibleStructuredEntries.length}
           shareCount={shareCount}
           folderMap={folderMap}
-          onSelectName={setActiveName}
+          onSelectName={handleSelectName}
           onReloadNames={reloadNames}
           onServiceNavigate={handleServiceNavigate}
           onFolderNavigate={handleFolderNavigate}
@@ -3227,19 +3607,57 @@ export default function DataExplorer() {
               justifyContent="space-between"
             >
               <Box sx={{ minWidth: 0 }}>
-                <Typography variant="h5">{cardTitle}</Typography>
+                <Typography variant="h5" sx={{ color: breadcrumbColor }}>
+                  {cardTitle}
+                </Typography>
                 {activeName && (
                   <Breadcrumbs separator="›" sx={{ mt: 0.5 }}>
                     {breadcrumbItems.length ? (
                       breadcrumbItems
                     ) : (
-                      <Typography color="text.secondary">Select a service</Typography>
+                      <Typography sx={{ color: breadcrumbColor }}>Select a service</Typography>
                     )}
                   </Breadcrumbs>
                 )}
               </Box>
-              <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                <Stack direction="row" spacing={1} alignItems="center">
+              <Box
+                sx={{
+                  flex: { xs: 'auto', md: 1 },
+                  display: 'flex',
+                  justifyContent: 'center',
+                  width: '100%',
+                }}
+              >
+                <Box
+                  sx={{
+                    position: 'relative',
+                    border: (theme) => `1px solid ${theme.palette.divider}`,
+                    borderRadius: 2,
+                    px: 2.5,
+                    py: 1.25,
+                    minWidth: 220,
+                    maxWidth: 320,
+                    width: '100%',
+                    textAlign: 'center',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 1,
+                  }}
+                >
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      position: 'absolute',
+                      top: -10,
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      bgcolor: 'background.paper',
+                      px: 1.5,
+                    }}
+                  >
+                    Publish mode
+                  </Typography>
                   <ToggleButtonGroup
                     size="small"
                     value={publishMode}
@@ -3252,21 +3670,24 @@ export default function DataExplorer() {
                   {publishMode === 'batch' && (
                     <Button
                       size="small"
-                      variant="outlined"
+                      variant="contained"
                       onClick={() => void handlePublishManifest()}
                       disabled={!manifestDirty || manifestPublishing || !activeName}
+                      fullWidth
                     >
                       {manifestPublishing ? 'Publishing…' : 'Publish queued changes'}
                     </Button>
                   )}
-                </Stack>
+                </Box>
+              </Box>
+              <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
                 <Button
                   variant="contained"
                   startIcon={<PublishRoundedIcon />}
                   onClick={handleOpenPublishMenu}
                   disabled={!activeName}
                 >
-                  Publish Files/Folders
+                  Publish new files/folders
                 </Button>
                 <Tooltip title="Refresh current folder">
                   <span>
@@ -3388,7 +3809,7 @@ export default function DataExplorer() {
                       }}
                     >
                       <Stack spacing={1}>
-                        <FolderOpenRoundedIcon color="primary" fontSize="large" />
+                        <PublicRoundedIcon color="primary" fontSize="large" />
                         <Typography variant="body1" fontWeight={600} noWrap>
                           {bucket.label}
                         </Typography>
@@ -3457,6 +3878,7 @@ export default function DataExplorer() {
                       <Typography variant="body2">{selectedResourceIds.length} selected</Typography>
                       <Button
                         size="small"
+                        variant="outlined"
                         onClick={handleBulkSaveToSystem}
                         disabled={!selectedResourceIds.length}
                       >
@@ -3464,13 +3886,16 @@ export default function DataExplorer() {
                       </Button>
                       <Button
                         size="small"
+                        variant="outlined"
                         onClick={handleBulkMove}
                         disabled={!movableEntries.length}
+                        sx={{ color: moveColor, borderColor: moveColor }}
                       >
                         Move
                       </Button>
                       <Button
                         size="small"
+                        variant="outlined"
                         onClick={handleBulkPreview}
                         disabled={!selectedResourceIds.length}
                       >
@@ -3478,22 +3903,26 @@ export default function DataExplorer() {
                       </Button>
                       <Button
                         size="small"
+                        variant="outlined"
                         onClick={handleBulkShare}
                         disabled={!bulkSelectedResources.length}
+                        sx={{ color: shareColor, borderColor: shareColor }}
                       >
                         Share
                       </Button>
                       <Button
                         size="small"
+                        variant="outlined"
                         onClick={handleBulkDelete}
-                        disabled={!selectedStructuredEntries.length}
+                        disabled={!bulkSelectedResources.length || filesActionLoading === 'delete'}
+                        color="error"
                       >
-                        Delete
+                        {deleteSelectionLabel}
                       </Button>
-                      <Button size="small" onClick={handleSelectAllVisible}>
-                        Select all visible
+                      <Button size="small" variant="outlined" onClick={handleSelectAllVisible}>
+                        Select all in folder
                       </Button>
-                      <Button size="small" onClick={handleClearSelection}>
+                      <Button size="small" variant="outlined" onClick={handleClearSelection}>
                         Clear
                       </Button>
                     </>
@@ -3560,7 +3989,7 @@ export default function DataExplorer() {
                             {resource.identifier}
                           </Typography>
                           <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                            <Chip size="small" label={serviceLabels(resource.service)} />
+                            <Chip size="small" label={mime} />
                             <Chip
                               size="small"
                               label={getResourceStatus(resource)}
@@ -3574,6 +4003,9 @@ export default function DataExplorer() {
                                 color="secondary"
                                 variant="outlined"
                               />
+                            )}
+                            {isNewResource(resource) && (
+                              <Chip size="small" label="New" color="info" variant="outlined" />
                             )}
                           </Stack>
                           <Typography variant="caption" color="text.secondary">
@@ -3648,6 +4080,7 @@ export default function DataExplorer() {
                       <Typography variant="body2">{selectedResourceIds.length} selected</Typography>
                       <Button
                         size="small"
+                        variant="outlined"
                         onClick={handleBulkSaveToSystem}
                         disabled={!selectedResourceIds.length}
                       >
@@ -3655,28 +4088,38 @@ export default function DataExplorer() {
                       </Button>
                       <Button
                         size="small"
+                        variant="outlined"
                         onClick={handleBulkMove}
                         disabled={!movableEntries.length}
+                        sx={{ color: moveColor, borderColor: moveColor }}
                       >
                         Move
                       </Button>
-                      <Button size="small" onClick={handleBulkPreview}>
+                      <Button size="small" variant="outlined" onClick={handleBulkPreview}>
                         Preview
                       </Button>
                       <Button
                         size="small"
+                        variant="outlined"
                         onClick={handleBulkShare}
                         disabled={!bulkSelectedResources.length}
+                        sx={{ color: shareColor, borderColor: shareColor }}
                       >
                         Share
                       </Button>
-                      <Button size="small" onClick={handleBulkDelete}>
-                        Delete
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={handleBulkDelete}
+                        disabled={!bulkSelectedResources.length || filesActionLoading === 'delete'}
+                        color="error"
+                      >
+                        {deleteSelectionLabel}
                       </Button>
-                      <Button size="small" onClick={handleSelectAllVisible}>
-                        Select all visible
+                      <Button size="small" variant="outlined" onClick={handleSelectAllVisible}>
+                        Select all in folder
                       </Button>
-                      <Button size="small" onClick={handleClearSelection}>
+                      <Button size="small" variant="outlined" onClick={handleClearSelection}>
                         Clear
                       </Button>
                     </>
@@ -3743,7 +4186,7 @@ export default function DataExplorer() {
                             {resource.identifier}
                           </Typography>
                           <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                            <Chip size="small" label={serviceLabels(resource.service)} />
+                            <Chip size="small" label={mime} />
                             <Chip
                               size="small"
                               label={getResourceStatus(resource)}
@@ -3751,6 +4194,9 @@ export default function DataExplorer() {
                               variant="outlined"
                             />
                             <Chip size="small" label="Shared" color="info" variant="outlined" />
+                            {isNewResource(resource) && (
+                              <Chip size="small" label="New" color="info" variant="outlined" />
+                            )}
                           </Stack>
                           <Typography variant="caption" color="text.secondary">
                             {formatBytes(resource.size)} • {formatDate(createdAt)}
@@ -3825,6 +4271,7 @@ export default function DataExplorer() {
                       <Typography variant="body2">{selectedResourceIds.length} selected</Typography>
                       <Button
                         size="small"
+                        variant="outlined"
                         onClick={handleBulkSaveToSystem}
                         disabled={!selectedResourceIds.length}
                       >
@@ -3832,58 +4279,107 @@ export default function DataExplorer() {
                       </Button>
                       <Button
                         size="small"
+                        variant="outlined"
                         onClick={handleBulkMove}
                         disabled={!movableEntries.length}
+                        sx={{ color: moveColor, borderColor: moveColor }}
                       >
                         Move selected to folder
                       </Button>
-                      <Button size="small" onClick={handleBulkPreview}>
+                      <Button size="small" variant="outlined" onClick={handleBulkPreview}>
                         Preview
                       </Button>
                       <Button
                         size="small"
+                        variant="outlined"
                         onClick={handleBulkShare}
                         disabled={!bulkSelectedResources.length}
+                        sx={{ color: shareColor, borderColor: shareColor }}
                       >
                         Share
                       </Button>
                       <Button
                         size="small"
+                        variant="outlined"
                         onClick={handleBulkDelete}
-                        disabled={!selectedStructuredEntries.length}
+                        disabled={!bulkSelectedResources.length || filesActionLoading === 'delete'}
+                        color="error"
                       >
-                        Delete
+                        {deleteSelectionLabel}
                       </Button>
-                      <Button size="small" onClick={handleSelectAllVisible}>
-                        Select all visible
+                      <Button size="small" variant="outlined" onClick={handleSelectAllVisible}>
+                        Select all in folder
                       </Button>
-                      <Button size="small" onClick={handleClearSelection}>
+                      <Button size="small" variant="outlined" onClick={handleClearSelection}>
                         Clear
                       </Button>
                     </>
                   ) : (
                     <Stack
                       direction={{ xs: 'column', sm: 'row' }}
-                      spacing={1}
-                      alignItems="center"
+                      spacing={2}
+                      alignItems="flex-start"
                       sx={{ width: '100%', justifyContent: 'space-between' }}
                     >
-                      <Typography variant="body2" color="text.secondary">
-                        Create folders to organize your published files.
-                      </Typography>
-                      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
-                        <Button size="small" variant="contained" onClick={handleCreateFolderOpen}>
-                          Create folder
-                        </Button>
+                      <Stack spacing={1}>
+                        <Typography variant="body2" color="text.secondary">
+                          Create folders to organize your published files.
+                        </Typography>
+                        <Stack direction="row" spacing={1}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={handleSelectAllVisible}
+                            disabled={!currentFolderHasFiles}
+                          >
+                            Select all
+                          </Button>
+                          <Button size="small" variant="contained" onClick={handleCreateFolderOpen}>
+                            Create folder
+                          </Button>
+                        </Stack>
+                        {activeSection === 'files' && activeFilePath && (
+                          <Stack direction="row" spacing={1}>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={openRenameFolderDialog}
+                              disabled={!activeFolderPath}
+                            >
+                              Rename folder
+                            </Button>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              color="error"
+                              onClick={openDeleteFolderDialog}
+                              disabled={!activeFolderPath}
+                            >
+                              Delete folder
+                            </Button>
+                          </Stack>
+                        )}
+                      </Stack>
+                      <Stack
+                        direction={{ xs: 'column', sm: 'row' }}
+                        spacing={1}
+                        sx={{ width: { xs: '100%', sm: 'auto' } }}
+                      >
                         <Button
                           size="small"
                           variant="outlined"
                           onClick={() => handlePublishManifest()}
                           disabled={manifestPublishing || !activeName}
+                          fullWidth
                         >
                           Publish folder snapshot
                         </Button>
-                        <Button size="small" variant="outlined" onClick={handleFolderDialogOpen}>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={handleFolderDialogOpen}
+                          fullWidth
+                        >
                           Publish system folder
                         </Button>
                       </Stack>
@@ -3992,7 +4488,7 @@ export default function DataExplorer() {
                               {resource.identifier}
                             </Typography>
                             <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                              <Chip size="small" label={serviceLabels(resource.service)} />
+                              <Chip size="small" label={mime} />
                               <Chip
                                 size="small"
                                 label={getResourceStatus(resource)}
@@ -4006,6 +4502,9 @@ export default function DataExplorer() {
                                   color="secondary"
                                   variant="outlined"
                                 />
+                              )}
+                              {isNewResource(resource) && (
+                                <Chip size="small" label="New" color="info" variant="outlined" />
                               )}
                             </Stack>
                             <Typography variant="caption" color="text.secondary">
@@ -4066,10 +4565,10 @@ export default function DataExplorer() {
                     {selectedResource.identifier}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Service: {selectedResource.service || '—'}
+                    File type: {selectedResourceFileType}
                   </Typography>
                   <Stack direction="row" spacing={1} flexWrap="wrap">
-                    <Chip size="small" label={serviceLabels(selectedResource.service)} />
+                    <Chip size="small" label={selectedResourceFileType} />
                     <Chip
                       size="small"
                       label={getResourceStatus(selectedResource)}
@@ -4078,6 +4577,9 @@ export default function DataExplorer() {
                     />
                     {isPrivateService(selectedResource.service) && (
                       <Chip size="small" label="Private" color="secondary" variant="outlined" />
+                    )}
+                    {isNewResource(selectedResource) && (
+                      <Chip size="small" label="New" color="info" variant="outlined" />
                     )}
                   </Stack>
                   <Typography variant="body2" color="text.secondary">
@@ -4106,16 +4608,37 @@ export default function DataExplorer() {
                     >
                       Preview file
                     </Button>
-                    <Button size="small" variant="outlined" onClick={handleShareOpen}>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={handleShareOpen}
+                      sx={{ color: shareColor, borderColor: shareColor }}
+                    >
                       Share
                     </Button>
+                    {!selectedStructuredEntry && (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        color="error"
+                        onClick={() => {
+                          if (selectedResource) {
+                            void handleDeleteServiceResources([selectedResource]);
+                            handleClearSelection();
+                          }
+                        }}
+                        disabled={filesActionLoading === 'delete'}
+                      >
+                        {filesActionLoading === 'delete' ? 'Deleting…' : 'Delete service data'}
+                      </Button>
+                    )}
                     {selectedStructuredEntry && (
                       <Button
                         size="small"
                         variant="outlined"
                         onClick={() => handleManifestDialogOpen(selectedStructuredEntry)}
                       >
-                        Edit manifest
+                        Rename
                       </Button>
                     )}
                     {viewingFilesEntry ? (
@@ -4139,7 +4662,7 @@ export default function DataExplorer() {
                           }}
                           disabled={filesActionLoading === 'delete'}
                         >
-                          {filesActionLoading === 'delete' ? 'Deleting…' : 'Delete files copy'}
+                          {filesActionLoading === 'delete' ? 'Deleting…' : 'Delete'}
                         </Button>
                       </>
                     ) : (
@@ -4226,6 +4749,60 @@ export default function DataExplorer() {
         onSubmit={handlePublishSubmit}
         onStatusChange={setPublishStatus}
       />
+
+      <Dialog
+        open={renameFolderDialog.open}
+        onClose={closeRenameFolderDialog}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Rename folder</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2}>
+            <Typography variant="body2" color="text.secondary">
+              Current folder: /{activeFolderPath || ''}
+            </Typography>
+            <TextField
+              label="New folder name"
+              fullWidth
+              value={renameFolderDialog.newName}
+              onChange={(event) =>
+                setRenameFolderDialog((prev) => ({ ...prev, newName: event.target.value }))
+              }
+            />
+            {renameFolderDialog.error && (
+              <Alert severity="warning">{renameFolderDialog.error}</Alert>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeRenameFolderDialog}>Cancel</Button>
+          <Button variant="contained" onClick={handleFolderRenameConfirm}>
+            Rename
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={deleteFolderDialogOpen}
+        onClose={closeDeleteFolderDialog}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Delete folder</DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" color="text.secondary">
+            This will remove <strong>/{activeFolderPath || ''}</strong> from your manifest and move
+            its contents to <strong>/{parentFolderPath || '/'}</strong>.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeDeleteFolderDialog}>Cancel</Button>
+          <Button variant="contained" color="error" onClick={handleFolderDeleteConfirm}>
+            Delete folder
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={folderDialogOpen} onClose={handleFolderDialogClose} fullWidth maxWidth="sm">
         <DialogTitle>Publish system folder</DialogTitle>
@@ -4393,8 +4970,49 @@ export default function DataExplorer() {
           <Button onClick={togglePreviewExpanded}>
             {previewDialog.expanded ? 'Exit full view' : 'Expand view'}
           </Button>
-          <Button onClick={handlePreviewShare} disabled={!previewDialog.resource}>
+          <Button
+            onClick={handlePreviewShare}
+            disabled={!previewDialog.resource}
+            sx={{ color: shareColor }}
+          >
             Share
+          </Button>
+          <Button
+            onClick={() => {
+              const entry = previewDialog.resource
+                ? allStructuredEntryMap.get(previewDialog.resource.identifier)
+                : null;
+              if (entry) handleManifestDialogOpen(entry);
+            }}
+            disabled={!previewDialog.resource}
+          >
+            Rename
+          </Button>
+          <Button
+            onClick={() => {
+              const entry = previewDialog.resource
+                ? allStructuredEntryMap.get(previewDialog.resource.identifier)
+                : null;
+              if (entry) openMoveDialogForEntries([entry]);
+            }}
+            disabled={!previewDialog.resource}
+          >
+            Move to folder
+          </Button>
+          <Button
+            onClick={() => {
+              const entry = previewDialog.resource
+                ? allStructuredEntryMap.get(previewDialog.resource.identifier)
+                : null;
+              if (entry) {
+                void handleDeleteFilesCopy([entry]);
+                setPreviewDialog(createPreviewDialogState());
+              }
+            }}
+            disabled={!previewDialog.resource}
+            color="error"
+          >
+            Delete
           </Button>
           <Button onClick={handlePreviewSaveToSystem} disabled={!previewDialog.resource}>
             Save to system
@@ -4403,44 +5021,14 @@ export default function DataExplorer() {
         </DialogActions>
       </Dialog>
 
-      <Dialog
+      <EditManifestDialog
         open={manifestDialog.open}
+        entry={manifestDialog.entry}
+        saving={manifestDialog.saving}
+        error={manifestDialog.error}
         onClose={handleManifestDialogClose}
-        fullWidth
-        maxWidth="sm"
-      >
-        <DialogTitle>Edit manifest</DialogTitle>
-        <DialogContent dividers>
-          <Stack spacing={2}>
-            <TextField
-              label="Folder path"
-              fullWidth
-              value={manifestDialog.folderPath}
-              onChange={(event) =>
-                setManifestDialog((prev) => ({ ...prev, folderPath: event.target.value }))
-              }
-              helperText="Adjust folder structure (use / for nesting)"
-            />
-            <TextField
-              label="File name"
-              fullWidth
-              value={manifestDialog.fileName}
-              onChange={(event) =>
-                setManifestDialog((prev) => ({ ...prev, fileName: event.target.value }))
-              }
-            />
-            {manifestDialog.error && <Alert severity="warning">{manifestDialog.error}</Alert>}
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleManifestDialogClose} disabled={manifestDialog.saving}>
-            Cancel
-          </Button>
-          <Button onClick={handleManifestSave} variant="contained" disabled={manifestDialog.saving}>
-            {manifestDialog.saving ? 'Saving…' : 'Save'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+        onSubmit={handleManifestSave}
+      />
 
       <Dialog
         open={saveToFilesDialog.open}

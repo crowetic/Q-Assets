@@ -4,9 +4,7 @@ import { ensurePrivateService, isPrivateService } from '../../../utils/qdnServic
 
 export { isPrivateService, ensurePrivateService };
 
-export const serviceLabels = (service?: string) => {
-  if (!service) return 'Unlabeled';
-  const upper = service.toUpperCase();
+const deriveServiceLabel = (upper: string, original: string) => {
   if (upper.includes('DOCUMENT')) return 'Documents';
   if (upper.includes('IMAGE')) return 'Images';
   if (upper.includes('BLOG')) return 'Blogs';
@@ -37,7 +35,14 @@ export const serviceLabels = (service?: string) => {
   if (upper.includes('CHAIN')) return 'Chain Data';
   if (upper.includes('THUMBNAIL')) return 'Thumbnails';
   if (upper.includes('AUTO_UPDATE')) return 'Auto Updates';
-  return service;
+  return original;
+};
+
+export const serviceLabels = (service?: string) => {
+  if (!service) return 'Unlabeled';
+  const upper = service.toUpperCase();
+  const baseLabel = deriveServiceLabel(upper, service);
+  return isPrivateService(service) ? `Private ${baseLabel}` : baseLabel;
 };
 
 export const formatBytes = (value?: number) => {

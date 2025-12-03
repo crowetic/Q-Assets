@@ -10,6 +10,8 @@ export type AccountName = { name: string; owner: string };
  */
 export function useAccountNames() {
   const [entries, setEntries] = useState<AccountName[]>([]);
+  const [primaryName, setPrimaryName] = useState<string | null>(null);
+  const [primaryNameError, setPrimaryNameError] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,9 +51,36 @@ export function useAccountNames() {
     }
   }, [userAddress]);
 
+  const loadPrimaryName = useCallback(async () => {
+    if (!userAddress) {
+      setPrimaryName(null);
+      setPrimaryNameError(false);
+      return;
+    }
+    setPrimaryName(null);
+    setPrimaryNameError(false);
+    try {
+      const res = await qortalRequest({ action: 'GET_PRIMARY_NAME', address: userAddress });
+      const resolved =
+        typeof res === 'string'
+          ? res
+          : res && typeof res === 'object' && typeof (res as any).name === 'string'
+            ? (res as any).name
+            : null;
+      setPrimaryName(resolved && resolved.length > 0 ? resolved : null);
+    } catch {
+      setPrimaryName(null);
+      setPrimaryNameError(true);
+    }
+  }, [userAddress]);
+
   useEffect(() => {
     if (userAddress) void load();
   }, [userAddress, load]);
 
-  return { entries, loading, error, reload: load };
+  useEffect(() => {
+    void loadPrimaryName();
+  }, [loadPrimaryName]);
+
+  return { entries, loading, error, reload: load, primaryName, primaryNameError };
 }

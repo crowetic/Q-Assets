@@ -16,7 +16,7 @@ import {
 import { alpha, useTheme } from '@mui/material/styles';
 import FolderRoundedIcon from '@mui/icons-material/FolderRounded';
 import FolderOpenRoundedIcon from '@mui/icons-material/FolderOpenRounded';
-import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
+import PublicRoundedIcon from '@mui/icons-material/PublicRounded';
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
 import type { FolderNode, ServiceBucket } from '../DataExplorer.types';
 
@@ -173,7 +173,12 @@ export const ExplorerSidebar = memo(function ExplorerSidebar({
                         sx={{ borderRadius: 2, mb: 0.5 }}
                       >
                         <ListItemIcon sx={{ minWidth: 34 }}>
-                          <FolderOpenRoundedIcon fontSize="small" />
+                          <PublicRoundedIcon
+                            fontSize="small"
+                            color={
+                              activeSection === 'services' && !activeService ? 'primary' : 'inherit'
+                            }
+                          />
                         </ListItemIcon>
                         <ListItemText
                           primary="All services"
@@ -190,10 +195,17 @@ export const ExplorerSidebar = memo(function ExplorerSidebar({
                           sx={{ borderRadius: 2, mb: 0.5 }}
                         >
                           <ListItemIcon sx={{ minWidth: 34 }}>
-                            <ChevronRightRoundedIcon fontSize="small" />
+                            <PublicRoundedIcon
+                              fontSize="small"
+                              color={
+                                activeSection === 'services' && activeService === bucket.service
+                                  ? 'primary'
+                                  : 'inherit'
+                              }
+                            />
                           </ListItemIcon>
                           <ListItemText
-                            primary={bucket.label}
+                            primary={bucket.service}
                             secondary={`${bucket.count} item${bucket.count === 1 ? '' : 's'}`}
                             primaryTypographyProps={{ fontSize: 13 }}
                           />
