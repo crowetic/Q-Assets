@@ -14,6 +14,7 @@ import {
   CircularProgress,
   FormHelperText,
   Chip,
+  Button,
 } from '@mui/material';
 import { useTheme } from '@mui/material';
 import { useAuth } from 'qapp-core';
@@ -26,6 +27,7 @@ import { getAllAssets } from '../utils/qortalAssetRequests';
 import TiptapEditor from '../components/TipTapEditor';
 import SuccessButton from '../components/buttons/SuccessButton';
 import InfoOutlineButton from '../components/buttons/InfoOutlineButton';
+import { useActiveAccountName } from '../hooks/useActiveAccountName';
 
 export default function IssueAsset() {
   const {
@@ -37,7 +39,7 @@ export default function IssueAsset() {
 
   const [assetName, setAssetName] = useState('');
   const [description, setDescription] = useState('');
-  const [quantity, setQuantity] = useState<number>(0);
+  const [quantity, setQuantity] = useState<string>('');
   const [isDivisible, setIsDivisible] = useState<boolean>(true);
   const [isUnspendable, setIsUnspendable] = useState<boolean>(false);
   const [assetData, setAssetData] = useState<string>('None');
@@ -62,13 +64,18 @@ export default function IssueAsset() {
   const [editorHasInit, setEditorHasInit] = useState(false);
 
   const theme = useTheme();
+  const { activeName, setActiveName, availableNames, namesLoading, namesError, reloadNames } =
+    useActiveAccountName();
 
   useEffect(() => {
     // If no address at all, auto-trigger authentication
     if (!userName) {
       authenticateUser();
     }
-  }, [userName, authenticateUser]);
+    if (!activeName && availableNames.length) {
+      setActiveName(availableNames[0]);
+    }
+  }, [userName, activeName, availableNames, authenticateUser, setActiveName]);
 
   useEffect(() => {
     if (!userAddress) return;
@@ -101,7 +108,7 @@ export default function IssueAsset() {
     setSuccess('Asset issued and Genesis publication saved successfully!');
     setAssetName('');
     setDescription('');
-    setQuantity(0);
+    setQuantity('');
     setIsDivisible(true);
     setIsUnspendable(false);
     setGroupName('');
@@ -131,7 +138,9 @@ export default function IssueAsset() {
   };
 
   const handleIssueAsset = async () => {
-    if (!userName || !userAddress || !userPublicKey || !quantity || !assetName) {
+    const quantityNum = Number(quantity);
+    const issuerName = activeName || userName;
+    if (!issuerName || !userAddress || !userPublicKey || !quantityNum || !assetName) {
       alert('Missing Required Asset data, please check all data and try again.');
       return;
     }
@@ -158,7 +167,7 @@ export default function IssueAsset() {
     // Snapshot state so later resetForm() won't overwrite values during async work
     const currentAssetName = assetName;
     const currentDescription = description;
-    const currentQuantity = quantity;
+    const currentQuantity = quantityNum;
     const currentDivisible = isDivisible;
     const currentUnspendable = isUnspendable;
     const currentAssetData = assetData;
@@ -212,6 +221,7 @@ export default function IssueAsset() {
         action: 'PUBLISH_QDN_RESOURCE',
         service: pubService,
         identifier: pubID,
+        name: issuerName,
         base64: pub64,
       });
 
@@ -220,7 +230,7 @@ export default function IssueAsset() {
         await qortalRequest({
           action: 'PUBLISH_QDN_RESOURCE',
           service: assetAvatarService,
-          name: userName,
+          name: issuerName,
           identifier: assetAvatarID,
           base64: currentAvatarBase64,
         });
@@ -235,6 +245,8 @@ export default function IssueAsset() {
       setLoading(false);
     }
   };
+
+  const quantityNum = Number(quantity || '');
 
   return (
     <Box
@@ -269,6 +281,41 @@ export default function IssueAsset() {
             Asset Information
           </Typography>
 
+          <FormControl fullWidth size="small">
+            <InputLabel id="issuer-name-select">Publish as name</InputLabel>
+            <Select
+              labelId="issuer-name-select"
+              label="Publish as name"
+              value={activeName || ''}
+              onChange={(e) => setActiveName(e.target.value || null)}
+              disabled={namesLoading || !!namesError}
+            >
+              {namesLoading && (
+                <MenuItem value="" disabled>
+                  Loading names…
+                </MenuItem>
+              )}
+              {namesError && (
+                <MenuItem value="" disabled>
+                  Failed to load names. <Button onClick={reloadNames}>Retry</Button>
+                </MenuItem>
+              )}
+              {availableNames.length === 0 && !namesLoading && (
+                <MenuItem value="" disabled>
+                  No names found on this account
+                </MenuItem>
+              )}
+              {availableNames.map((nm) => (
+                <MenuItem key={nm} value={nm}>
+                  {nm}
+                </MenuItem>
+              ))}
+            </Select>
+            <FormHelperText>
+              Choose which of your owned names to publish the asset metadata under.
+            </FormHelperText>
+          </FormControl>
+
           <TextField
             required
             fullWidth
@@ -292,13 +339,18 @@ export default function IssueAsset() {
           <TextField
             required
             fullWidth
-            type="number"
-            inputProps={{ min: 0 }}
+            type="text"
+            slotProps={{
+              htmlInput: { inputMode: 'numeric', pattern: '[0-9]*', min: 0 },
+            }}
             label="Quantity"
             value={quantity}
-            error={!quantity && attemptedSubmit}
-            onChange={(e) => setQuantity(Number(e.target.value))}
-            helperText={!quantity && attemptedSubmit ? 'Quantity is required' : ''}
+            error={!quantityNum && attemptedSubmit}
+            onChange={(e) => {
+              const next = e.target.value.replace(/^0+(?=\d)/, '');
+              setQuantity(next);
+            }}
+            helperText={!quantityNum && attemptedSubmit ? 'Quantity is required' : ''}
           />
         </Box>
 
