@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { getAssetBalances } from '../utils/qortalAssetRequests';
 import {
   Typography,
@@ -23,6 +23,8 @@ import { useExplorerStats } from '../explorerStats/useExplorerStats';
 import { TRADE_FETCH_N } from '../explorerStats/types';
 import { usePrimaryGroupId } from '../utils/usePrimaryGroupId';
 import { loadStats } from '../explorerStats/storage';
+import { useMemberGroupIds } from '../hooks/useMemberGroupIds';
+import { canViewAsset, getAssetPrivacy, type AssetPrivacy } from '../utils/assetPrivacy';
 
 export interface Asset {
   assetId: number;
@@ -195,8 +197,10 @@ const AssetExplorer = () => {
   const [sortKey, setSortKey] = useState<SortKey>('volume');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [privacyMap, setPrivacyMap] = useState<Record<number, AssetPrivacy>>({});
 
   const theme = useTheme();
+  const { memberGroupIds, loading: groupsLoading } = useMemberGroupIds();
   const { address: userAddress } = useAuth();
 
   const [tick, setTick] = useState(0);
@@ -205,65 +209,114 @@ const AssetExplorer = () => {
     return () => clearInterval(id);
   }, []);
 
-  const sortedAssets = useMemo(() => {
-    const copy = [...assets];
-
-    const getVolume = (assetId: number) => {
-      // Read from local cache written by useExplorerStats
-      const s = loadStats(assetId);
-      // push unknown volumes to the end: use -1 sentinel
-      return s?.qortVolLastN ?? -1;
-    };
-
-    const getCirculating = (a: EnrichedAsset) =>
-      typeof a.circulating === 'number' ? a.circulating : Number.NEGATIVE_INFINITY;
-
-    copy.sort((a, b) => {
-      let av: number | string;
-      let bv: number | string;
-
-      switch (sortKey) {
-        case 'name':
-          av = a.name.toLowerCase();
-          bv = b.name.toLowerCase();
-          break;
-        case 'assetId':
-          av = a.assetId;
-          bv = b.assetId;
-          break;
-        case 'circulating':
-          av = getCirculating(a);
-          bv = getCirculating(b);
-          break;
-        case 'volume':
-        default:
-          av = getVolume(a.assetId);
-          bv = getVolume(b.assetId);
-          break;
-      }
-
-      let cmp: number;
-      if (typeof av === 'string' && typeof bv === 'string') {
-        cmp = av.localeCompare(bv);
-      } else {
-        cmp = (Number(av) || 0) - (Number(bv) || 0);
-      }
-
-      return sortDir === 'asc' ? cmp : -cmp;
+  const viewableAssets = useMemo(() => {
+    return assets.filter((a) => {
+      if (a.assetId <= 2) return true;
+      const privacy = privacyMap[a.assetId];
+      if (!privacy) return false; // hide until privacy resolved
+      return canViewAsset(privacy, memberGroupIds);
     });
+  }, [assets, privacyMap, memberGroupIds]);
 
-    return copy;
-    // include tick so list can update as stats land
-  }, [assets, sortKey, sortDir, tick]);
+  const publicAssets = useMemo(
+    () => viewableAssets.filter((a) => !privacyMap[a.assetId]?.isPrivate),
+    [viewableAssets, privacyMap]
+  );
+
+  const privateAssets = useMemo(
+    () => viewableAssets.filter((a) => privacyMap[a.assetId]?.isPrivate),
+    [viewableAssets, privacyMap]
+  );
+
+  const sortAssets = useCallback(
+    (list: EnrichedAsset[]) => {
+      const copy = [...list];
+
+      const getVolume = (assetId: number) => {
+        const s = loadStats(assetId);
+        return s?.qortVolLastN ?? -1;
+      };
+      const getCirculating = (a: EnrichedAsset) =>
+        typeof a.circulating === 'number' ? a.circulating : Number.NEGATIVE_INFINITY;
+
+      copy.sort((a, b) => {
+        let av: number | string;
+        let bv: number | string;
+
+        switch (sortKey) {
+          case 'name':
+            av = a.name.toLowerCase();
+            bv = b.name.toLowerCase();
+            break;
+          case 'assetId':
+            av = a.assetId;
+            bv = b.assetId;
+            break;
+          case 'circulating':
+            av = getCirculating(a);
+            bv = getCirculating(b);
+            break;
+          case 'volume':
+          default:
+            av = getVolume(a.assetId);
+            bv = getVolume(b.assetId);
+            break;
+        }
+
+        let cmp: number;
+        if (typeof av === 'string' && typeof bv === 'string') {
+          cmp = av.localeCompare(bv);
+        } else {
+          cmp = (Number(av) || 0) - (Number(bv) || 0);
+        }
+
+        return sortDir === 'asc' ? cmp : -cmp;
+      });
+
+      return copy;
+    },
+    [sortDir, sortKey, tick]
+  );
+
+  const sortedPublicAssets = useMemo(() => sortAssets(publicAssets), [publicAssets, sortAssets]);
+  const sortedPrivateAssets = useMemo(() => sortAssets(privateAssets), [privateAssets, sortAssets]);
 
   const displayAssets = useMemo(
-    () => sortedAssets.slice(0, Math.min(visibleCount, sortedAssets.length)),
-    [sortedAssets, visibleCount]
+    () => sortedPublicAssets.slice(0, Math.min(visibleCount, sortedPublicAssets.length)),
+    [sortedPublicAssets, visibleCount]
   );
 
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [assets.length, sortKey, sortDir]);
+  }, [sortedPublicAssets.length, sortKey, sortDir]);
+
+  useEffect(() => {
+    const missing = assets.filter((a) => a.assetId > 2 && !privacyMap[a.assetId]);
+    if (!missing.length) return;
+    let cancelled = false;
+    const limit = pLimit(6);
+    (async () => {
+      const results = await Promise.all(
+        missing.map((a) =>
+          limit(async () => {
+            const priv = await getAssetPrivacy(a.assetId);
+            return [a.assetId, priv] as const;
+          })
+        )
+      );
+      if (cancelled) return;
+      setPrivacyMap((prev) => {
+        const next = { ...prev };
+        for (const [id, priv] of results) {
+          next[id] = priv;
+        }
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [assets, privacyMap]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -271,13 +324,15 @@ const AssetExplorer = () => {
         window.innerHeight + window.scrollY >= document.body.offsetHeight - SCROLL_THRESHOLD_PX;
       if (nearBottom) {
         setVisibleCount((prev) =>
-          prev >= sortedAssets.length ? prev : Math.min(prev + PAGE_SIZE, sortedAssets.length)
+          prev >= sortedPublicAssets.length
+            ? prev
+            : Math.min(prev + PAGE_SIZE, sortedPublicAssets.length)
         );
       }
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
-  }, [sortedAssets.length]);
+  }, [sortedPublicAssets.length]);
 
   useEffect(() => {
     async function loadAssets() {
@@ -410,9 +465,10 @@ const AssetExplorer = () => {
   }, [displayAssets]);
 
   // inside your component render
+  const overallLoading = loading || groupsLoading;
   return (
     <Box sx={{ p: { xs: 1.25, sm: 2 } }}>
-      {loading ? (
+      {overallLoading ? (
         <Box display="flex" justifyContent="center" py={8}>
           <CircularProgress />
         </Box>
@@ -667,11 +723,133 @@ const AssetExplorer = () => {
               );
             })}
           </Box>
-          {visibleCount < sortedAssets.length && (
+          {sortedPrivateAssets.length > 0 && (
+            <Box sx={{ mt: 4 }}>
+              <Typography variant="h6" sx={{ mb: 1 }}>
+                Private Assets (accessible via your groups)
+              </Typography>
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: {
+                    xs: '1fr',
+                    sm: 'repeat(auto-fit, minmax(30rem, 1fr))',
+                  },
+                  gap: 2,
+                }}
+              >
+                {sortedPrivateAssets.map((asset) => {
+                  const balance = balances[asset.assetId] || 0;
+                  const isOwned = !!userAddress && asset.owner === userAddress;
+                  const bgColor = isOwned
+                    ? theme.palette.secondary.dark
+                    : balance > 0
+                      ? theme.palette.primary.dark
+                      : theme.palette.grey[900];
+                  const textColor = theme.palette.getContrastText(bgColor);
+                  const borderColor = isOwned ? 'limegreen' : balance > 0 ? '#1e90ff' : 'orange';
+
+                  return (
+                    <Link
+                      key={asset.assetId}
+                      to={`/assets/${asset.assetId}`}
+                      style={{ textDecoration: 'none' }}
+                    >
+                      <Paper
+                        elevation={5}
+                        sx={{
+                          overflow: 'hidden',
+                          p: { xs: 1.25, sm: 1.5 },
+                          height: '100%',
+                          backgroundColor: bgColor,
+                          color: textColor,
+                          borderLeft: `4px solid ${borderColor}`,
+                          display: 'flex',
+                          flexDirection: { xs: 'column', sm: 'row' },
+                          alignItems: 'stretch',
+                          gap: { xs: 1, sm: 1.25 },
+                          flexWrap: 'noWrap',
+                        }}
+                      >
+                        <Box sx={{ flex: '1 1 0', minWidth: 0 }}>
+                          <Typography variant="h4" fontWeight={800} color="warning.light">
+                            {asset.name}
+                          </Typography>
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              mb: 1.25,
+                              display: '-webkit-box',
+                              WebkitBoxOrient: 'vertical',
+                              WebkitLineClamp: { xs: 3, sm: 3, md: 3 },
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              wordBreak: 'break-word',
+                            }}
+                          >
+                            {asset.description || 'No description'}
+                          </Typography>
+                          <Typography variant="caption" color="warning.main">
+                            Private asset — visible because you belong to its group
+                          </Typography>
+                          {balance > 0 && (
+                            <Box sx={{ mt: 0.5 }}>
+                              <Typography
+                                variant="subtitle1"
+                                color="secondary.light"
+                                component="span"
+                                fontWeight={700}
+                              >
+                                You Hold:{' '}
+                              </Typography>
+                              <Typography component="span" color="success.contrastText">
+                                {formatAssetAmount(balance, asset.isDivisible)}
+                              </Typography>
+                            </Box>
+                          )}
+                        </Box>
+                        <Box
+                          sx={{
+                            flex: { xs: '0 0 auto', sm: '0 0 auto' },
+                            alignSelf: 'center',
+                            width: { xs: 'min(70%, 220px)', sm: 'clamp(140px, 18vw, 180px)' },
+                            aspectRatio: '1 / 1',
+                            borderRadius: '999px',
+                            overflow: 'hidden',
+                            display: 'grid',
+                            placeItems: 'center',
+                            mx: { sm: 1 },
+                          }}
+                        >
+                          {avatarMap[asset.assetId] ? (
+                            <img
+                              loading="lazy"
+                              src={avatarMap[asset.assetId]!}
+                              alt={`${asset.name} Avatar`}
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'cover',
+                                display: 'block',
+                              }}
+                              onError={(e) => (e.currentTarget.style.display = 'none')}
+                            />
+                          ) : (
+                            <div style={{ width: '100%', height: '100%', opacity: 0.5 }} />
+                          )}
+                        </Box>
+                      </Paper>
+                    </Link>
+                  );
+                })}
+              </Box>
+            </Box>
+          )}
+          {visibleCount < sortedPublicAssets.length && (
             <Box display="flex" justifyContent="center" mt={2}>
               <button
                 onClick={() =>
-                  setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, sortedAssets.length))
+                  setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, sortedPublicAssets.length))
                 }
                 style={{
                   padding: '10px 16px',

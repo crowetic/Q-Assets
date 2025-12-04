@@ -63,6 +63,8 @@ import PublishedHtmlRenderer from '../components/PublishedHtmlRenderer';
 import { useAlert } from '../components/alerts';
 import { updateAsset, getAccountGroups, type GroupSummary, getGroupById } from '../utils/qortalApi';
 // import { getAssetInfo } from '../utils/qortalAssetRequests';
+import { useMemberGroupIds } from '../hooks/useMemberGroupIds';
+import { canViewAsset, getAssetPrivacy, type AssetPrivacy } from '../utils/assetPrivacy';
 
 type Enriched = {
   assetId: number;
@@ -174,9 +176,27 @@ export default function AssetDetail() {
   // const navigate = useNavigate();
   const isIssuer = !!asset && !!userAddress && asset.owner === userAddress;
   const { alert } = useAlert();
+  const { memberGroupIds, loading: memberGroupsLoading } = useMemberGroupIds();
+  const [assetPrivacy, setAssetPrivacy] = useState<AssetPrivacy | null>(null);
+  const [privacyChecked, setPrivacyChecked] = useState(false);
 
   const canPublish = isIssuer && issuerName && issuerName === (userName as string | undefined);
   const id = useMemo(() => Number(assetId), [assetId]);
+  useEffect(() => {
+    let cancelled = false;
+    setPrivacyChecked(false);
+    (async () => {
+      try {
+        const priv = await getAssetPrivacy(id);
+        if (!cancelled) setAssetPrivacy(priv);
+      } finally {
+        if (!cancelled) setPrivacyChecked(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
   const publishAllChanges = useCallback(async () => {
     if (!canPublish || !asset) return;
     setPublishing(true);
@@ -205,7 +225,15 @@ export default function AssetDetail() {
             : undefined,
         customFields: currentPub.customFields ?? {},
       };
-      await publishAssetPublication(userName as string, asset.name, pub);
+      const privateGroupId =
+        pub.privateAsset && Number.isFinite(pub.privateGroupId)
+          ? Number(pub.privateGroupId)
+          : pub.privateAsset && normalizedPrimary?.id
+            ? Number(normalizedPrimary.id)
+            : undefined;
+      await publishAssetPublication(userName as string, asset.name, pub, {
+        privateGroupId,
+      });
       alert('Publication updated!');
       setAssetPub(pub);
       setHasPendingChanges(false);
@@ -260,6 +288,8 @@ export default function AssetDetail() {
     let cancelled = false;
     (async () => {
       if (!Number.isFinite(id)) return;
+      if (!privacyChecked) return;
+      if (assetPrivacy && !canViewAsset(assetPrivacy, memberGroupIds)) return;
 
       try {
         // 1) Try sync cache
@@ -350,7 +380,9 @@ export default function AssetDetail() {
         // Publication
         try {
           if (iname) {
-            const pub = await fetchAssetPublication(iname, mini.name);
+            const pub = await fetchAssetPublication(iname, mini.name, mini.assetId, {
+              preferPrivate: assetPrivacy?.isPrivate,
+            });
             if (!cancelled) setAssetPub(pub);
           }
         } catch {
@@ -364,7 +396,7 @@ export default function AssetDetail() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, privacyChecked, assetPrivacy, memberGroupIds]);
 
   useEffect(() => {
     setPrimaryForm(
@@ -429,6 +461,30 @@ export default function AssetDetail() {
   }, [assetPub?.primaryGroup?.id, assetPub?.extraGroups, normalizeGroupId]);
 
   if (!asset) return <Typography>Loading asset...</Typography>;
+
+  const loadingGroupsCombined = groupsLoading || memberGroupsLoading;
+
+  if (loadingGroupsCombined || !privacyChecked) {
+    return (
+      <Box display="flex" justifyContent="center" py={6}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (assetPrivacy && !canViewAsset(assetPrivacy, memberGroupIds)) {
+    return (
+      <Box sx={{ p: { xs: 2, md: 3 } }}>
+        <Paper sx={{ p: 3 }}>
+          <Typography variant="h6">Private asset</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            You must be a member of group
+            {assetPrivacy.groupId ? ` #${assetPrivacy.groupId}` : ''} to view this asset’s details.
+          </Typography>
+        </Paper>
+      </Box>
+    );
+  }
 
   return (
     <PageContainer>
@@ -804,6 +860,8 @@ export default function AssetDetail() {
             assetId={asset.assetId}
             primaryGroupId={parseInt(String(assetPub?.primaryGroup?.id || ''), 10)}
             issuerName={issuerName}
+            isPrivate={assetPrivacy?.isPrivate}
+            privateGroupId={assetPrivacy?.groupId}
             isIssuer={!!canPublish}
           />
         </Grid>

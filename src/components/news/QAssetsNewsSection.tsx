@@ -11,6 +11,7 @@ import {
 } from '../../utils/news';
 import { useTheme, alpha } from '@mui/material/styles';
 import NewsActionBar from '../../components/news/NewsActionBar';
+import { useMemberGroupIds } from '../../hooks/useMemberGroupIds';
 
 import type { NewsSummary, NewsType } from '../../types/newsAndPromos';
 
@@ -208,6 +209,7 @@ export default function QAssetsNewsSection() {
   // const [detailError, setDetailError] = useState<string | null>(null);
 
   const navigate = useNavigate();
+  const { memberGroupIds, loading: groupsLoading } = useMemberGroupIds();
 
   const theme = useTheme();
 
@@ -226,7 +228,10 @@ export default function QAssetsNewsSection() {
             includeExpired: showArchivedAnnouncements,
             forceFresh,
           }),
-          fetchLatestAssetNews(assetNewsLimit, { includeExpired: showArchivedNews }),
+          fetchLatestAssetNews(assetNewsLimit, {
+            includeExpired: showArchivedNews,
+            allowedGroupIds: memberGroupIds,
+          }),
           fetchActivePromotions(),
         ]);
         setAnnouncements(a);
@@ -241,11 +246,17 @@ export default function QAssetsNewsSection() {
         setLoading(false);
       }
     },
-    [showArchivedAnnouncements, showArchivedNews, showMoreAnnouncements, showMoreNews]
+    [
+      showArchivedAnnouncements,
+      showArchivedNews,
+      showMoreAnnouncements,
+      showMoreNews,
+      memberGroupIds,
+    ]
   );
 
   const loadingLists =
-    loading || announcements === null || assetNews === null || promotions === null;
+    loading || groupsLoading || announcements === null || assetNews === null || promotions === null;
 
   const handleClickItem = (item: NewsSummary) => {
     setSelected(item);

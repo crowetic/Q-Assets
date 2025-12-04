@@ -20,6 +20,8 @@ export type DividendPeriod = '1W' | '2W' | '1M' | '3M' | '6M' | '1Y';
 export interface AssetPublication {
   description?: string;
   html?: string; // rendered in a rich display section
+  privateAsset?: boolean; // opt-in private asset flag
+  privateGroupId?: number; // group that gates private content/visibility
   genesisPostId?: string; // ID or identifier to a BLOG_POST
   primaryGroup?: {
     name: string;
@@ -47,6 +49,7 @@ export function normalizePublication(pub?: AssetPublication): AssetPublication {
   const p: AssetPublication = { ...(pub ?? {}) };
   if (p.dividends == null) p.dividends = false;
   if (p.dividends && !isValidDividendPeriod(p.dividendPeriod)) p.dividendPeriod = '1M';
+  if (p.privateAsset == null) p.privateAsset = false;
   return p;
 }
 export function isValidDividendPeriod(x: any): x is DividendPeriod {

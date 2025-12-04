@@ -24,6 +24,8 @@ import { publishScopedNotification } from '../../utils/notificationPublisher';
 import { objectToBase64 } from '../../utils/data';
 import { enqueueQdnPublishJob } from '../../state/publishQueue';
 import { PublishJobError } from '../../utils/qdnProgressivePublisher';
+import { resolveAssetPublicationById } from '../../utils/resolveAssetPublication';
+import { addPrivateMagic } from '../../constants/qdeckIdentifiers';
 
 export default function NewsPublisher({
   assetId,
@@ -50,11 +52,11 @@ export default function NewsPublisher({
       ? Number(primaryGroupId)
       : null;
 
-  const canPublish = async () => {
+  const canPublish = async (groupId?: number | null) => {
     if (!userName) authenticateUser();
     if (isIssuer) return true;
-    if (!primaryGroupId) return false;
-    return isNameAdminOfGroupId(userName as string, primaryGroupId);
+    if (!groupId) return false;
+    return isNameAdminOfGroupId(userName as string, groupId);
   };
 
   const { alert } = useAlert();
@@ -63,8 +65,25 @@ export default function NewsPublisher({
       await alert('You need a Qortal name to publish.');
       return;
     }
-    if (!(await canPublish())) {
-      await alert('Only issuer or primary group admins can publish News.');
+    const privacy = assetId
+      ? await resolveAssetPublicationById(assetId).catch(() => ({ publication: null }))
+      : { publication: null };
+    const isPrivate = Boolean(privacy.publication?.privateAsset);
+    const privateGroupIdRaw =
+      privacy.publication?.privateGroupId ?? privacy.publication?.primaryGroup?.id;
+    const privateGroupId =
+      privateGroupIdRaw != null && Number.isFinite(Number(privateGroupIdRaw))
+        ? Number(privateGroupIdRaw)
+        : null;
+    const effectiveGroupId = privateGroupId ?? normalizedGroupId;
+
+    if (!(await canPublish(effectiveGroupId))) {
+      await alert('Only issuer or authorized group admins can publish News.');
+      return;
+    }
+
+    if (isPrivate && !effectiveGroupId) {
+      await alert('Private assets require a private group to publish news.');
       return;
     }
 
@@ -77,7 +96,26 @@ export default function NewsPublisher({
       title: newsTitle,
       createdAt: Date.now(),
     };
-    const b64 = await objectToBase64(payloadObj);
+    const raw64 = await objectToBase64(payloadObj);
+
+    // Encrypt for private assets
+    const service: 'DOCUMENT' | 'DOCUMENT_PRIVATE' = isPrivate ? 'DOCUMENT_PRIVATE' : 'DOCUMENT';
+    let data64 = raw64;
+    if (isPrivate) {
+      try {
+        const encrypted = await qortalRequest({
+          action: 'ENCRYPT_QORTAL_GROUP_DATA',
+          base64: raw64,
+          groupId: effectiveGroupId!,
+          isAdmins: false,
+        });
+        data64 = addPrivateMagic(encrypted);
+      } catch (e: any) {
+        const msg = typeof e?.message === 'string' ? e.message : 'Failed to encrypt for group.';
+        await alert(msg, 'Publish failed', { severity: 'error' });
+        return;
+      }
+    }
 
     setPublishing(true);
     try {
@@ -86,9 +124,9 @@ export default function NewsPublisher({
         resources: [
           {
             name: userName as string,
-            service: 'DOCUMENT',
+            service,
             identifier: newsItemId,
-            data64: b64,
+            data64,
           },
         ],
       });
@@ -108,7 +146,8 @@ export default function NewsPublisher({
       ];
 
       if (address) {
-        if (notifyAppSubs) {
+        // For private assets, avoid global notifications; only group scope.
+        if (!isPrivate && notifyAppSubs) {
           await publishScopedNotification({
             scope: { kind: 'global' },
             title: newsTitle,
@@ -119,9 +158,9 @@ export default function NewsPublisher({
             links,
           });
         }
-        if (notifyGroupSubs && normalizedGroupId) {
+        if (notifyGroupSubs && effectiveGroupId) {
           await publishScopedNotification({
-            scope: { kind: 'group', groupId: normalizedGroupId },
+            scope: { kind: 'group', groupId: effectiveGroupId },
             title: assetName ? `${assetName} group notice` : `Asset #${assetId} group notice`,
             html: payload,
             publisher: { name: userName, address, role: 'admin' },

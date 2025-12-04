@@ -8,6 +8,7 @@ import { loadAnnouncementApprovalDoc } from './announcementApprovals';
 import { getNewsPromoExpiryDays, publisherHasPermission } from './managementManifest';
 import { base64ToObject, base64ToUtf8 } from './data';
 import { getCached, setCached, invalidateByPrefix } from './cache';
+import { resolveAssetPublicationById } from './resolveAssetPublication';
 
 async function canPublishAnnouncement(publisher: string): Promise<boolean> {
   try {
@@ -54,7 +55,11 @@ const decodeAnnouncementResource = async (data64?: string | null) => {
   return null;
 };
 
-type FetchNewsOptions = { includeExpired?: boolean; forceFresh?: boolean };
+type FetchNewsOptions = {
+  includeExpired?: boolean;
+  forceFresh?: boolean;
+  allowedGroupIds?: number[]; // membership list to gate private asset news
+};
 
 const LIST_CACHE_MS = 60_000;
 const ITEM_CACHE_MS = 5 * 60_000;
@@ -212,7 +217,11 @@ export async function fetchLatestAssetNews(
 ): Promise<NewsSummary[]> {
   try {
     const includeExpired = options?.includeExpired ?? false;
-    const listKey = `assetnews:list:${includeExpired}:${limit}`;
+    const allowedGroupIds = options?.allowedGroupIds ?? [];
+    const listKey = `assetnews:list:${includeExpired}:${limit}:${allowedGroupIds
+      .slice()
+      .sort((a, b) => a - b)
+      .join(',')}`;
     const cachedList = getCached<NewsSummary[]>(listKey);
     if (cachedList) return cachedList;
 
@@ -232,6 +241,26 @@ export async function fetchLatestAssetNews(
 
     const items: NewsSummary[] = [];
     const seen = new Set<string>();
+    const privacyCache = new Map<number, { isPrivate: boolean; groupId?: number }>();
+
+    const getPrivacy = async (assetId: number) => {
+      if (privacyCache.has(assetId)) return privacyCache.get(assetId)!;
+      try {
+        const { publication } = await resolveAssetPublicationById(assetId);
+        const groupIdRaw = publication?.privateGroupId ?? publication?.primaryGroup?.id;
+        const groupIdNum = groupIdRaw != null ? Number(groupIdRaw) : undefined;
+        const info = {
+          isPrivate: Boolean(publication?.privateAsset),
+          groupId: Number.isFinite(groupIdNum as number) ? Number(groupIdNum) : undefined,
+        };
+        privacyCache.set(assetId, info);
+        return info;
+      } catch {
+        const info = { isPrivate: false, groupId: undefined as number | undefined };
+        privacyCache.set(assetId, info);
+        return info;
+      }
+    };
 
     for (const hit of hits) {
       const dedupeKey = `${hit.name}::${hit.identifier}`;
@@ -299,6 +328,15 @@ export async function fetchLatestAssetNews(
         }
 
         const assetName = assetId != null ? `Asset #${assetId}` : undefined;
+
+        // Visibility: hide private asset news unless viewer is in the allowed group
+        if (assetId != null) {
+          const privacy = await getPrivacy(assetId);
+          if (privacy.isPrivate) {
+            if (!privacy.groupId) continue; // cannot authorize, skip
+            if (!allowedGroupIds.includes(privacy.groupId)) continue;
+          }
+        }
 
         title = extractTitleFromHtml(
           html,
