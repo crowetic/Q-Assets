@@ -15,7 +15,8 @@ import {
 import { base64ToObject, objectToBase64 } from './data';
 import { sendChatMessage } from './qchat';
 import { getAccount, getTransactionInfoBySignature, transferAsset } from './qortalApi';
-import { BatchPublishResource, publishQdnResources } from './useQdnBatchPublisher';
+import { BatchPublishResource } from './useQdnBatchPublisher';
+import { enqueueQdnPublishJob } from '../state/publishQueue';
 
 export type NotifPriority = 'low' | 'normal' | 'high';
 export type NotifScopeStr =
@@ -302,7 +303,12 @@ export async function publishNotification(args: {
     });
   }
 
-  await publishQdnResources(resources);
+  const queued = enqueueQdnPublishJob({
+    label: `Notification publish (${scopeKey})`,
+    resources,
+  });
+  if (!queued) throw new Error('Unable to queue notification publish');
+  await queued.completion;
 
   // 4) Optional: ping Q-Chat (feeless)
   if (scopeKey === 'global' && args.chatGroupForGlobal) {

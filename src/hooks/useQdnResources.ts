@@ -24,7 +24,13 @@ const MAX_AUTO_PAGES = 40;
 /**
  * Generic hook for listing QDN resources for a given name, with paging support.
  */
-export function useQdnResources(name: string | null) {
+export function useQdnResources(
+  name: string | null,
+  options?: {
+    autoFetch?: boolean;
+  }
+) {
+  const autoFetch = options?.autoFetch !== false;
   const [rows, setRows] = useState<QdnResource[]>([]);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(false);
@@ -110,8 +116,8 @@ export function useQdnResources(name: string | null) {
 
   useEffect(() => {
     resetState();
-    if (name) void fetchPage(0);
-  }, [name, fetchPage, resetState]);
+    if (name && autoFetch) void fetchPage(0);
+  }, [name, fetchPage, resetState, autoFetch]);
 
   return { rows, loading, hasMore, loadMore, loadAll, error, reset: resetState, reload };
 }

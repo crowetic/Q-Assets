@@ -14,7 +14,7 @@ import {
 } from '@mui/material';
 import { useAuth } from 'qapp-core';
 import TiptapEditor from '../TipTapEditor';
-import QdnPublishStatus from '../common/QdnPublishStatus';
+import PublishQueueStatus from '../common/PublishQueueStatus';
 import { prepareHtmlForPublish } from '../../utils/publicationPublisher';
 import { assetNewsItemId } from '../../constants/qdnConstants';
 import { isNameAdminOfGroupId } from '../../utils/access';
@@ -22,7 +22,7 @@ import { uniqueId6 } from '../../utils/ids';
 import { useAlert } from '../alerts';
 import { publishScopedNotification } from '../../utils/notificationPublisher';
 import { objectToBase64 } from '../../utils/data';
-import { useQdnProgressivePublisher } from '../../hooks/useQdnProgressivePublisher';
+import { enqueueQdnPublishJob } from '../../state/publishQueue';
 import { PublishJobError } from '../../utils/qdnProgressivePublisher';
 
 export default function NewsPublisher({
@@ -58,16 +58,6 @@ export default function NewsPublisher({
   };
 
   const { alert } = useAlert();
-  const {
-    publish: publishNewsResources,
-    progress: qdnProgress,
-    throttle: qdnThrottle,
-  } = useQdnProgressivePublisher();
-
-  const showQdnStatus =
-    (qdnProgress && qdnProgress.status !== 'completed' && qdnProgress.status !== 'cancelled') ||
-    !!qdnThrottle;
-
   const handlePublish = async () => {
     if (!userName) {
       await alert('You need a Qortal name to publish.');
@@ -91,7 +81,7 @@ export default function NewsPublisher({
 
     setPublishing(true);
     try {
-      await publishNewsResources({
+      const queued = enqueueQdnPublishJob({
         label: 'Asset news publish',
         resources: [
           {
@@ -102,6 +92,8 @@ export default function NewsPublisher({
           },
         ],
       });
+      if (!queued) throw new Error('Unable to queue news publish');
+      await queued.completion;
 
       const assetLink = `qortal://APP/Q-Assets/assets/${assetId}`;
       const links = [
@@ -207,15 +199,7 @@ export default function NewsPublisher({
               }
             />
           </Box>
-          {showQdnStatus && (
-            <Box sx={{ mt: 2 }}>
-              <QdnPublishStatus
-                progress={qdnProgress}
-                throttle={qdnThrottle}
-                contextLabel="Publishing news article"
-              />
-            </Box>
-          )}
+          <PublishQueueStatus fallbackLabel="Publishing news article" />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpen(false)} disabled={publishing}>

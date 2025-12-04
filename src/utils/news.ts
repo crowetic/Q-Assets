@@ -7,7 +7,7 @@ import { stripHtml, extractTitleFromHtml, isManagementAdminPublisher } from './n
 import { loadAnnouncementApprovalDoc } from './announcementApprovals';
 import { getNewsPromoExpiryDays, publisherHasPermission } from './managementManifest';
 import { base64ToObject, base64ToUtf8 } from './data';
-import { getCached, setCached } from './cache';
+import { getCached, setCached, invalidateByPrefix } from './cache';
 
 async function canPublishAnnouncement(publisher: string): Promise<boolean> {
   try {
@@ -54,10 +54,11 @@ const decodeAnnouncementResource = async (data64?: string | null) => {
   return null;
 };
 
-type FetchNewsOptions = { includeExpired?: boolean };
+type FetchNewsOptions = { includeExpired?: boolean; forceFresh?: boolean };
 
 const LIST_CACHE_MS = 60_000;
 const ITEM_CACHE_MS = 5 * 60_000;
+export const NEWS_REFRESH_EVENT = 'qassets:news-refresh';
 
 export async function fetchAnnouncements(
   limit = 5,
@@ -66,8 +67,10 @@ export async function fetchAnnouncements(
   try {
     const includeExpired = options?.includeExpired ?? false;
     const listKey = `ann:list:${includeExpired}:${limit}`;
-    const cachedList = getCached<NewsSummary[]>(listKey);
-    if (cachedList) return cachedList;
+    if (!options?.forceFresh) {
+      const cachedList = getCached<NewsSummary[]>(listKey);
+      if (cachedList) return cachedList;
+    }
 
     const expiryDays = Number(await getNewsPromoExpiryDays());
     const expiryCutoff =
@@ -134,7 +137,8 @@ export async function fetchAnnouncements(
     if (approvedEntries.length) {
       const ordered = approvedEntries
         .slice()
-        .sort((a, b) => (b.approvedAt || b.createdAt || 0) - (a.approvedAt || a.createdAt || 0));
+        .sort((a, b) => (b.approvedAt || b.createdAt || 0) - (a.approvedAt || a.createdAt || 0))
+        .slice(0, limit * 2);
 
       for (const entry of ordered) {
         const dedupeKey = keyFor(entry.publisher, entry.identifier);
@@ -154,33 +158,30 @@ export async function fetchAnnouncements(
     }
 
     // Also surface admin-published announcements even if not explicitly approved
-    if (items.length < limit) {
-      let docHits: Awaited<ReturnType<typeof searchSimpleByIdentifierPrefix>> = [];
-      let jsonHits: Awaited<ReturnType<typeof searchSimpleByIdentifierPrefix>> = [];
-      try {
-        [docHits, jsonHits] = await Promise.all([
-          searchSimpleByIdentifierPrefix('DOCUMENT', qaAnnouncementPrefix, limit),
-          searchSimpleByIdentifierPrefix('JSON', qaAnnouncementPrefix, limit).catch(() => []),
-        ]);
-      } catch (e) {
-        console.warn('Failed to fetch announcement list', e);
-      }
-      const allHits = [...docHits, ...jsonHits].sort(
-        (a, b) => (b.created || b.updated || 0) - (a.created || a.updated || 0)
-      );
+    let docHits: Awaited<ReturnType<typeof searchSimpleByIdentifierPrefix>> = [];
 
-      for (const hit of allHits) {
-        const dedupeKey = keyFor(hit.name, hit.identifier);
-        if (seen.has(dedupeKey)) continue;
-        const allowed = await canPublishAnnouncement(hit.name);
-        if (!allowed) continue;
-        const finalService = (hit.service as Service) || ('DOCUMENT' as Service);
-        const added = await pushAnnouncement(hit.name, hit.identifier, finalService, hit.created);
-        if (added) {
-          seen.add(dedupeKey);
-        }
-        if (items.length >= limit) break;
+    try {
+      [docHits] = await Promise.all([
+        searchSimpleByIdentifierPrefix('DOCUMENT', qaAnnouncementPrefix, limit * 2),
+      ]);
+    } catch (e) {
+      console.warn('Failed to fetch announcement list', e);
+    }
+    const allHits = [...docHits].sort(
+      (a, b) => (b.created || b.updated || 0) - (a.created || a.updated || 0)
+    );
+
+    for (const hit of allHits) {
+      const dedupeKey = keyFor(hit.name, hit.identifier);
+      if (seen.has(dedupeKey)) continue;
+      const allowed = await canPublishAnnouncement(hit.name);
+      if (!allowed) continue;
+      const finalService = (hit.service as Service) || ('DOCUMENT' as Service);
+      const added = await pushAnnouncement(hit.name, hit.identifier, finalService, hit.created);
+      if (added) {
+        seen.add(dedupeKey);
       }
+      if (items.length >= limit * 2) break;
     }
 
     const finalList = items.sort((a, b) => b.created - a.created).slice(0, limit);
@@ -189,6 +190,19 @@ export async function fetchAnnouncements(
   } catch (e) {
     console.warn('fetchAnnouncements failed', e);
     return [];
+  }
+}
+
+export function invalidateAnnouncementCache() {
+  invalidateByPrefix('ann:');
+}
+
+export function dispatchNewsRefreshEvent() {
+  if (typeof window === 'undefined') return;
+  try {
+    window.dispatchEvent(new Event(NEWS_REFRESH_EVENT));
+  } catch {
+    /* ignore */
   }
 }
 

@@ -1,8 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Box, Card, CardContent, Typography, Divider, Skeleton, Chip, Button } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import { useNavigate } from 'react-router-dom';
-import { fetchAnnouncements, fetchLatestAssetNews, fetchActivePromotions } from '../../utils/news';
+import {
+  fetchAnnouncements,
+  fetchLatestAssetNews,
+  fetchActivePromotions,
+  NEWS_REFRESH_EVENT,
+  invalidateAnnouncementCache,
+} from '../../utils/news';
 import { useTheme, alpha } from '@mui/material/styles';
 import NewsActionBar from '../../components/news/NewsActionBar';
 
@@ -206,38 +212,37 @@ export default function QAssetsNewsSection() {
   const theme = useTheme();
 
   // Initial load of lists
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
+  const loadNews = useCallback(
+    async (forceFresh = false) => {
+      if (forceFresh) {
+        invalidateAnnouncementCache();
+      }
       try {
         setLoading(true);
         const announcementLimit = showMoreAnnouncements ? 50 : 5;
         const assetNewsLimit = showMoreNews ? 50 : 8;
         const [a, n, p] = await Promise.all([
-          fetchAnnouncements(announcementLimit, { includeExpired: showArchivedAnnouncements }),
+          fetchAnnouncements(announcementLimit, {
+            includeExpired: showArchivedAnnouncements,
+            forceFresh,
+          }),
           fetchLatestAssetNews(assetNewsLimit, { includeExpired: showArchivedNews }),
           fetchActivePromotions(),
         ]);
-        if (cancelled) return;
         setAnnouncements(a);
         setAssetNews(n);
         setPromotions(p);
       } catch (e) {
         console.error('Failed to load Q-Assets news', e);
-        if (!cancelled) {
-          setAnnouncements([]);
-          setAssetNews([]);
-          setPromotions([]);
-        }
+        setAnnouncements([]);
+        setAssetNews([]);
+        setPromotions([]);
       } finally {
-        if (!cancelled) setLoading(false);
+        setLoading(false);
       }
-    };
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [showArchivedAnnouncements, showArchivedNews, showMoreAnnouncements, showMoreNews]);
+    },
+    [showArchivedAnnouncements, showArchivedNews, showMoreAnnouncements, showMoreNews]
+  );
 
   const loadingLists =
     loading || announcements === null || assetNews === null || promotions === null;
@@ -252,11 +257,32 @@ export default function QAssetsNewsSection() {
     // setDetailLoading(false);
   };
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (cancelled) return;
+      await loadNews(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadNews]);
+
+  useEffect(() => {
+    const handler = () => {
+      loadNews(true);
+    };
+    window.addEventListener(NEWS_REFRESH_EVENT, handler);
+    return () => {
+      window.removeEventListener(NEWS_REFRESH_EVENT, handler);
+    };
+  }, [loadNews]);
+
   const announcementList = announcements || [];
-  const assetNewsList = assetNews || [];
 
   const announcementActive = announcementList.filter((item) => !item.isExpired);
   const announcementArchived = announcementList.filter((item) => item.isExpired);
+  const assetNewsList = assetNews || [];
   const newsActive = assetNewsList.filter((item) => !item.isExpired);
   const newsArchived = assetNewsList.filter((item) => item.isExpired);
 
