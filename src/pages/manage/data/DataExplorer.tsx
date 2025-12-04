@@ -58,7 +58,7 @@ import {
 } from '../../../constants/qdeckIdentifiers';
 import { collectRecipientPublicKeys } from '../../../utils/qdeckAccess';
 import { getAccountGroups, type GroupSummary } from '../../../utils/qortalApi';
-import { useAuth } from 'qapp-core';
+import { useAuth, VideoPlayer } from 'qapp-core';
 import type { Service } from 'qapp-core';
 import {
   MANIFEST_IDENTIFIER,
@@ -114,7 +114,7 @@ type PreviewDialogState = {
   title?: string;
   content?: string;
   dataUrl?: string;
-  type?: 'text' | 'binary' | 'image';
+  type?: 'text' | 'binary' | 'image' | 'video';
   error?: string;
   loading?: boolean;
   steps: PreviewStep[];
@@ -140,6 +140,7 @@ const createPreviewDialogState = (): PreviewDialogState => ({
 });
 
 const PUBLISH_MODE_STORAGE_KEY = 'qassets_publish_mode_preference_v1';
+type ManifestLoadState = 'idle' | 'loading' | 'success' | 'missing';
 
 const SERVICE_OPTIONS = ALL_QDN_SERVICES;
 const PENDING_FOLDERS_KEY = 'qassets_data_pending_folders_v1';
@@ -346,14 +347,18 @@ const detectMimeFromBase64 = (base64: string, fallback: string) => {
 
 const hasPrivateMagicPrefix = (base64: string) => base64.startsWith(PRIVATE_MAGIC_B64);
 
-const applyPrivateMagicIfNeeded = (base64: string, service?: string) => {
-  if (isPrivateService(service)) console.log('private service:', service);
+type EncryptionMode = 'group' | 'direct' | null | undefined;
+
+const applyPrivateMagicIfNeeded = (base64: string, service?: string, mode?: EncryptionMode) => {
+  if (!isPrivateService(service)) return base64;
+  if (mode !== 'group') return base64;
   return hasPrivateMagicPrefix(base64) ? base64 : addPrivateMagic(base64);
 };
 
-const stripPrivateMagicIfNeeded = (base64: string, _service?: string) => {
-  console.log(_service);
-  return stripPrivateMagic(base64);
+const stripPrivateMagicIfNeeded = (base64: string, service?: string, mode?: EncryptionMode) => {
+  if (!isPrivateService(service)) return base64;
+  if (mode !== 'group') return base64;
+  return hasPrivateMagicPrefix(base64) ? stripPrivateMagic(base64) : base64;
 };
 
 const resolveMimeForResource = (
@@ -511,7 +516,7 @@ async function decryptPrivateBase64(
     mode = 'direct';
   }
 
-  const encryptedPayload = stripPrivateMagicIfNeeded(encryptedWithMagic, resource.service);
+  const encryptedPayload = stripPrivateMagicIfNeeded(encryptedWithMagic, resource.service, mode);
 
   // Always try direct decrypt first (covers NODE-inserted metadata-less items)
   try {
@@ -889,6 +894,7 @@ export default function DataExplorer() {
   const [previewDialog, setPreviewDialog] = useState<PreviewDialogState>(
     createPreviewDialogState()
   );
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   const [manifestDialog, setManifestDialog] = useState<{
     open: boolean;
     entry: StructuredEntry | null;
@@ -992,6 +998,7 @@ export default function DataExplorer() {
   const [manifestPublishing, setManifestPublishing] = useState(false);
   const [manifestError, setManifestError] = useState<string | null>(null);
   const [manifestRefreshBlockedUntil, setManifestRefreshBlockedUntil] = useState(0);
+  const [manifestLoadState, setManifestLoadState] = useState<ManifestLoadState>('idle');
   const [ignoreManifestCache, setIgnoreManifestCache] = useState(false);
   const [loadingAllPages, setLoadingAllPages] = useState(false);
   const [detectedTypes, setDetectedTypes] = useState<Record<string, string>>({});
@@ -1244,11 +1251,15 @@ export default function DataExplorer() {
     }
   }, [pendingFolders, activeName]);
 
-  const applyManifestState = useCallback((doc: ManifestDoc | null, dirty: boolean) => {
-    setManifestDoc(doc);
-    setDetectedTypes(doc?.resourceTypes || {});
-    setManifestDirty(dirty);
-  }, []);
+  const applyManifestState = useCallback(
+    (doc: ManifestDoc | null, dirty: boolean, loadState?: ManifestLoadState) => {
+      setManifestDoc(doc);
+      setDetectedTypes(doc?.resourceTypes || {});
+      setManifestDirty(dirty);
+      if (loadState) setManifestLoadState(loadState);
+    },
+    []
+  );
 
   const fetchManifestDoc = useCallback(async (): Promise<ManifestDoc | null> => {
     if (!activeName) return null;
@@ -1263,7 +1274,7 @@ export default function DataExplorer() {
       const data64 = normalizeData64(res);
       if (!data64) return null;
       if (!decrypt) return JSON.parse(base64ToUtf8(data64));
-      const payload = stripPrivateMagicIfNeeded(data64, service);
+      const payload = stripPrivateMagicIfNeeded(data64, service, 'direct');
       const clear = await qortalRequest({
         action: 'DECRYPT_DATA',
         encryptedData: payload,
@@ -1284,10 +1295,11 @@ export default function DataExplorer() {
 
   const refreshManifestDoc = useCallback(async () => {
     if (!activeName) {
-      applyManifestState(null, false);
+      applyManifestState(null, false, 'idle');
       return;
     }
     if (Date.now() < manifestRefreshBlockedUntil) return;
+    setManifestLoadState('loading');
     try {
       const doc = await fetchManifestDoc();
       if (
@@ -1296,26 +1308,28 @@ export default function DataExplorer() {
         doc.generatedAt &&
         doc.generatedAt <= manifestDoc.generatedAt
       ) {
+        setManifestLoadState('success');
         return;
       }
-      applyManifestState(doc, false);
+      applyManifestState(doc, false, doc ? 'success' : 'missing');
     } catch {
-      applyManifestState(null, true);
+      applyManifestState(null, true, 'missing');
     }
   }, [activeName, fetchManifestDoc, applyManifestState, manifestDoc, manifestRefreshBlockedUntil]);
 
   useEffect(() => {
     if (!activeName) {
-      applyManifestState(null, false);
+      applyManifestState(null, false, 'idle');
       return;
     }
     let cancelled = false;
+    setManifestLoadState('loading');
     (async () => {
       try {
         const doc = await fetchManifestDoc();
-        if (!cancelled) applyManifestState(doc, false);
+        if (!cancelled) applyManifestState(doc, false, doc ? 'success' : 'missing');
       } catch {
-        if (!cancelled) applyManifestState(null, true);
+        if (!cancelled) applyManifestState(null, true, 'missing');
       }
     })();
     return () => {
@@ -2235,22 +2249,25 @@ export default function DataExplorer() {
     setSharePage(1);
   };
 
-  const handleReload = async () => {
+  const handleLoadFromNetwork = async () => {
     await refreshResources();
   };
 
   const handleLoadRemaining = useCallback(async () => {
-    if (!hasMore || resourcesLoading || loadingAllPages) return;
+    if (resourcesLoading || loadingAllPages) return;
     setIgnoreManifestCache(true);
     setLoadingAllPages(true);
     try {
+      if (!rows.length) {
+        await reload();
+      }
       await loadAll();
     } catch {
       // errors surfaced via useQdnResources error state
     } finally {
       setLoadingAllPages(false);
     }
-  }, [hasMore, resourcesLoading, loadingAllPages, loadAll]);
+  }, [resourcesLoading, loadingAllPages, loadAll, reload, rows.length]);
 
   const handlePublishOpen = (variant: 'single' | 'multiple') => {
     if (!activeName) {
@@ -2345,7 +2362,7 @@ export default function DataExplorer() {
               isAdmins: groupAdminsOnly,
             });
             const finalService = ensurePrivateService(form.service);
-            const privData64 = applyPrivateMagicIfNeeded(enc, finalService);
+            const privData64 = applyPrivateMagicIfNeeded(enc, finalService, 'group');
             return {
               data64: privData64,
               service: finalService,
@@ -2375,7 +2392,7 @@ export default function DataExplorer() {
           });
           const finalService = ensurePrivateService(form.service);
           return {
-            data64: applyPrivateMagicIfNeeded(enc, finalService),
+            data64: applyPrivateMagicIfNeeded(enc, finalService, 'direct'),
             service: finalService,
             metadataExtra: { encrypted: { mode: 'direct', recipients } },
             tagExtra: ['private', 'encrypted:direct'],
@@ -2573,6 +2590,19 @@ export default function DataExplorer() {
           title: getResourceLabel(target),
           type: 'image',
           dataUrl: `data:${loaded.mime};base64,${loaded.base64}`,
+          resource: target,
+          zoomed: false,
+        }));
+        return;
+      }
+
+      if (loaded.mime.startsWith('video/')) {
+        setPreviewDialog((prev) => ({
+          ...prev,
+          open: true,
+          loading: false,
+          title: getResourceLabel(target),
+          type: 'video',
           resource: target,
           zoomed: false,
         }));
@@ -2811,7 +2841,7 @@ export default function DataExplorer() {
           base64: data64,
           publicKeys,
         });
-        const privateData64 = applyPrivateMagicIfNeeded(encrypted, MANIFEST_SERVICE);
+        const privateData64 = applyPrivateMagicIfNeeded(encrypted, MANIFEST_SERVICE, 'direct');
         const metadata = {
           qassetsManifest: { version: 1, visibility: 'private' },
           encrypted: { mode: 'direct', recipients: [publisherAddress] },
@@ -2829,8 +2859,7 @@ export default function DataExplorer() {
           },
         ]);
         setManifestRefreshBlockedUntil(Date.now() + MANIFEST_REFRESH_COOLDOWN);
-        setManifestDoc(manifestPayload);
-        setManifestDirty(false);
+        applyManifestState(manifestPayload, false, 'success');
       } catch (e: any) {
         setManifestError(e?.message || 'Manifest publish failed');
       } finally {
@@ -2844,6 +2873,7 @@ export default function DataExplorer() {
       publishResources,
       resolvePublisherAddress,
       flushPendingPublishRequests,
+      applyManifestState,
     ]
   );
 
@@ -2926,7 +2956,7 @@ export default function DataExplorer() {
             isAdmins: false,
           });
           const service = ensurePrivateService(resource.service);
-          const privData = applyPrivateMagicIfNeeded(enc, service);
+          const privData = applyPrivateMagicIfNeeded(enc, service, 'group');
           shareRequests.push({
             name: publisherName,
             service,
@@ -2967,7 +2997,7 @@ export default function DataExplorer() {
             publicKeys,
           });
           const service = ensurePrivateService(resource.service);
-          const privData = applyPrivateMagicIfNeeded(enc, service);
+          const privData = applyPrivateMagicIfNeeded(enc, service, 'direct');
           shareRequests.push({
             name: publisherName,
             service,
@@ -3706,7 +3736,10 @@ export default function DataExplorer() {
                 </Button>
                 <Tooltip title="Refresh current folder">
                   <span>
-                    <IconButton onClick={handleReload} disabled={!activeName || resourcesLoading}>
+                    <IconButton
+                      onClick={handleLoadFromNetwork}
+                      disabled={!activeName || resourcesLoading}
+                    >
                       <RefreshRoundedIcon />
                     </IconButton>
                   </span>
@@ -3760,6 +3793,16 @@ export default function DataExplorer() {
                   {loadingAllPages ? 'Loading…' : 'Load remaining'}
                 </Button>
               )}
+              {activeName && manifestLoadState === 'success' && (
+                <Button
+                  variant="contained"
+                  color="primary"
+                  onClick={handleLoadFromNetwork}
+                  disabled={resourcesLoading || loadingAllPages}
+                >
+                  {loadingAllPages ? 'Loading…' : 'Load from network'}
+                </Button>
+              )}
             </Stack>
 
             {manifestBoundaryReached && hasMore && !ignoreManifestCache && (
@@ -3769,7 +3812,9 @@ export default function DataExplorer() {
                 action={
                   <Button
                     size="small"
-                    onClick={handleLoadRemaining}
+                    variant="contained"
+                    color="primary"
+                    onClick={handleLoadFromNetwork}
                     disabled={resourcesLoading || loadingAllPages}
                   >
                     {loadingAllPages ? 'Loading…' : 'Load from network'}
@@ -4976,6 +5021,24 @@ export default function DataExplorer() {
                 borderRadius: 2,
               }}
             />
+          )}
+          {previewDialog.type === 'video' && previewDialog.resource && (
+            <Box
+              sx={{
+                width: '100%',
+                maxWidth: '100%',
+                height: previewDialog.expanded ? '70vh' : 420,
+              }}
+            >
+              <VideoPlayer
+                videoRef={previewVideoRef}
+                qortalVideoResource={{
+                  service: previewDialog.resource.service as any,
+                  name: previewDialog.resource.name,
+                  identifier: previewDialog.resource.identifier,
+                }}
+              />
+            </Box>
           )}
           {previewDialog.type === 'binary' && (
             <Typography variant="body2">{previewDialog.content}</Typography>

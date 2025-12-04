@@ -1,6 +1,6 @@
 import { Box, Button, LinearProgress, Typography } from '@mui/material';
 import type { PublishJobProgress, PublishJobStatus } from '../../utils/qdnProgressivePublisher';
-import type { PublishThrottleState } from '../../hooks/useQdnProgressivePublisher';
+import type { PublishThrottleState } from '../../state/publishQueue';
 
 type Props = {
   progress: PublishJobProgress | null;

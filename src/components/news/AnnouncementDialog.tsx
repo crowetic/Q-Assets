@@ -23,8 +23,9 @@ import {
 } from '@mui/material';
 import { useAuth } from 'qapp-core';
 import TiptapEditor from '../TipTapEditor';
-import QdnPublishStatus from '../common/QdnPublishStatus';
+import PublishQueueStatus from '../common/PublishQueueStatus';
 import { prepareHtmlForPublish } from '../../utils/publicationPublisher';
+import { invalidateAnnouncementCache, dispatchNewsRefreshEvent } from '../../utils/news';
 import { objectToBase64 } from '../../utils/data';
 import { sendNotification } from '../../notifications/notificationService';
 import { NOTIF_GROUP_ID } from '../../notifications/notifyIndex';
@@ -32,10 +33,9 @@ import { qaAnnouncementPrefix } from '../../constants/qdnConstants';
 import { uniqueId6 } from '../../utils/ids';
 import { getAccountGroups, type GroupSummary } from '../../utils/qortalApi';
 import type { NotifScope } from '../../types/notifications';
-import { QmailPartialError } from '../../utils/qmailNotifications';
 import type { NotificationRecipient } from '../../utils/notificationRecipients';
 import { prepareQmailRecipients } from '../../utils/qmailRecipientCache';
-import { useQdnProgressivePublisher } from '../../hooks/useQdnProgressivePublisher';
+import { enqueueQdnPublishJob } from '../../state/publishQueue';
 import { PublishJobError } from '../../utils/qdnProgressivePublisher';
 
 type Props = {
@@ -45,22 +45,6 @@ type Props = {
 };
 
 const APP_HOME_LINK = 'qortal://APP/Q-Assets';
-
-type QmailPartial = {
-  title: string;
-  identifier: string;
-  sent: number;
-  total: number;
-  savedAt: number;
-};
-
-function saveQmailPartial(info: QmailPartial) {
-  try {
-    localStorage.setItem('qassets_qmail_partial', JSON.stringify(info));
-  } catch {
-    /* ignore */
-  }
-}
 
 export default function AnnouncementDialog({
   open,
@@ -79,52 +63,6 @@ export default function AnnouncementDialog({
   const [groupOptions, setGroupOptions] = useState<GroupSummary[]>([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [notificationGroupId, setNotificationGroupId] = useState<number | ''>('');
-  const {
-    publish: publishAnnouncementResources,
-    progress: qdnProgress,
-    throttle: qdnThrottle,
-  } = useQdnProgressivePublisher();
-  const [qmailThrottle, setQmailThrottle] = useState<{
-    sent: number;
-    total: number;
-    secondsLeft: number;
-    resolver: (v: boolean) => void;
-    identifier: string;
-    title: string;
-  } | null>(null);
-
-  useEffect(() => {
-    if (!qmailThrottle) return;
-    const id = setInterval(() => {
-      setQmailThrottle((prev) => {
-        if (!prev) return prev;
-        const next = prev.secondsLeft - 1;
-        if (next <= 0) {
-          prev.resolver(true);
-          return null;
-        }
-        return { ...prev, secondsLeft: next };
-      });
-    }, 1000);
-    return () => clearInterval(id);
-  }, [qmailThrottle]);
-
-  const cancelQmailThrottle = () => {
-    if (!qmailThrottle) return;
-    saveQmailPartial({
-      title: qmailThrottle.title,
-      identifier: qmailThrottle.identifier,
-      sent: qmailThrottle.sent,
-      total: qmailThrottle.total,
-      savedAt: Date.now(),
-    });
-    qmailThrottle.resolver(false);
-    setQmailThrottle(null);
-    setBusy(false);
-    setErr(
-      `Q-Mail paused after ${qmailThrottle.sent}/${qmailThrottle.total}. Saved for re-publish later.`
-    );
-  };
 
   useEffect(() => {
     if (!address) {
@@ -177,7 +115,7 @@ export default function AnnouncementDialog({
 
       const announcementBase64 = await objectToBase64(annPayload);
 
-      await publishAnnouncementResources({
+      const queued = enqueueQdnPublishJob({
         label: 'Announcement publish',
         resources: [
           {
@@ -188,23 +126,10 @@ export default function AnnouncementDialog({
           },
         ],
       });
-
-      const qmailOptions = () => ({
-        batchSize: 10,
-        onThrottle: (ctx: { sent: number; total: number; delayMs: number; nextIndex: number }) =>
-          new Promise<boolean>((resolve) => {
-            setQmailThrottle({
-              sent: ctx.sent,
-              total: ctx.total,
-              secondsLeft: Math.ceil(ctx.delayMs / 1000),
-              resolver: resolve,
-              identifier,
-              title,
-            });
-          }),
-        onProgress: ({ sent, total }: { sent: number; total: number }) =>
-          setQmailThrottle((prev) => (prev ? { ...prev, sent, total } : prev)),
-      });
+      if (!queued) throw new Error('Unable to queue announcement publish.');
+      await queued.completion;
+      invalidateAnnouncementCache();
+      dispatchNewsRefreshEvent();
 
       if ((notifyMail || notifyChat) && address) {
         const extraGroupId =
@@ -258,7 +183,6 @@ export default function AnnouncementDialog({
             publisher,
             qdnResource: { publisher: userName, identifier },
             links,
-            qmailOptions: qmailOptions(),
             deliveries: {
               internal: { enabled: true, chatPingGroupId: notifyChat ? NOTIF_GROUP_ID : undefined },
               qmail: notifyMail
@@ -283,7 +207,6 @@ export default function AnnouncementDialog({
               publisher,
               qdnResource: { publisher: userName, identifier },
               links,
-              qmailOptions: qmailOptions(),
               deliveries: {
                 internal: { enabled: true },
                 qmail: notifyMail
@@ -319,18 +242,6 @@ export default function AnnouncementDialog({
       const declineReported = lower.includes('user declined request');
       if (e instanceof PublishJobError) {
         setErr(e.message || 'Announcement publishing cancelled.');
-      } else if (e instanceof QmailPartialError || e?.code === 'QMAIL_PARTIAL') {
-        saveQmailPartial({
-          title,
-          identifier,
-          sent: e.sent ?? 0,
-          total: e.total ?? 0,
-          savedAt: Date.now(),
-        });
-        setErr(
-          e?.message ||
-            `Q-Mail paused after ${e.sent ?? 0}/${e.total ?? 0}. Saved progress for re-publish.`
-        );
       } else {
         setErr(
           declineReported
@@ -339,7 +250,7 @@ export default function AnnouncementDialog({
         );
       }
     } finally {
-      if (!qmailThrottle && !qdnThrottle) setBusy(false);
+      setBusy(false);
     }
   }
 
@@ -442,35 +353,7 @@ export default function AnnouncementDialog({
               </FormHelperText>
             </FormControl>
           </Box>
-          <QdnPublishStatus
-            progress={qdnProgress}
-            throttle={qdnThrottle}
-            contextLabel="Publishing announcement"
-          />
-          {qmailThrottle && (
-            <Box
-              sx={{
-                p: 1,
-                border: (t) => `1px solid ${t.palette.warning.main}`,
-                borderRadius: 1,
-                bgcolor: (t) => t.palette.warning.light,
-                color: (t) => t.palette.getContrastText(t.palette.warning.light),
-              }}
-            >
-              <Typography variant="body2" fontWeight={700}>
-                Q-Mail throttled
-              </Typography>
-              <Typography variant="body2">
-                Sent {qmailThrottle.sent}/{qmailThrottle.total}. Auto-retrying in{' '}
-                {qmailThrottle.secondsLeft}s.
-              </Typography>
-              <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
-                <Button variant="contained" color="warning" onClick={cancelQmailThrottle}>
-                  Cancel / Pause
-                </Button>
-              </Box>
-            </Box>
-          )}
+          <PublishQueueStatus fallbackLabel="Publishing announcement" />
           {err && <Box sx={{ color: 'error.main', fontSize: 13 }}>{err}</Box>}
         </Box>
       </DialogContent>

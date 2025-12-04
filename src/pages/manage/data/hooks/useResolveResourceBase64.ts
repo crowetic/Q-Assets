@@ -12,14 +12,26 @@ declare function qortalRequest<T = any>(req: any): Promise<T>;
 
 export const hasPrivateMagicPrefix = (base64: string) => base64.startsWith(PRIVATE_MAGIC_B64);
 
-export const applyPrivateMagicIfNeeded = (base64: string, service?: string) => {
-  if (isPrivateService(service)) return base64;
+type EncryptionMode = 'group' | 'direct' | null | undefined;
+
+export const applyPrivateMagicIfNeeded = (
+  base64: string,
+  service?: string,
+  mode?: EncryptionMode
+) => {
+  if (!isPrivateService(service)) return base64;
+  if (mode !== 'group') return base64;
   return hasPrivateMagicPrefix(base64) ? base64 : addPrivateMagic(base64);
 };
 
-export const stripPrivateMagicIfNeeded = (base64: string, _service?: string) => {
-  console.log('removing private magic', base64, 'from service (if passed)', _service);
-  return stripPrivateMagic(base64);
+export const stripPrivateMagicIfNeeded = (
+  base64: string,
+  service?: string,
+  mode?: EncryptionMode
+) => {
+  if (!isPrivateService(service)) return base64;
+  if (mode !== 'group') return base64;
+  return hasPrivateMagicPrefix(base64) ? stripPrivateMagic(base64) : base64;
 };
 
 type GroupDecryptAttempt = {
@@ -135,7 +147,7 @@ async function decryptPrivateBase64(
     mode = 'direct';
   }
 
-  const encryptedPayload = stripPrivateMagicIfNeeded(encryptedWithMagic, resource.service);
+  const encryptedPayload = stripPrivateMagicIfNeeded(encryptedWithMagic, resource.service, mode);
 
   try {
     const direct = await qortalRequest({

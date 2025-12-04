@@ -52,6 +52,8 @@ import SmartPriceChart from '../components/trade/SmartPriceChart';
 import ActionsToolbar from '../components/asset/ActionsToolbar';
 import { useAlert } from '../components/alerts';
 import { useTheme, useMediaQuery } from '@mui/material';
+import { useMemberGroupIds } from '../hooks/useMemberGroupIds';
+import { getAssetPrivacy, canViewAsset, type AssetPrivacy } from '../utils/assetPrivacy';
 
 export default function TradePair() {
   const { assetId } = useParams<{ assetId: string }>();
@@ -73,6 +75,8 @@ export default function TradePair() {
   const [issuerAddr, setIssuerAddr] = useState<string | null>(null);
   const [balAsset, setBalAsset] = useState<number | null>(null);
   const [balQort, setBalQort] = useState<number | null>(null);
+  const [assetPrivacy, setAssetPrivacy] = useState<AssetPrivacy | null>(null);
+  const [privacyChecked, setPrivacyChecked] = useState(false);
   // ---- controls for chart window & bucket
   const [rangeHours, setRangeHours] = useState<number>(720); // set default range hours
   const [bucketMinutes, setBucketMinutes] = useState<number>(60); // 1, 5, 15, 60 etc.
@@ -87,6 +91,12 @@ export default function TradePair() {
   const isXs = useMediaQuery(theme.breakpoints.down('sm'));
 
   const { alert } = useAlert();
+  const { memberGroupIds, loading: groupsLoading } = useMemberGroupIds();
+  const privacyAllowed = useMemo(() => {
+    if (!privacyChecked) return false;
+    if (!assetPrivacy) return true;
+    return canViewAsset(assetPrivacy, memberGroupIds);
+  }, [assetPrivacy, memberGroupIds, privacyChecked]);
 
   const candles = useMemo(() => {
     const lookbackMs = rangeHours * 60 * 60 * 1000;
@@ -139,6 +149,11 @@ export default function TradePair() {
   }
 
   async function refreshBalances() {
+    if (!privacyAllowed) {
+      setBalAsset(null);
+      setBalQort(null);
+      return;
+    }
     if (!authAddress) {
       setBalAsset(null);
       setBalQort(null);
@@ -178,6 +193,26 @@ export default function TradePair() {
 
   const DP = 8;
   const TEN_DP = 100000000n;
+
+  useEffect(() => {
+    let cancelled = false;
+    setPrivacyChecked(false);
+    (async () => {
+      try {
+        const priv = await getAssetPrivacy(id);
+        if (cancelled) return;
+        setAssetPrivacy(priv);
+        setPrivacyChecked(true);
+      } catch {
+        if (cancelled) return;
+        setAssetPrivacy({ isPrivate: false });
+        setPrivacyChecked(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
 
   function decimalToAtomics(s: string, dp = DP): bigint {
     const m = s.trim().match(/^(\d+)(?:\.(\d{0,18}))?$/); // allow up to 18 just in case
@@ -292,6 +327,10 @@ export default function TradePair() {
   }
 
   const refreshMarket = useCallback(async () => {
+    if (!privacyAllowed) {
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
 
@@ -393,9 +432,13 @@ export default function TradePair() {
     } finally {
       setLoading(false);
     }
-  }, [id, authAddress, divisible]);
+  }, [id, authAddress, divisible, privacyAllowed]);
 
   const refreshMyFills = useCallback(async () => {
+    if (!privacyAllowed) {
+      setMyFills([]);
+      return;
+    }
     if (!authAddress) {
       setMyFills([]);
       return;
@@ -419,7 +462,7 @@ export default function TradePair() {
       console.debug('[fills] error', e);
       setMyFills([]);
     }
-  }, [authAddress, authPublicKey, id]);
+  }, [authAddress, authPublicKey, id, privacyAllowed]);
 
   useMarketConfirmRefresh({
     assetId: id,
@@ -438,7 +481,11 @@ export default function TradePair() {
     let cancelled = false;
     (async () => {
       try {
-        if (!cancelled) {
+        if (!cancelled && privacyChecked) {
+          if (!privacyAllowed) {
+            setLoading(false);
+            return;
+          }
           await refreshMarket();
           await refreshBalances();
           await refreshMyFills();
@@ -450,7 +497,7 @@ export default function TradePair() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [privacyAllowed, privacyChecked, refreshMarket, refreshBalances, refreshMyFills]);
 
   // ----- Place order state
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
@@ -620,6 +667,28 @@ export default function TradePair() {
     if (side === 'buy') return balQort != null && needQort > (balQort ?? 0);
     return balAsset != null && needAsset > (balAsset ?? 0);
   }, [side, needQort, needAsset, balQort, balAsset, authAddress]);
+
+  if (groupsLoading || !privacyChecked) {
+    return (
+      <Box display="flex" justifyContent="center" py={6}>
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (privacyChecked && assetPrivacy && !privacyAllowed) {
+    return (
+      <Box sx={{ p: { xs: 2, md: 3 } }}>
+        <Paper sx={{ p: 3 }}>
+          <Typography variant="h6">Private asset</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            You must be a member of group
+            {assetPrivacy.groupId ? ` #${assetPrivacy.groupId}` : ''} to view and trade this asset.
+          </Typography>
+        </Paper>
+      </Box>
+    );
+  }
 
   return (
     <Box

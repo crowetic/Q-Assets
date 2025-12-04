@@ -12,6 +12,7 @@ import {
   Select,
   MenuItem,
   CircularProgress,
+  FormHelperText,
   Chip,
 } from '@mui/material';
 import { useTheme } from '@mui/material';
@@ -51,6 +52,7 @@ export default function IssueAsset() {
   const [groupIsPrivate, setGroupIsPrivate] = useState(false);
   const [avatarBase64, setAvatarBase64] = useState<string>('');
   // const [newAssetID, setNewAssetID] = useState<number>(0);
+  const [privateAsset, setPrivateAsset] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,6 +108,7 @@ export default function IssueAsset() {
     setGroupId('');
     setGroupLink('');
     setGroupIsPrivate(false);
+    setPrivateAsset(false);
     setAttemptedSubmit(false);
     setAvatarBase64('');
     setHtml('');
@@ -139,6 +142,19 @@ export default function IssueAsset() {
     setSuccess(null);
     if (!assetData) setAssetData('None');
 
+    if (privateAsset) {
+      if (!groupId) {
+        setError('Private assets require selecting a private group.');
+        setLoading(false);
+        return;
+      }
+      if (!groupIsPrivate) {
+        setError('Selected group must be private for a private asset.');
+        setLoading(false);
+        return;
+      }
+    }
+
     // Snapshot state so later resetForm() won't overwrite values during async work
     const currentAssetName = assetName;
     const currentDescription = description;
@@ -147,6 +163,10 @@ export default function IssueAsset() {
     const currentUnspendable = isUnspendable;
     const currentAssetData = assetData;
     const currentAvatarBase64 = avatarBase64;
+    const currentPrivateAsset = privateAsset;
+    const parsedGroupId = groupId ? Number(groupId) : NaN;
+    const normalizedPrivateGroupId =
+      currentPrivateAsset && Number.isFinite(parsedGroupId) ? parsedGroupId : undefined;
 
     try {
       const predictedAssetID = await predictAssetID();
@@ -156,6 +176,8 @@ export default function IssueAsset() {
       const publication: AssetPublication = {
         description: currentDescription,
         html,
+        privateAsset: currentPrivateAsset,
+        privateGroupId: normalizedPrivateGroupId,
         primaryGroup: {
           name: groupName,
           id: groupId,
@@ -346,6 +368,29 @@ export default function IssueAsset() {
 
         <Divider sx={{ my: 3 }} />
 
+        {/* Private asset toggle */}
+        <Typography variant="h5" fontWeight={600} color="primary.contrastText">
+          Visibility
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          Private assets require a private group and will be hidden from public listings.
+        </Typography>
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={privateAsset}
+              onChange={(e) => setPrivateAsset(e.target.checked)}
+              sx={{
+                color: theme.palette.primary.dark,
+                '&.Mui-checked': { color: theme.palette.info.main },
+              }}
+            />
+          }
+          label="Make this a private asset"
+        />
+
+        <Divider sx={{ my: 3 }} />
+
         {/* Group Info */}
         <Typography variant="h5" fontWeight={600} color="primary.contrastText">
           Asset-Related Group Data
@@ -381,6 +426,7 @@ export default function IssueAsset() {
               if (!match) return value;
               return `${match.groupName} (#${match.groupId}) — ${match.isOpen ? 'Public' : 'Private'}`;
             }}
+            error={privateAsset && attemptedSubmit && (!groupId || !groupIsPrivate)}
           >
             {groupOptions.map((group) => (
               <MenuItem key={group.groupId} value={group.groupId}>
@@ -403,6 +449,15 @@ export default function IssueAsset() {
               <CircularProgress size={20} />
             </Box>
           )}
+          <FormHelperText error={privateAsset && attemptedSubmit && (!groupId || !groupIsPrivate)}>
+            {privateAsset
+              ? !groupId
+                ? 'Private assets must choose a private group.'
+                : groupIsPrivate
+                  ? 'Private group selected.'
+                  : 'Selected group is public; choose a private group.'
+              : 'Primary group for this asset (optional but recommended).'}
+          </FormHelperText>
         </FormControl>
 
         <Divider sx={{ my: 3 }} />

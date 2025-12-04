@@ -1,27 +1,48 @@
 import { getAssetIdentifiers } from '../constants/qdnConstants';
 import { base64ToObject } from './data';
 import type { AssetPublication } from '../types/AssetPublicationMetadata';
+import { stripPrivateMagic } from '../constants/qdeckIdentifiers';
 
 export const fetchAssetPublication = async (
   name: string,
   assetName: string,
-  assetId?: number
+  assetId?: number,
+  opts?: { preferPrivate?: boolean }
 ): Promise<AssetPublication | null> => {
   const publishInfo = await getAssetIdentifiers(assetName, assetId);
 
-  // Try correct, ID-based identifier first
-  try {
-    const pub = await qortalRequest({
+  const tryFetch = async (service: any, identifier: string, isPrivate: boolean) => {
+    const res = await qortalRequest({
       action: 'FETCH_QDN_RESOURCE',
       name,
-      service: publishInfo.services.genesisPost,
-      identifier: publishInfo.identifiers.genesisPost,
+      service,
+      identifier,
+      encoding: 'base64',
     });
+    const raw = res?.data64 ?? res;
+    const cleaned = isPrivate && typeof raw === 'string' ? stripPrivateMagic(raw) : raw;
+    return base64ToObject(cleaned);
+  };
 
-    return await base64ToObject(pub);
-  } catch {
-    console.warn(`No publication for correct ID ${assetId}. Trying fallback search...`);
+  const tryOrder: Array<{ svc: any; priv: boolean }> = opts?.preferPrivate
+    ? [
+        { svc: 'DOCUMENT_PRIVATE', priv: true },
+        { svc: publishInfo.services.genesisPost, priv: false },
+      ]
+    : [
+        { svc: publishInfo.services.genesisPost, priv: false },
+        { svc: 'DOCUMENT_PRIVATE', priv: true },
+      ];
+
+  for (const attempt of tryOrder) {
+    try {
+      const pub = await tryFetch(attempt.svc, publishInfo.identifiers.genesisPost, attempt.priv);
+      if (pub) return pub;
+    } catch {
+      /* try next */
+    }
   }
+  console.warn(`No publication for correct ID ${assetId}. Trying fallback search...`);
 
   // Fallback: search for anything resembling the asset name
   const results = await qortalRequest({

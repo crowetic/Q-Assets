@@ -11,6 +11,8 @@ import { makeAssetFallbackAvatar } from '../utils/assetAvatarFallback';
 import { fetchQortVolumeLastN } from '../explorerStats/fetchers';
 import { TRADE_FETCH_N } from '../explorerStats/types';
 import { useTheme } from '@mui/material';
+import { useMemberGroupIds } from '../hooks/useMemberGroupIds';
+import { canViewAsset, getAssetPrivacy, type AssetPrivacy } from '../utils/assetPrivacy';
 
 type Row = {
   assetId: number;
@@ -30,6 +32,8 @@ export default function TradeMarkets() {
   type VolInfo = { sum: number; count: number; ts: number };
   const VOL_TTL_MS = 10 * 60 * 1000;
   const theme = useTheme();
+  const { memberGroupIds, loading: groupsLoading } = useMemberGroupIds();
+  const [privacyMap, setPrivacyMap] = useState<Record<number, AssetPrivacy>>({});
 
   const [volumes, setVolumes] = useState<Record<number, VolInfo>>({});
   const [sortKey, setSortKey] = useState<'volume' | 'name' | 'assetId'>('volume');
@@ -45,7 +49,9 @@ export default function TradeMarkets() {
   const writeVolCache = (m: Record<number, VolInfo>) => {
     try {
       localStorage.setItem('marketVolumes', JSON.stringify(m));
-    } catch {}
+    } catch {
+      /* empty */
+    }
   };
 
   useEffect(() => {
@@ -111,6 +117,32 @@ export default function TradeMarkets() {
   }, []);
 
   useEffect(() => {
+    const missing = rows.filter((r) => r.assetId > 2 && !privacyMap[r.assetId]);
+    if (!missing.length) return;
+    let cancelled = false;
+    const limit = pLimit(6);
+    (async () => {
+      const results = await Promise.all(
+        missing.map((r) =>
+          limit(async () => {
+            const priv = await getAssetPrivacy(r.assetId);
+            return [r.assetId, priv] as const;
+          })
+        )
+      );
+      if (cancelled) return;
+      setPrivacyMap((prev) => {
+        const next = { ...prev };
+        for (const [id, priv] of results) next[id] = priv;
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rows, privacyMap]);
+
+  useEffect(() => {
     let cancelled = false;
     if (rows.length === 0) return;
 
@@ -155,16 +187,25 @@ export default function TradeMarkets() {
     };
   }, [rows]);
 
+  const viewableRows = useMemo(() => {
+    return rows.filter((r) => {
+      if (r.assetId <= 2) return false; // should not appear anyway
+      const privacy = privacyMap[r.assetId];
+      if (!privacy) return false;
+      return canViewAsset(privacy, memberGroupIds);
+    });
+  }, [rows, privacyMap, memberGroupIds]);
+
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
-    if (!s) return rows;
-    return rows.filter(
+    if (!s) return viewableRows;
+    return viewableRows.filter(
       (r) =>
         r.name.toLowerCase().includes(s) ||
         r.description?.toLowerCase().includes(s) ||
         String(r.assetId).includes(s)
     );
-  }, [rows, q]);
+  }, [viewableRows, q]);
 
   const sorted = useMemo(() => {
     const arr = [...filtered];
@@ -236,7 +277,7 @@ export default function TradeMarkets() {
           </Box>
         </Box>
 
-        {loading && rows.length === 0 ? (
+        {(loading || groupsLoading) && viewableRows.length === 0 ? (
           <Box display="flex" justifyContent="center" py={6}>
             <CircularProgress />
           </Box>

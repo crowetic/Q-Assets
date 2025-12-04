@@ -154,8 +154,6 @@ export async function sendNotification(
           message,
           batchSize: request.qmailOptions?.batchSize,
           resumeFrom: request.qmailOptions?.resumeFrom,
-          onThrottle: request.qmailOptions?.onThrottle,
-          onProgress: request.qmailOptions?.onProgress,
         });
         results.qmail = { recipients: recipients.length };
       }
