@@ -13,13 +13,14 @@ export type NotificationRecipient = {
 const norm = (s?: string | null) => (typeof s === 'string' ? s.trim() : '');
 
 async function resolveName(address: string): Promise<string | null> {
+  const primary = await getPrimaryAccountName(address).catch(() => '');
+  if (primary && primary.trim()) return primary.trim();
+
   const names = await getAllAccountNames(address).catch(() => []);
   if (Array.isArray(names) && names.length > 0) {
     const first = names.find((n) => typeof n === 'string' && n.trim().length > 0);
     if (first) return norm(first);
   }
-  const primary = await getPrimaryAccountName(address).catch(() => '');
-  if (primary && primary.trim()) return primary.trim();
   return null;
 }
 
@@ -36,7 +37,7 @@ export async function resolveNotificationRecipients(
   const rows = await fetchGroupMembers(false, groupId).catch(() => []);
   if (!rows?.length) return [];
 
-  const limit = pLimit(4);
+  const limit = pLimit(20);
   const seen = new Set<string>();
   const recipients: NotificationRecipient[] = [];
 

@@ -143,6 +143,7 @@ const PUBLISH_MODE_STORAGE_KEY = 'qassets_publish_mode_preference_v1';
 
 const SERVICE_OPTIONS = ALL_QDN_SERVICES;
 const PENDING_FOLDERS_KEY = 'qassets_data_pending_folders_v1';
+const PUBLISH_CHUNK_SIZE = 25;
 const MANIFEST_REFRESH_COOLDOWN = 90 * 1000;
 const MAX_FILE_IDENTIFIER_LENGTH = QASSETS_FILE_ID_MAX;
 const MANIFEST_SERVICE = ensurePrivateService('DOCUMENT_PRIVATE');
@@ -955,23 +956,37 @@ export default function DataExplorer() {
   const [nameSuggestions, setNameSuggestions] = useState<string[]>([]);
   const [nameSearchLoading, setNameSearchLoading] = useState(false);
   const [nameSearchError, setNameSearchError] = useState<string | null>(null);
+  const chunkResources = useCallback((resources: BatchPublishResource[]) => {
+    const chunks: BatchPublishResource[][] = [];
+    for (let i = 0; i < resources.length; i += PUBLISH_CHUNK_SIZE) {
+      chunks.push(resources.slice(i, i + PUBLISH_CHUNK_SIZE));
+    }
+    return chunks;
+  }, []);
+
   const queueOrPublishResources = useCallback(
     async (resources: BatchPublishResource[]) => {
       if (!resources.length) return;
       if (publishMode === 'immediate') {
-        await publishResources(resources);
+        const chunks = chunkResources(resources);
+        for (const chunk of chunks) {
+          await publishResources(chunk);
+        }
         return;
       }
       setPendingPublishRequests((prev) => prev.concat(resources));
     },
-    [publishMode, publishResources]
+    [publishMode, publishResources, chunkResources]
   );
   const flushPendingPublishRequests = useCallback(async () => {
     if (!pendingPublishRequests.length) return;
     const requests = [...pendingPublishRequests];
     setPendingPublishRequests([]);
-    await publishResources(requests);
-  }, [pendingPublishRequests, publishResources]);
+    const chunks = chunkResources(requests);
+    for (const chunk of chunks) {
+      await publishResources(chunk);
+    }
+  }, [pendingPublishRequests, publishResources, chunkResources]);
   const [manifestDoc, setManifestDoc] = useState<ManifestDoc | null>(null);
   const [manifestDirty, setManifestDirty] = useState(false);
   const [manifestPublishing, setManifestPublishing] = useState(false);

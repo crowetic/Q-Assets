@@ -23,6 +23,7 @@ import {
 } from '@mui/material';
 import { useAuth } from 'qapp-core';
 import TiptapEditor from '../TipTapEditor';
+import QdnPublishStatus from '../common/QdnPublishStatus';
 import { prepareHtmlForPublish } from '../../utils/publicationPublisher';
 import { objectToBase64 } from '../../utils/data';
 import { sendNotification } from '../../notifications/notificationService';
@@ -32,6 +33,10 @@ import { uniqueId6 } from '../../utils/ids';
 import { getAccountGroups, type GroupSummary } from '../../utils/qortalApi';
 import type { NotifScope } from '../../types/notifications';
 import { QmailPartialError } from '../../utils/qmailNotifications';
+import type { NotificationRecipient } from '../../utils/notificationRecipients';
+import { prepareQmailRecipients } from '../../utils/qmailRecipientCache';
+import { useQdnProgressivePublisher } from '../../hooks/useQdnProgressivePublisher';
+import { PublishJobError } from '../../utils/qdnProgressivePublisher';
 
 type Props = {
   open: boolean;
@@ -74,6 +79,11 @@ export default function AnnouncementDialog({
   const [groupOptions, setGroupOptions] = useState<GroupSummary[]>([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [notificationGroupId, setNotificationGroupId] = useState<number | ''>('');
+  const {
+    publish: publishAnnouncementResources,
+    progress: qdnProgress,
+    throttle: qdnThrottle,
+  } = useQdnProgressivePublisher();
   const [qmailThrottle, setQmailThrottle] = useState<{
     sent: number;
     total: number;
@@ -165,15 +175,22 @@ export default function AnnouncementDialog({
       const prefix = publishIdentifierPrefix || qaAnnouncementPrefix;
       identifier = `${prefix}${uniqueId6()}`;
 
-      await qortalRequest({
-        action: 'PUBLISH_QDN_RESOURCE',
-        service: 'DOCUMENT',
-        identifier,
-        data64: await objectToBase64(annPayload),
+      const announcementBase64 = await objectToBase64(annPayload);
+
+      await publishAnnouncementResources({
+        label: 'Announcement publish',
+        resources: [
+          {
+            name: userName,
+            service: 'DOCUMENT',
+            identifier,
+            data64: announcementBase64,
+          },
+        ],
       });
 
       const qmailOptions = () => ({
-        batchSize: 60,
+        batchSize: 10,
         onThrottle: (ctx: { sent: number; total: number; delayMs: number; nextIndex: number }) =>
           new Promise<boolean>((resolve) => {
             setQmailThrottle({
@@ -217,9 +234,23 @@ export default function AnnouncementDialog({
           },
         ];
         const publisher = { name: userName, address, role: 'admin' as const };
-        const notifyTasks: Promise<unknown>[] = [];
+        const notifyTasks: Array<() => Promise<unknown>> = [];
 
-        notifyTasks.push(
+        let globalRecipients: NotificationRecipient[] = [];
+        let extraGroupRecipients: NotificationRecipient[] = [];
+        if (notifyMail) {
+          globalRecipients = await prepareQmailRecipients({ kind: 'global' });
+          if (
+            extraGroupScope &&
+            extraGroupScope.groupId &&
+            extraGroupScope.groupId !== NOTIF_GROUP_ID
+          ) {
+            extraGroupRecipients = await prepareQmailRecipients(extraGroupScope);
+          }
+        }
+        const qmailSubject = `Q-Assets: ${title}`;
+
+        notifyTasks.push(() =>
           sendNotification({
             scope: { kind: 'global' },
             title,
@@ -234,7 +265,8 @@ export default function AnnouncementDialog({
                 ? {
                     enabled: true,
                     includeScopeSubscribers: true,
-                    subject: `Q-Assets: ${title}`,
+                    subject: qmailSubject,
+                    ...(globalRecipients.length ? { recipients: globalRecipients } : {}),
                   }
                 : undefined,
               chat: notifyChat ? { groups: [NOTIF_GROUP_ID] } : undefined,
@@ -243,7 +275,7 @@ export default function AnnouncementDialog({
         );
 
         if (extraGroupScope && extraGroupScope.groupId !== NOTIF_GROUP_ID) {
-          notifyTasks.push(
+          notifyTasks.push(() =>
             sendNotification({
               scope: extraGroupScope,
               title,
@@ -258,7 +290,8 @@ export default function AnnouncementDialog({
                   ? {
                       enabled: true,
                       includeScopeSubscribers: true,
-                      subject: `Q-Assets: ${title}`,
+                      subject: qmailSubject,
+                      ...(extraGroupRecipients.length ? { recipients: extraGroupRecipients } : {}),
                     }
                   : undefined,
                 chat: notifyChat ? { groups: [extraGroupScope.groupId] } : undefined,
@@ -268,7 +301,9 @@ export default function AnnouncementDialog({
         }
 
         if (notifyTasks.length) {
-          await Promise.all(notifyTasks);
+          for (const task of notifyTasks) {
+            await task();
+          }
         }
       }
 
@@ -279,7 +314,12 @@ export default function AnnouncementDialog({
       setContentHtml('');
       setTitle('');
     } catch (e: any) {
-      if (e instanceof QmailPartialError || e?.code === 'QMAIL_PARTIAL') {
+      const msg = typeof e?.message === 'string' ? e.message : '';
+      const lower = msg.toLowerCase();
+      const declineReported = lower.includes('user declined request');
+      if (e instanceof PublishJobError) {
+        setErr(e.message || 'Announcement publishing cancelled.');
+      } else if (e instanceof QmailPartialError || e?.code === 'QMAIL_PARTIAL') {
         saveQmailPartial({
           title,
           identifier,
@@ -292,10 +332,14 @@ export default function AnnouncementDialog({
             `Q-Mail paused after ${e.sent ?? 0}/${e.total ?? 0}. Saved progress for re-publish.`
         );
       } else {
-        setErr(e?.message || 'Failed to publish announcement.');
+        setErr(
+          declineReported
+            ? 'A Qortal request was declined while fetching recipient info. Please approve the prompt in Qortal (if it is behind other windows) and re-try.'
+            : e?.message || 'Failed to publish announcement.'
+        );
       }
     } finally {
-      if (!qmailThrottle) setBusy(false);
+      if (!qmailThrottle && !qdnThrottle) setBusy(false);
     }
   }
 
@@ -398,6 +442,11 @@ export default function AnnouncementDialog({
               </FormHelperText>
             </FormControl>
           </Box>
+          <QdnPublishStatus
+            progress={qdnProgress}
+            throttle={qdnThrottle}
+            contextLabel="Publishing announcement"
+          />
           {qmailThrottle && (
             <Box
               sx={{

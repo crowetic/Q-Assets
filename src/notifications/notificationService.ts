@@ -130,11 +130,14 @@ export async function sendNotification(
     if (!senderName) {
       console.warn('Unable to send Q-Mail notification without publisher name');
     } else {
-      const recipients =
-        deliveries.qmail.recipients ||
-        (deliveries.qmail.includeScopeSubscribers === false
-          ? []
-          : await resolveNotificationRecipients(request.scope));
+      let recipients: NotificationRecipient[] = [];
+      if (Array.isArray(deliveries.qmail.recipients)) {
+        recipients = deliveries.qmail.recipients;
+      } else if (deliveries.qmail.includeScopeSubscribers === false) {
+        recipients = [];
+      } else {
+        recipients = await resolveNotificationRecipients(request.scope);
+      }
       if (recipients.length) {
         const subject = deliveries.qmail.subject || `Q-Assets: ${request.title}`;
         const message =

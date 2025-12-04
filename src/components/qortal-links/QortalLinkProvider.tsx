@@ -12,7 +12,6 @@ import { Service } from 'qapp-core';
 import { useTheme } from '@mui/material';
 import { buildInternal } from './buildInternalPath';
 import { getHubOrigin } from './qortalEnv';
-// import { installQortalBridgeClient, installQortalBridgeHost } from './bridgeHost';
 import Popup from './Popup';
 
 type Ctx = { openQortalLink: (href: string) => Promise<void> };
@@ -102,11 +101,6 @@ export function QortalLinkProvider({ children }: { children: React.ReactNode }) 
     },
     [navigate, hubOrigin, themeMode]
   );
-
-  // useEffect(() => {
-  //   const remove = installQortalBridgeHost();
-  //   return () => remove();
-  // }, []);
 
   useEffect(() => {
     const onResize = () => {

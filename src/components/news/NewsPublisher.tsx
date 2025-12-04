@@ -14,6 +14,7 @@ import {
 } from '@mui/material';
 import { useAuth } from 'qapp-core';
 import TiptapEditor from '../TipTapEditor';
+import QdnPublishStatus from '../common/QdnPublishStatus';
 import { prepareHtmlForPublish } from '../../utils/publicationPublisher';
 import { assetNewsItemId } from '../../constants/qdnConstants';
 import { isNameAdminOfGroupId } from '../../utils/access';
@@ -21,6 +22,8 @@ import { uniqueId6 } from '../../utils/ids';
 import { useAlert } from '../alerts';
 import { publishScopedNotification } from '../../utils/notificationPublisher';
 import { objectToBase64 } from '../../utils/data';
+import { useQdnProgressivePublisher } from '../../hooks/useQdnProgressivePublisher';
+import { PublishJobError } from '../../utils/qdnProgressivePublisher';
 
 export default function NewsPublisher({
   assetId,
@@ -40,6 +43,7 @@ export default function NewsPublisher({
   const [html, setHtml] = useState('');
   const [notifyAppSubs, setNotifyAppSubs] = useState(false);
   const [notifyGroupSubs, setNotifyGroupSubs] = useState(true);
+  const [publishing, setPublishing] = useState(false);
   const theme = useTheme();
   const normalizedGroupId =
     typeof primaryGroupId === 'number' && Number.isFinite(primaryGroupId)
@@ -54,13 +58,117 @@ export default function NewsPublisher({
   };
 
   const { alert } = useAlert();
+  const {
+    publish: publishNewsResources,
+    progress: qdnProgress,
+    throttle: qdnThrottle,
+  } = useQdnProgressivePublisher();
+
+  const showQdnStatus =
+    (qdnProgress && qdnProgress.status !== 'completed' && qdnProgress.status !== 'cancelled') ||
+    !!qdnThrottle;
+
+  const handlePublish = async () => {
+    if (!userName) {
+      await alert('You need a Qortal name to publish.');
+      return;
+    }
+    if (!(await canPublish())) {
+      await alert('Only issuer or primary group admins can publish News.');
+      return;
+    }
+
+    const payload = prepareHtmlForPublish(html, theme);
+    const id6 = uniqueId6();
+    const newsItemId = assetNewsItemId(assetId, id6);
+    const newsTitle = assetName ? `${assetName} news` : `Asset #${assetId} update`;
+    const payloadObj = {
+      html: payload,
+      title: newsTitle,
+      createdAt: Date.now(),
+    };
+    const b64 = await objectToBase64(payloadObj);
+
+    setPublishing(true);
+    try {
+      await publishNewsResources({
+        label: 'Asset news publish',
+        resources: [
+          {
+            name: userName as string,
+            service: 'DOCUMENT',
+            identifier: newsItemId,
+            data64: b64,
+          },
+        ],
+      });
+
+      const assetLink = `qortal://APP/Q-Assets/assets/${assetId}`;
+      const links = [
+        {
+          label: 'View News Publication on Q-Assets',
+          href: `qortal://APP/Q-Assets`,
+        },
+        {
+          label: assetName ? `View ${assetName}` : `View Asset #${assetId}`,
+          href: assetLink,
+        },
+      ];
+
+      if (address) {
+        if (notifyAppSubs) {
+          await publishScopedNotification({
+            scope: { kind: 'global' },
+            title: newsTitle,
+            html: payload,
+            publisher: { name: userName, address, role: 'admin' },
+            qdnResource: { publisher: userName, identifier: newsItemId },
+            sendMail: true,
+            links,
+          });
+        }
+        if (notifyGroupSubs && normalizedGroupId) {
+          await publishScopedNotification({
+            scope: { kind: 'group', groupId: normalizedGroupId },
+            title: assetName ? `${assetName} group notice` : `Asset #${assetId} group notice`,
+            html: payload,
+            publisher: { name: userName, address, role: 'admin' },
+            qdnResource: { publisher: userName, identifier: newsItemId },
+            sendMail: true,
+            links,
+          });
+        }
+      }
+
+      setHtml('');
+      setNotifyAppSubs(false);
+      setNotifyGroupSubs(false);
+      setOpen(false);
+      onPublished?.();
+    } catch (e: any) {
+      if (e instanceof PublishJobError) {
+        await alert(e.message || 'News publishing cancelled.');
+      } else {
+        const message =
+          typeof e?.message === 'string' ? e.message : 'Failed to publish news article.';
+        await alert(message, 'Publish failed', { severity: 'error' });
+      }
+    } finally {
+      setPublishing(false);
+    }
+  };
 
   return (
     <>
       <Button variant="outlined" onClick={() => setOpen(true)}>
         Publish News Article
       </Button>
-      <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="md">
+      <Dialog
+        open={open}
+        onClose={publishing ? undefined : () => setOpen(false)}
+        fullWidth
+        maxWidth="md"
+      >
         <DialogTitle>Publish News Article</DialogTitle>
         <DialogContent dividers>
           <Typography variant="caption" color="text.secondary">
@@ -99,82 +207,22 @@ export default function NewsPublisher({
               }
             />
           </Box>
+          {showQdnStatus && (
+            <Box sx={{ mt: 2 }}>
+              <QdnPublishStatus
+                progress={qdnProgress}
+                throttle={qdnThrottle}
+                contextLabel="Publishing news article"
+              />
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpen(false)}>Cancel</Button>
-          <Button
-            variant="contained"
-            onClick={async () => {
-              if (!userName) return alert('You need a Qortal name to publish.');
-              if (!(await canPublish()))
-                return alert('Only issuer or primary group admins can publish News.');
-              const payload = prepareHtmlForPublish(html, theme);
-
-              // Unique history item
-              const id6 = uniqueId6();
-              const newsItemId = assetNewsItemId(assetId, id6);
-              const payloadObj = {
-                html: payload,
-                title: assetName ? `${assetName} news` : `Asset #${assetId} update`,
-                createdAt: Date.now(),
-              };
-              const b64 = await objectToBase64(payloadObj);
-
-              await qortalRequest({
-                action: 'PUBLISH_QDN_RESOURCE',
-                name: userName as string,
-                service: 'DOCUMENT',
-                identifier: newsItemId,
-                data64: b64,
-              } as any);
-
-              const assetLink = `qortal://APP/Q-Assets/assets/${assetId}`;
-              const links = [
-                {
-                  label: 'View News Publication on Q-Assets',
-                  href: `qortal://APP/Q-Assets`,
-                },
-                {
-                  label: assetName ? `View ${assetName}` : `View Asset #${assetId}`,
-                  href: assetLink,
-                },
-              ];
-
-              if (address) {
-                if (notifyAppSubs) {
-                  await publishScopedNotification({
-                    scope: { kind: 'global' },
-                    title: assetName ? `${assetName} news` : `Asset #${assetId} update`,
-                    html: payload,
-                    publisher: { name: userName, address, role: 'admin' },
-                    qdnResource: { publisher: userName, identifier: newsItemId },
-                    sendMail: true,
-                    links,
-                  });
-                }
-                if (notifyGroupSubs && normalizedGroupId) {
-                  await publishScopedNotification({
-                    scope: { kind: 'group', groupId: normalizedGroupId },
-                    title: assetName
-                      ? `${assetName} group notice`
-                      : `Asset #${assetId} group notice`,
-                    html: payload,
-                    publisher: { name: userName, address, role: 'admin' },
-                    qdnResource: { publisher: userName, identifier: newsItemId },
-                    sendMail: true,
-                    links,
-                  });
-                }
-              }
-
-              setHtml('');
-              setNotifyAppSubs(false);
-              setNotifyGroupSubs(false);
-              setOpen(false);
-              onPublished?.();
-            }}
-          >
-            Publish
+          <Button onClick={() => setOpen(false)} disabled={publishing}>
+            Cancel
+          </Button>
+          <Button variant="contained" onClick={handlePublish} disabled={publishing}>
+            {publishing ? 'Publishing…' : 'Publish'}
           </Button>
         </DialogActions>
       </Dialog>
