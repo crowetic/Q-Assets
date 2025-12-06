@@ -1,24 +1,61 @@
-import { resolveAssetPublicationById } from './resolveAssetPublication';
+import { assetPrivacyPrefix } from '../constants/qdnConstants';
+import { searchSimpleNameIdPrefix } from './searchSimple';
+import { ensureAssetMini } from '../bootstrap/assetsBootstrap';
+import { getAccountNames } from './qortalApi';
 
-export type AssetPrivacy = { isPrivate: boolean; groupId?: number };
+export type AssetPrivacy = { isPrivate: boolean; groupId?: number; publisherName?: string };
 
-const cache = new Map<number, AssetPrivacy>();
+const cache = new Map<string, AssetPrivacy>();
 
-export async function getAssetPrivacy(assetId: number): Promise<AssetPrivacy> {
+export async function getAssetPrivacy(
+  assetId: number,
+  memberGroupIds: number[] = []
+): Promise<AssetPrivacy> {
   if (assetId <= 2) return { isPrivate: false };
-  if (cache.has(assetId)) return cache.get(assetId)!;
+  const key = `${assetId}:${memberGroupIds
+    .slice()
+    .sort((a, b) => a - b)
+    .join(',')}`;
+  if (cache.has(key)) return cache.get(key)!;
 
   try {
-    const { publication } = await resolveAssetPublicationById(assetId);
-    const rawGroup = publication?.privateGroupId ?? publication?.primaryGroup?.id;
-    const groupId =
-      rawGroup != null && Number.isFinite(Number(rawGroup)) ? Number(rawGroup) : undefined;
-    const info: AssetPrivacy = { isPrivate: Boolean(publication?.privateAsset), groupId };
-    cache.set(assetId, info);
+    const mini = await ensureAssetMini(assetId);
+    let groupId: number | undefined;
+
+    if (mini?.owner) {
+      try {
+        const namesRes = await getAccountNames(mini.owner);
+        const names: string[] = namesRes.map((n) => n.name).filter(Boolean);
+        for (const nm of names) {
+          try {
+            const hits = await searchSimpleNameIdPrefix(`${assetPrivacyPrefix}${assetId}__`, nm);
+            const hit = hits.find(
+              (h) => typeof h.identifier === 'string' && names.includes(h.name)
+            );
+            if (hit) {
+              const parts = hit.identifier.split('__');
+              const gid = Number(parts[2]);
+              if (Number.isFinite(gid)) {
+                groupId = gid;
+                break;
+              }
+            }
+          } catch {
+            /* ignore and continue */
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const isPrivate = groupId != null;
+    const info: AssetPrivacy = { isPrivate, groupId };
+    cache.set(key, info);
     return info;
   } catch {
     const info: AssetPrivacy = { isPrivate: false };
-    cache.set(assetId, info);
+    cache.set(key, info);
     return info;
   }
 }

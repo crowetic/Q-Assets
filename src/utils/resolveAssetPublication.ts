@@ -1,57 +1,79 @@
-// utils/resolveAssetPublication.ts
 import { ensureAssetMini } from '../bootstrap/assetsBootstrap';
-import { getPrimaryAccountName } from '../utils/qortalApi';
 import { fetchAssetPublication } from './fetchAssetPublication';
 import type { AssetPublication } from '../types/AssetPublicationMetadata';
+import { searchSimpleByIdentifierPrefix } from './searchSimple';
+
+export type ResolvedPublication = {
+  issuerName: string | null;
+  publication: AssetPublication | null;
+  privateGroupId?: number;
+  isPrivate: boolean;
+};
 
 /**
- * Resolve AssetPublication for a given assetId by:
- *  1) bootstrap -> {name, owner}
- *  2) owner address -> issuer primary name
- *  3) (issuerName, assetName) -> publication
- *
- * Caches issuerName and pub pointer locally for speed.
+ * Resolve asset publication by:
+ * 1) loading mini (name/owner)
+ * 2) finding publication by identifier prefix (BLOG_POST + assetId)
+ * 3) matching privacy hint docs by the same publisher name to get groupId
+ * 4) fetching the publication with that publisher and optional groupId
  */
-export async function resolveAssetPublicationById(
-  assetId: number
-): Promise<{ issuerName: string | null; publication: AssetPublication | null }> {
-  // Base assets: skip (by your rule)
-  if (assetId === 0 || assetId === 1 || assetId === 2) {
-    return { issuerName: null, publication: null };
-  }
+export async function resolveAssetPublicationById(assetId: number): Promise<ResolvedPublication> {
+  if (assetId <= 2) return { issuerName: null, publication: null, isPrivate: false };
 
   const mini = await ensureAssetMini(assetId);
-  if (!mini?.name || !mini?.owner) {
-    return { issuerName: null, publication: null };
-  }
+  if (!mini?.name) return { issuerName: null, publication: null, isPrivate: false };
 
-  const cacheIssuerKey = `asset:${assetId}:issuerPrimaryName`;
-  const cachePubKey = `asset:${assetId}:pub:lastOkId`;
-
-  // 1) issuer primary name
   let issuerName: string | null = null;
-  const cachedIssuer = localStorage.getItem(cacheIssuerKey);
-  if (cachedIssuer !== null) {
-    issuerName = cachedIssuer || null;
-  } else {
+  let publisherNames: string[] = [];
+  let privateGroupId: number | undefined;
+
+  // Find publication hit by prefix
+  const pubHits =
+    (await searchSimpleByIdentifierPrefix('BLOG_POST', `asset${assetId}_`, 0).catch(() => [])) ||
+    [];
+  const pubHit = pubHits.find((h: any) => typeof h?.name === 'string');
+  if (pubHit) issuerName = pubHit.name;
+  publisherNames = Array.from(
+    new Set(pubHits.map((h: any) => (typeof h?.name === 'string' ? h.name : null)).filter(Boolean))
+  ) as string[];
+
+  // Find privacy hint doc under same publisher
+  if (issuerName) {
     try {
-      const nm = await getPrimaryAccountName(mini.owner);
-      issuerName = nm || null;
+      const privHits = await searchSimpleByIdentifierPrefix(
+        'DOCUMENT',
+        `asset_privacy__${assetId}__`,
+        0
+      );
+      const match = privHits.find(
+        (h: any) => h?.name === issuerName && typeof h?.identifier === 'string'
+      );
+      if (match) {
+        const parts = match.identifier.split('__');
+        const gid = Number(parts[2]);
+        if (Number.isFinite(gid)) privateGroupId = gid;
+      }
     } catch {
-      issuerName = null;
+      /* ignore */
     }
-    localStorage.setItem(cacheIssuerKey, issuerName ?? '');
   }
 
-  // 2) fetch publication
   let publication: AssetPublication | null = null;
   if (issuerName) {
-    publication = await fetchAssetPublication(issuerName, mini.name);
+    publication = await fetchAssetPublication(issuerName, mini.name, assetId, {
+      privateGroupId,
+    }).catch(() => null);
   }
-
   if (publication) {
-    localStorage.setItem(cachePubKey, '1');
+    publication = {
+      ...publication,
+      issuerName: publication.issuerName ?? issuerName ?? undefined,
+      publisherNames:
+        publication.publisherNames && publication.publisherNames.length
+          ? Array.from(new Set([...(publication.publisherNames ?? []), ...publisherNames]))
+          : publisherNames,
+    };
   }
 
-  return { issuerName, publication };
+  return { issuerName, publication, privateGroupId, isPrivate: privateGroupId != null };
 }

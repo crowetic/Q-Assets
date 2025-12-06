@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Box,
   TextField,
@@ -21,7 +21,7 @@ import { useAuth } from 'qapp-core';
 import { AssetPublication } from '../types/AssetPublicationMetadata';
 import { issueAsset, getAccountGroups, type GroupSummary } from '../utils/qortalApi';
 import { objectToBase64 } from 'qapp-core';
-import { getAssetIdentifiers } from '../constants/qdnConstants';
+import { getAssetIdentifiers, assetPrivacyId } from '../constants/qdnConstants';
 import { fileToBase64 } from '../utils/data';
 import { getAllAssets } from '../utils/qortalAssetRequests';
 import TiptapEditor from '../components/TipTapEditor';
@@ -62,6 +62,7 @@ export default function IssueAsset() {
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
   // const [isTestMode, setIsTestMode] = useState(false);
   const [editorHasInit, setEditorHasInit] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   const theme = useTheme();
   const { activeName, setActiveName, availableNames, namesLoading, namesError, reloadNames } =
@@ -225,6 +226,25 @@ export default function IssueAsset() {
         base64: pub64,
       });
 
+      // Publish privacy hint for private assets
+      if (currentPrivateAsset && normalizedPrivateGroupId != null) {
+        const privacyIdentifier = assetPrivacyId(predictedAssetID, normalizedPrivateGroupId);
+        const payload = {
+          assetId: predictedAssetID,
+          assetName: currentAssetName,
+          private: true,
+          groupId: normalizedPrivateGroupId,
+          updatedAt: Date.now(),
+        };
+        await qortalRequest({
+          action: 'PUBLISH_QDN_RESOURCE',
+          service: 'DOCUMENT',
+          name: issuerName,
+          identifier: privacyIdentifier,
+          data64: await objectToBase64(payload),
+        });
+      }
+
       // Publish avatar if present
       if (currentAvatarBase64) {
         await qortalRequest({
@@ -361,19 +381,27 @@ export default function IssueAsset() {
               <Typography variant="h5" fontWeight={550} color="primary.contrastText">
                 Include Asset Avatar?
               </Typography>
-              <InfoOutlineButton size="small" variant="outlined" sx={{ mb: 2 }}>
+              <InfoOutlineButton
+                size="small"
+                variant="outlined"
+                sx={{ mb: 2 }}
+                onClick={() => avatarInputRef.current?.click()}
+              >
                 Select Avatar Image
-                <input
-                  type="file"
-                  hidden
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      setAvatarBase64(await fileToBase64(file));
-                    }
-                  }}
-                />
               </InfoOutlineButton>
+              <input
+                ref={avatarInputRef}
+                type="file"
+                hidden
+                accept="image/*"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    setAvatarBase64(await fileToBase64(file));
+                  }
+                  if (avatarInputRef.current) avatarInputRef.current.value = '';
+                }}
+              />
             </>
           </Box>
         )}

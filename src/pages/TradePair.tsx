@@ -199,7 +199,7 @@ export default function TradePair() {
     setPrivacyChecked(false);
     (async () => {
       try {
-        const priv = await getAssetPrivacy(id);
+        const priv = await getAssetPrivacy(id, memberGroupIds);
         if (cancelled) return;
         setAssetPrivacy(priv);
         setPrivacyChecked(true);
@@ -212,7 +212,7 @@ export default function TradePair() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, memberGroupIds]);
 
   function decimalToAtomics(s: string, dp = DP): bigint {
     const m = s.trim().match(/^(\d+)(?:\.(\d{0,18}))?$/); // allow up to 18 just in case

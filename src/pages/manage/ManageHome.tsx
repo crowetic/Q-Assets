@@ -38,7 +38,7 @@ const tiles: Tile[] = [
     description: 'Avatars, groups, genesis posts, and issuer tools.',
     to: '/manage/assets',
     icon: <FolderSpecialRoundedIcon fontSize="inherit" />,
-    disabled: true, // flip to false when ready / if already implemented
+    disabled: false,
   },
   {
     title: 'Q-Deck Permissions',

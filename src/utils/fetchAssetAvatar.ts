@@ -102,25 +102,42 @@ async function fetchOwnerImageByIdentifiers(ids: string[]): Promise<string | nul
 
 export const fetchAssetAvatar = async (
   issuerName: string,
-  assetName: string
+  assetName: string,
+  opts?: { privateGroupId?: number }
 ): Promise<string | null> => {
-  const memoKey = `${issuerName}::${assetName}`;
+  const memoKey = `${issuerName}::${assetName}::${opts?.privateGroupId ?? 'public'}`;
   const hit = memoOk(memoKey);
   if (hit !== null) return hit;
 
   const coreKey = canonicalCoreKey(assetName);
+  const maybeDecrypt = async (payload: string) => {
+    if (!payload) return payload;
+    if (!opts?.privateGroupId) return payload;
+    try {
+      const decrypted = await qortalRequest({
+        action: 'DECRYPT_QORTAL_GROUP_DATA',
+        base64: payload,
+        groupId: opts.privateGroupId,
+        isAdmins: false,
+      });
+      return decrypted as string;
+    } catch {
+      return payload;
+    }
+  };
 
   // 1) Issuer’s canonical publish (ID-based identifier)
   try {
     const publishInfo = await getAssetIdentifiers(assetName);
     try {
-      const base64 = await qortalRequest({
+      const res = await qortalRequest({
         action: 'FETCH_QDN_RESOURCE',
         name: issuerName,
         service: publishInfo.services.avatar,
         identifier: publishInfo.identifiers.avatar,
         encoding: 'base64',
       });
+      const base64 = await maybeDecrypt(res?.data64 ?? res);
       const mime = guessImageMimeFromBase64(base64);
       return memoSet(memoKey, `data:${mime};base64,${base64}`);
     } catch {
@@ -153,13 +170,14 @@ export const fetchAssetAvatar = async (
       );
 
       if (match) {
-        const base64 = await qortalRequest({
+        const res = await qortalRequest({
           action: 'FETCH_QDN_RESOURCE',
           name: issuerName,
           service: match.service,
           identifier: match.identifier,
           encoding: 'base64',
         });
+        const base64 = await maybeDecrypt(res?.data64 ?? res);
         const mime = guessImageMimeFromBase64(base64);
         return memoSet(memoKey, `data:${mime};base64,${base64}`);
       }

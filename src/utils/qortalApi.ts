@@ -397,6 +397,24 @@ export async function issueAsset(
   return await signAndBroadcast(unsigned);
 }
 
+// Names for an account
+export interface AccountName {
+  name: string;
+  owner: string;
+}
+
+export async function getAccountNames(address: string): Promise<AccountName[]> {
+  const res = await qortalRequest({ action: 'GET_ACCOUNT_NAMES', address });
+  const arr = Array.isArray(res) ? res : ((res as any)?.names ?? []);
+  return (arr as any[])
+    .map((x) =>
+      x && typeof x.name === 'string' && typeof x.owner === 'string'
+        ? { name: x.name, owner: x.owner }
+        : null
+    )
+    .filter(Boolean) as AccountName[];
+}
+
 // --- core: create unsigned UPDATE_ASSET ---
 
 /**

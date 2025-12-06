@@ -32,6 +32,7 @@ import ManageDividends from '../pages/manage/ManageDividends';
 import ManageDividendsAsset from '../pages/manage/ManageDividendsAsset';
 import QDeckPermissionsPage from '../pages/manage/QDeckPermissions';
 import AdminPanel from '../pages/manage/AdminPanel';
+import ManageAssets from '../pages/manage/ManageAssets';
 import PublishAssetNewsPage from '../pages/PublishAssetNews';
 import { SafeBoundary } from '../components/common/SafeBoundary';
 import DataManagement from '../pages/manage/DataManagement';
@@ -102,6 +103,7 @@ export function Routes() {
 
         // --- Manage ---
         { path: 'manage', element: <ManageHome /> },
+        { path: 'manage/assets', element: <ManageAssets /> },
         { path: 'manage/dividends', element: <ManageDividends /> },
         { path: 'manage/dividends/:assetId', element: <ManageDividendsAsset /> },
         { path: 'manage/qdeck-permissions', element: <QDeckPermissionsPage /> },

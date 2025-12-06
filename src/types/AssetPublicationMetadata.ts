@@ -18,6 +18,8 @@ export interface AssetGroupMetadata {
 export type DividendPeriod = '1W' | '2W' | '1M' | '3M' | '6M' | '1Y';
 
 export interface AssetPublication {
+  issuerName?: string; // Qortal name that published the asset data
+  publisherNames?: string[]; // all known publishers that have published this asset’s data
   description?: string;
   html?: string; // rendered in a rich display section
   privateAsset?: boolean; // opt-in private asset flag

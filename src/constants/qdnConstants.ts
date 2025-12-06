@@ -37,6 +37,9 @@ export const qaManagementManifestId = 'qassets_management_manifest';
 
 // Optional: base prefix for asset news across *all* assets, for global search
 export const assetNewsGlobalPrefix = 'asset_news_pub__';
+export const assetPrivacyPrefix = 'asset_privacy__';
+export const assetPrivacyId = (assetId: number, groupId: number) =>
+  `${assetPrivacyPrefix}${assetId}__${groupId}`;
 
 export const Q_ASSET_ID_FOR_PROMOS = 6; // Q-Asset ID used for promo discounts
 export const Q_ASSET_PROMO_DISCOUNT = 0.2; // 20% discount when paid in Q-Asset

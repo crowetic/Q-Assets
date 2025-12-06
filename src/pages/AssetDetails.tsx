@@ -32,9 +32,9 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import { useParams } from 'react-router-dom';
 import { fetchAssetAvatar } from '../utils/fetchAssetAvatar';
-import { fetchAssetPublication } from '../utils/fetchAssetPublication';
+// import { fetchAssetPublication } from '../utils/fetchAssetPublication';
 import { useAuth } from 'qapp-core';
-import { getPrimaryAccountName } from '../utils/qortalApi';
+// import { getPrimaryAccountName } from '../utils/qortalApi';
 import { getAssetIdentifiers } from '../constants/qdnConstants';
 import { fileToBase64 } from '../utils/data';
 import { publishAssetPublication } from '../utils/publishAssetPublication';
@@ -65,6 +65,7 @@ import { updateAsset, getAccountGroups, type GroupSummary, getGroupById } from '
 // import { getAssetInfo } from '../utils/qortalAssetRequests';
 import { useMemberGroupIds } from '../hooks/useMemberGroupIds';
 import { canViewAsset, getAssetPrivacy, type AssetPrivacy } from '../utils/assetPrivacy';
+import { resolveAssetPublicationById } from '../utils/resolveAssetPublication';
 
 type Enriched = {
   assetId: number;
@@ -187,7 +188,7 @@ export default function AssetDetail() {
     setPrivacyChecked(false);
     (async () => {
       try {
-        const priv = await getAssetPrivacy(id);
+        const priv = await getAssetPrivacy(id, memberGroupIds);
         if (!cancelled) setAssetPrivacy(priv);
       } finally {
         if (!cancelled) setPrivacyChecked(true);
@@ -233,6 +234,7 @@ export default function AssetDetail() {
             : undefined;
       await publishAssetPublication(userName as string, asset.name, pub, {
         privateGroupId,
+        assetId: asset.assetId,
       });
       alert('Publication updated!');
       setAssetPub(pub);
@@ -310,15 +312,6 @@ export default function AssetDetail() {
 
         setDescForm(mini?.description ?? '');
 
-        // issuer name
-        let iname = '';
-        try {
-          iname = await getPrimaryAccountName(mini.owner);
-        } catch {
-          /* empty */
-        }
-        if (!cancelled) setIssuerName(iname || null);
-
         // total & circulating
         const isQort = mini.assetId === 0;
 
@@ -362,28 +355,30 @@ export default function AssetDetail() {
         setAsset(enriched);
         if (!cancelled) setAsset(enriched);
 
-        // Avatar
+        let resolvedIssuer: string | null = null;
         try {
-          let avatarIssuer =
-            mini.name === 'QORT' || mini.name === 'QORT-from-QORA' || mini.name === 'Legacy-QORA'
-              ? 'Q-Assets'
-              : iname;
-
-          if (avatarIssuer) {
-            const url = await fetchAssetAvatar(avatarIssuer, mini.name);
-            if (!cancelled) setAvatar(url);
+          const resolved = await resolveAssetPublicationById(mini.assetId);
+          if (!cancelled) {
+            setAssetPub(resolved.publication);
+            setIssuerName(resolved.issuerName);
           }
+          resolvedIssuer = resolved.issuerName;
         } catch {
-          /* empty */
+          /* ignore */
         }
 
-        // Publication
+        // Avatar
         try {
-          if (iname) {
-            const pub = await fetchAssetPublication(iname, mini.name, mini.assetId, {
-              preferPrivate: assetPrivacy?.isPrivate,
+          const avatarIssuer =
+            mini.name === 'QORT' || mini.name === 'QORT-from-QORA' || mini.name === 'Legacy-QORA'
+              ? 'Q-Assets'
+              : resolvedIssuer;
+
+          if (avatarIssuer) {
+            const url = await fetchAssetAvatar(avatarIssuer, mini.name, {
+              privateGroupId: assetPrivacy?.groupId,
             });
-            if (!cancelled) setAssetPub(pub);
+            if (!cancelled) setAvatar(url);
           }
         } catch {
           /* empty */
