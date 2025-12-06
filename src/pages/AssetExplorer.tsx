@@ -407,7 +407,8 @@ const AssetExplorer = () => {
       const trackerId = begin('page:assetExplorer:load');
       try {
         setLoading(true);
-        const assetIndex = await ensureAssetsIndexLoaded();
+        // Force a fresh fetch so we don't accidentally reuse a partial index from other pages
+        const assetIndex = await ensureAssetsIndexLoaded({ force: true });
         const rawAssets: Asset[] = Object.values(assetIndex) as Asset[];
 
         const qortCirculating = await fetch('/stats/supply/circulating').then((res) => res.json());
