@@ -10,6 +10,10 @@ export type ResolvedPublication = {
   isPrivate: boolean;
 };
 
+type CacheEntry = { ts: number; promise: Promise<ResolvedPublication> };
+const RESOLVE_CACHE_MS = 2 * 60_000; // 2 minutes is enough for UI reuse without going stale
+const cache = new Map<number, CacheEntry>();
+
 /**
  * Resolve asset publication by:
  * 1) loading mini (name/owner)
@@ -17,63 +21,88 @@ export type ResolvedPublication = {
  * 3) matching privacy hint docs by the same publisher name to get groupId
  * 4) fetching the publication with that publisher and optional groupId
  */
-export async function resolveAssetPublicationById(assetId: number): Promise<ResolvedPublication> {
+export async function resolveAssetPublicationById(
+  assetId: number,
+  opts?: { forceFresh?: boolean }
+): Promise<ResolvedPublication> {
   if (assetId <= 2) return { issuerName: null, publication: null, isPrivate: false };
 
-  const mini = await ensureAssetMini(assetId);
-  if (!mini?.name) return { issuerName: null, publication: null, isPrivate: false };
+  const now = Date.now();
+  const cached = cache.get(assetId);
+  if (!opts?.forceFresh && cached && now - cached.ts < RESOLVE_CACHE_MS) {
+    return cached.promise;
+  }
 
-  let issuerName: string | null = null;
-  let publisherNames: string[] = [];
-  let privateGroupId: number | undefined;
+  const promise = (async () => {
+    console.log('passed asset ID to resolveAssetPublicationById', assetId);
+    const mini = await ensureAssetMini(assetId);
+    if (!mini?.name) return { issuerName: null, publication: null, isPrivate: false };
 
-  // Find publication hit by prefix
-  const pubHits =
-    (await searchSimpleByIdentifierPrefix('BLOG_POST', `asset${assetId}_`, 0).catch(() => [])) ||
-    [];
-  const pubHit = pubHits.find((h: any) => typeof h?.name === 'string');
-  if (pubHit) issuerName = pubHit.name;
-  publisherNames = Array.from(
-    new Set(pubHits.map((h: any) => (typeof h?.name === 'string' ? h.name : null)).filter(Boolean))
-  ) as string[];
+    let issuerName: string | null = null;
+    let publisherNames: string[] = [];
+    let privateGroupId: number | undefined;
 
-  // Find privacy hint doc under same publisher
-  if (issuerName) {
-    try {
-      const privHits = await searchSimpleByIdentifierPrefix(
-        'DOCUMENT',
-        `asset_privacy__${assetId}__`,
-        0
-      );
-      const match = privHits.find(
-        (h: any) => h?.name === issuerName && typeof h?.identifier === 'string'
-      );
-      if (match) {
-        const parts = match.identifier.split('__');
-        const gid = Number(parts[2]);
-        if (Number.isFinite(gid)) privateGroupId = gid;
+    // Find publication hit by prefix
+    const pubHits =
+      (await searchSimpleByIdentifierPrefix('BLOG_POST', `asset${assetId}_`, 0).catch(() => [])) ||
+      [];
+    const pubHit = pubHits.find((h: any) => typeof h?.name === 'string');
+    if (pubHit) issuerName = pubHit.name;
+    publisherNames = Array.from(
+      new Set(
+        pubHits.map((h: any) => (typeof h?.name === 'string' ? h.name : null)).filter(Boolean)
+      )
+    ) as string[];
+
+    // Find privacy hint doc under same publisher
+    if (issuerName) {
+      try {
+        const privHits = await searchSimpleByIdentifierPrefix(
+          'DOCUMENT',
+          `asset_privacy__${assetId}__`,
+          0
+        );
+        const match = privHits.find(
+          (h: any) => h?.name === issuerName && typeof h?.identifier === 'string'
+        );
+        if (match) {
+          const parts = match.identifier.split('__');
+          const gid = Number(parts[2]);
+          if (Number.isFinite(gid)) privateGroupId = gid;
+        }
+      } catch {
+        /* ignore */
       }
-    } catch {
-      /* ignore */
     }
+
+    let publication: AssetPublication | null = null;
+    if (issuerName) {
+      publication = await fetchAssetPublication(issuerName, mini.name, assetId, {
+        privateGroupId,
+      }).catch(() => null);
+    }
+    if (publication) {
+      console.log('publicationInResolvePubById', publication);
+      publication = {
+        ...publication,
+        issuerName: publication.issuerName ?? issuerName ?? undefined,
+        publisherNames:
+          publication.publisherNames && publication.publisherNames.length
+            ? Array.from(new Set([...(publication.publisherNames ?? []), ...publisherNames]))
+            : publisherNames,
+      };
+    }
+
+    return { issuerName, publication, privateGroupId, isPrivate: privateGroupId != null };
+  })();
+
+  if (!opts?.forceFresh) {
+    cache.set(assetId, { ts: now, promise });
+    promise.catch(() => {
+      const existing = cache.get(assetId);
+      if (existing?.promise === promise) cache.delete(assetId);
+    });
   }
 
-  let publication: AssetPublication | null = null;
-  if (issuerName) {
-    publication = await fetchAssetPublication(issuerName, mini.name, assetId, {
-      privateGroupId,
-    }).catch(() => null);
-  }
-  if (publication) {
-    publication = {
-      ...publication,
-      issuerName: publication.issuerName ?? issuerName ?? undefined,
-      publisherNames:
-        publication.publisherNames && publication.publisherNames.length
-          ? Array.from(new Set([...(publication.publisherNames ?? []), ...publisherNames]))
-          : publisherNames,
-    };
-  }
-
-  return { issuerName, publication, privateGroupId, isPrivate: privateGroupId != null };
+  return promise;
 }

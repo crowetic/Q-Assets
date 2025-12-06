@@ -27,14 +27,17 @@ import {
   Stack,
   IconButton,
 } from '@mui/material';
+import type { ChipProps } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
-import { useParams } from 'react-router-dom';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
+import AutorenewIcon from '@mui/icons-material/Autorenew';
+import { Link as RouterLink, useParams } from 'react-router-dom';
 import { fetchAssetAvatar } from '../utils/fetchAssetAvatar';
-// import { fetchAssetPublication } from '../utils/fetchAssetPublication';
 import { useAuth } from 'qapp-core';
-// import { getPrimaryAccountName } from '../utils/qortalApi';
 import { getAssetIdentifiers } from '../constants/qdnConstants';
 import { fileToBase64 } from '../utils/data';
 import { publishAssetPublication } from '../utils/publishAssetPublication';
@@ -66,6 +69,7 @@ import { updateAsset, getAccountGroups, type GroupSummary, getGroupById } from '
 import { useMemberGroupIds } from '../hooks/useMemberGroupIds';
 import { canViewAsset, getAssetPrivacy, type AssetPrivacy } from '../utils/assetPrivacy';
 import { resolveAssetPublicationById } from '../utils/resolveAssetPublication';
+import { useFetchTracker } from '../state/global/fetchTracker';
 
 type Enriched = {
   assetId: number;
@@ -78,6 +82,114 @@ type Enriched = {
   totalSupply: number;
   circulating: number;
 };
+
+type LoadStepKey = 'privacy' | 'asset' | 'publication' | 'avatar';
+type StepState = 'pending' | 'running' | 'success' | 'error';
+
+const STEP_LABELS: Record<LoadStepKey, string> = {
+  privacy: 'Checking privacy and permissions',
+  asset: 'Loading asset details',
+  publication: 'Resolving publication and issuer',
+  avatar: 'Fetching avatar and media',
+};
+
+const STEP_ORDER: LoadStepKey[] = ['privacy', 'asset', 'publication', 'avatar'];
+
+const StepIcon = ({ state }: { state: StepState }) => {
+  switch (state) {
+    case 'success':
+      return <CheckCircleOutlineIcon color="success" fontSize="small" />;
+    case 'running':
+      return (
+        <AutorenewIcon
+          color="info"
+          fontSize="small"
+          sx={{
+            animation: 'spin 1s linear infinite',
+            '@keyframes spin': {
+              '0%': { transform: 'rotate(0deg)' },
+              '100%': { transform: 'rotate(360deg)' },
+            },
+          }}
+        />
+      );
+    case 'error':
+      return <ErrorOutlineIcon color="error" fontSize="small" />;
+    default:
+      return <RadioButtonUncheckedIcon color="disabled" fontSize="small" />;
+  }
+};
+
+function LoadingChecklist({ steps }: { steps: Record<LoadStepKey, StepState> }) {
+  return (
+    <PageContainer>
+      <Box sx={{ maxWidth: 760, mx: 'auto', pt: { xs: 2, sm: 4 } }}>
+        <Paper sx={{ p: { xs: 2, sm: 3 } }}>
+          <Typography variant="h4" textAlign="center">
+            Loading asset details…
+          </Typography>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            textAlign="center"
+            sx={{ mt: 1, mb: 2 }}
+          >
+            We are checking privacy access and pulling publication data. This list will tick off
+            step as it completes.
+          </Typography>
+          <Stack spacing={1}>
+            {STEP_ORDER.map((key) => {
+              const state = steps[key];
+              const label =
+                state === 'success'
+                  ? 'Done'
+                  : state === 'running'
+                    ? 'In progress'
+                    : state === 'error'
+                      ? 'Issue'
+                      : 'Queued';
+              const color: ChipProps['color'] =
+                state === 'success'
+                  ? 'success'
+                  : state === 'running'
+                    ? 'info'
+                    : state === 'error'
+                      ? 'error'
+                      : 'default';
+              return (
+                <Paper
+                  key={key}
+                  variant="outlined"
+                  sx={{
+                    p: 1.1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    bgcolor: (t) => t.palette.background.default,
+                  }}
+                >
+                  <StepIcon state={state} />
+                  <Typography sx={{ flex: 1 }}>{STEP_LABELS[key]}</Typography>
+                  <Chip
+                    size="small"
+                    label={label}
+                    color={color}
+                    variant={color === 'default' ? 'outlined' : 'filled'}
+                  />
+                </Paper>
+              );
+            })}
+          </Stack>
+          {Object.values(steps).some((s) => s === 'error') && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              One or more steps failed. Please refresh or try again.
+            </Alert>
+          )}
+        </Paper>
+      </Box>
+    </PageContainer>
+  );
+}
 
 export default function AssetDetail() {
   const { assetId } = useParams<{ assetId: string }>();
@@ -104,6 +216,12 @@ export default function AssetDetail() {
   const [groupOptions, setGroupOptions] = useState<GroupSummary[]>([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [groupDetails, setGroupDetails] = useState<Record<string, GroupSummary>>({});
+  const [loadSteps, setLoadSteps] = useState<Record<LoadStepKey, StepState>>({
+    privacy: 'pending',
+    asset: 'pending',
+    publication: 'pending',
+    avatar: 'pending',
+  });
 
   type KV = { key: string; value: string };
   const [openExFieldDlg, setOpenExFieldDlg] = useState(false);
@@ -180,24 +298,89 @@ export default function AssetDetail() {
   const { memberGroupIds, loading: memberGroupsLoading } = useMemberGroupIds();
   const [assetPrivacy, setAssetPrivacy] = useState<AssetPrivacy | null>(null);
   const [privacyChecked, setPrivacyChecked] = useState(false);
+  const { begin, end } = useFetchTracker();
+  const [groupJoinBusy, setGroupJoinBusy] = useState(false);
+  const [groupJoinMsg, setGroupJoinMsg] = useState<string | null>(null);
 
   const canPublish = isIssuer && issuerName && issuerName === (userName as string | undefined);
   const id = useMemo(() => Number(assetId), [assetId]);
+  const avatarGroupId = useMemo(() => {
+    const gid =
+      assetPrivacy?.groupId ??
+      (assetPub?.privateGroupId != null ? Number(assetPub.privateGroupId) : undefined) ??
+      (assetPub?.primaryGroup?.id != null ? Number(assetPub.primaryGroup.id) : undefined);
+    return Number.isFinite(gid as number) ? Number(gid) : undefined;
+  }, [assetPrivacy?.groupId, assetPub?.privateGroupId, assetPub?.primaryGroup?.id]);
+  const isPrivateAsset = Boolean(assetPrivacy?.isPrivate || assetPub?.privateAsset);
+  const setStep = useCallback((key: LoadStepKey, state: StepState) => {
+    setLoadSteps((prev) => (prev[key] === state ? prev : { ...prev, [key]: state }));
+  }, []);
+
+  const joinGroupById = useCallback(async (groupId?: string | number | null) => {
+    const num = groupId != null ? Number(groupId) : NaN;
+    if (!Number.isFinite(num) || num <= 0) {
+      setGroupJoinMsg('No group id available.');
+      return;
+    }
+    try {
+      setGroupJoinMsg(null);
+      setGroupJoinBusy(true);
+      await qortalRequest({ action: 'JOIN_GROUP', groupId: num });
+      setGroupJoinMsg('Joined group.');
+    } catch (e: any) {
+      setGroupJoinMsg(e?.message || 'Join failed.');
+    } finally {
+      setGroupJoinBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    setLoadSteps({
+      privacy: 'pending',
+      asset: 'pending',
+      publication: 'pending',
+      avatar: 'pending',
+    });
+    setAsset(null);
+    setAssetPub(null);
+    setIssuerName(null);
+    setAvatar(null);
+    setHtml('');
+    setDescForm('');
+    setAssetPrivacy(null);
+    setPrivacyChecked(false);
+  }, [id]);
   useEffect(() => {
     let cancelled = false;
     setPrivacyChecked(false);
+    let trackerId: number | null = null;
+    if (!Number.isFinite(id)) {
+      setStep('privacy', 'error');
+      setPrivacyChecked(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+    setStep('privacy', 'running');
+    trackerId = begin('page:assetDetails:privacy');
     (async () => {
       try {
         const priv = await getAssetPrivacy(id, memberGroupIds);
-        if (!cancelled) setAssetPrivacy(priv);
+        if (!cancelled) {
+          setAssetPrivacy(priv);
+          setStep('privacy', 'success');
+        }
+      } catch {
+        if (!cancelled) setStep('privacy', 'error');
       } finally {
         if (!cancelled) setPrivacyChecked(true);
+        if (trackerId != null) end(trackerId);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, memberGroupIds, begin, end, setStep]);
   const publishAllChanges = useCallback(async () => {
     if (!canPublish || !asset) return;
     setPublishing(true);
@@ -293,6 +476,11 @@ export default function AssetDetail() {
       if (!privacyChecked) return;
       if (assetPrivacy && !canViewAsset(assetPrivacy, memberGroupIds)) return;
 
+      const trackerId = begin('page:assetDetails:asset');
+      setStep('asset', 'running');
+      setStep('publication', 'pending');
+      setStep('avatar', 'pending');
+
       try {
         // 1) Try sync cache
         let mini = readAssetsIndexSync()?.[id] ?? null;
@@ -308,9 +496,16 @@ export default function AssetDetail() {
           mini = await ensureAssetMini(id);
         }
 
-        if (!mini) return; // not found
+        if (!mini) {
+          if (!cancelled) {
+            setStep('asset', 'error');
+            setStep('publication', 'error');
+            setStep('avatar', 'error');
+          }
+          return;
+        }
 
-        setDescForm(mini?.description ?? '');
+        if (!cancelled) setDescForm(mini?.description ?? '');
 
         // total & circulating
         const isQort = mini.assetId === 0;
@@ -352,22 +547,27 @@ export default function AssetDetail() {
           totalSupply,
           circulating,
         };
-        setAsset(enriched);
-        if (!cancelled) setAsset(enriched);
+        if (!cancelled) {
+          setAsset(enriched);
+          setStep('asset', 'success');
+        }
 
         let resolvedIssuer: string | null = null;
+        if (!cancelled) setStep('publication', 'running');
         try {
           const resolved = await resolveAssetPublicationById(mini.assetId);
           if (!cancelled) {
             setAssetPub(resolved.publication);
             setIssuerName(resolved.issuerName);
+            setStep('publication', 'success');
           }
           resolvedIssuer = resolved.issuerName;
         } catch {
-          /* ignore */
+          if (!cancelled) setStep('publication', 'error');
         }
 
         // Avatar
+        if (!cancelled) setStep('avatar', 'running');
         try {
           const avatarIssuer =
             mini.name === 'QORT' || mini.name === 'QORT-from-QORA' || mini.name === 'Legacy-QORA'
@@ -378,20 +578,32 @@ export default function AssetDetail() {
             const url = await fetchAssetAvatar(avatarIssuer, mini.name, {
               privateGroupId: assetPrivacy?.groupId,
             });
-            if (!cancelled) setAvatar(url);
+            if (!cancelled) {
+              setAvatar(url);
+              setStep('avatar', url ? 'success' : 'error');
+            }
+          } else if (!cancelled) {
+            setStep('avatar', 'error');
           }
         } catch {
-          /* empty */
+          if (!cancelled) setStep('avatar', 'error');
         }
       } catch {
         // swallow; page renders with error states below if needed
+        if (!cancelled) {
+          setStep('asset', 'error');
+          setStep('publication', 'error');
+          setStep('avatar', 'error');
+        }
+      } finally {
+        end(trackerId);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [id, privacyChecked, assetPrivacy, memberGroupIds]);
+  }, [id, privacyChecked, assetPrivacy, memberGroupIds, begin, end, setStep]);
 
   useEffect(() => {
     setPrimaryForm(
@@ -455,19 +667,10 @@ export default function AssetDetail() {
     };
   }, [assetPub?.primaryGroup?.id, assetPub?.extraGroups, normalizeGroupId]);
 
-  if (!asset) return <Typography>Loading asset...</Typography>;
+  const privacyDenied =
+    privacyChecked && assetPrivacy && !canViewAsset(assetPrivacy, memberGroupIds);
 
-  const loadingGroupsCombined = groupsLoading || memberGroupsLoading;
-
-  if (loadingGroupsCombined || !privacyChecked) {
-    return (
-      <Box display="flex" justifyContent="center" py={6}>
-        <CircularProgress />
-      </Box>
-    );
-  }
-
-  if (assetPrivacy && !canViewAsset(assetPrivacy, memberGroupIds)) {
+  if (privacyDenied) {
     return (
       <Box sx={{ p: { xs: 2, md: 3 } }}>
         <Paper sx={{ p: 3 }}>
@@ -477,6 +680,20 @@ export default function AssetDetail() {
             {assetPrivacy.groupId ? ` #${assetPrivacy.groupId}` : ''} to view this asset’s details.
           </Typography>
         </Paper>
+      </Box>
+    );
+  }
+
+  if (!privacyChecked || !asset) {
+    return <LoadingChecklist steps={loadSteps} />;
+  }
+
+  const loadingGroupsCombined = groupsLoading || memberGroupsLoading;
+
+  if (loadingGroupsCombined) {
+    return (
+      <Box display="flex" justifyContent="center" py={6}>
+        <CircularProgress />
       </Box>
     );
   }
@@ -503,6 +720,18 @@ export default function AssetDetail() {
           <Typography variant="h3" textAlign="center">
             Asset Details
           </Typography>
+          {isIssuer && (
+            <Box display="flex" justifyContent="center" mt={1}>
+              <Button
+                variant="outlined"
+                component={RouterLink}
+                to={`/manage/assets?assetId=${asset.assetId}`}
+                size="small"
+              >
+                Manage Asset
+              </Button>
+            </Box>
+          )}
         </Grid>
 
         {/* Avatar + basic info */}
@@ -723,11 +952,20 @@ export default function AssetDetail() {
                   </span>
                 </Typography>
                 {primaryGroupDisplay.joinLink && (
-                  <Typography sx={{ mt: 1 }}>
-                    Join:{' '}
-                    <Link href={primaryGroupDisplay.joinLink} rel="noopener" target="_blank">
-                      {primaryGroupDisplay.joinLink}
-                    </Link>
+                  <Box sx={{ mt: 1, display: 'flex', justifyContent: 'center' }}>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => joinGroupById(primaryGroupDisplay.id)}
+                      disabled={groupJoinBusy}
+                    >
+                      {groupJoinBusy ? 'Joining…' : 'Join Group'}
+                    </Button>
+                  </Box>
+                )}
+                {groupJoinMsg && (
+                  <Typography sx={{ mt: 0.5 }} color="text.secondary" fontSize="0.85rem">
+                    {groupJoinMsg}
                   </Typography>
                 )}
                 {canPublish && (
@@ -1441,18 +1679,31 @@ export default function AssetDetail() {
               accept="image/*"
               onChange={async (e) => {
                 const file = e.target.files?.[0];
-                if (file) {
+                if (!file || !userName) return;
+                try {
                   const base64 = await fileToBase64(file);
                   const { identifiers, services } = await getAssetIdentifiers(asset.name);
+                  let data64 = base64;
+                  if (isPrivateAsset && avatarGroupId) {
+                    data64 = await qortalRequest({
+                      action: 'ENCRYPT_QORTAL_GROUP_DATA',
+                      base64,
+                      groupId: avatarGroupId,
+                      isAdmins: false,
+                    });
+                  }
                   await qortalRequest({
                     action: 'PUBLISH_QDN_RESOURCE',
-                    name: userName as string | undefined,
+                    name: userName as string,
                     service: services.avatar,
                     identifier: identifiers.avatar,
-                    data64: base64,
+                    data64,
                   });
                   alert('Avatar published!');
-                  setAvatar(`data:image/*;base64,${base64}`);
+                  const mime = file.type || 'image/*';
+                  setAvatar(`data:${mime};base64,${base64}`);
+                } catch (err: any) {
+                  alert(err?.message || 'Failed to publish avatar.');
                 }
               }}
             />

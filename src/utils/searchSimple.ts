@@ -9,6 +9,13 @@ export interface SimpleHit {
   updated?: number;
 }
 
+// Coerce QDN searchsimple responses into a consistent array shape
+const normalizeHits = (data: any): SimpleHit[] => {
+  if (Array.isArray(data)) return data as SimpleHit[];
+  if (data && typeof data === 'object') return [data as SimpleHit];
+  return [];
+};
+
 /**
  * Fetches:
  * /arbitrary/resources/searchsimple?service=DOCUMENT&identifier=<prefix>&prefix=true&limit=0
@@ -31,7 +38,7 @@ export const searchSimpleByIdentifierPrefix = memoizeAsync(
         return [];
       }
       const data = await res.json();
-      return Array.isArray(data) ? (data as SimpleHit[]) : [];
+      return normalizeHits(data);
     } catch (e) {
       console.warn('searchSimpleByIdentifierPrefix error', e);
       return [];
@@ -65,7 +72,7 @@ export async function searchSimpleByIdPrefixOnly(
     }
 
     const data = await res.json();
-    return Array.isArray(data) ? (data as SimpleHit[]) : [];
+    return normalizeHits(data);
   } catch (e) {
     console.warn('searchSimpleByIdPrefixOnly error', e);
     return [];
@@ -97,7 +104,7 @@ export async function searchSimpleNameIdPrefix(
     }
 
     const data = await res.json();
-    return Array.isArray(data) ? (data as SimpleHit[]) : [];
+    return normalizeHits(data);
   } catch (e) {
     console.warn('searchSimpleNameIdPrefix error', e);
     return [];
@@ -126,7 +133,7 @@ export async function searchSimpleByFullId(
     }
 
     const data = await res.json();
-    return Array.isArray(data) ? (data as SimpleHit[]) : [];
+    return normalizeHits(data);
   } catch (e) {
     console.warn('searchSimpleByFullId error', e);
     return [];

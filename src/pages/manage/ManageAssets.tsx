@@ -14,13 +14,14 @@ import {
   CircularProgress,
   Divider,
 } from '@mui/material';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from 'qapp-core';
 import { ensureAssetsIndexLoaded, ensureAssetMini } from '../../bootstrap/assetsBootstrap';
 import type { Asset } from '../AssetExplorer';
 import TiptapEditor from '../../components/TipTapEditor';
 import { prepareHtmlForPublish } from '../../utils/publicationPublisher';
 import { getAssetIdentifiers, assetPrivacyId } from '../../constants/qdnConstants';
-import { objectToBase64 } from '../../utils/data';
+import { objectToBase64, fileToBase64 } from '../../utils/data';
 // import { publishAssetPublication } from '../../utils/publishAssetPublication';
 import { useActiveAccountName } from '../../hooks/useActiveAccountName';
 import { useAlert } from '../../components/alerts';
@@ -49,6 +50,9 @@ export default function ManageAssets() {
   const [primaryGroupJoinLink, setPrimaryGroupJoinLink] = useState<string>('');
   const [primaryGroupIsPrivate, setPrimaryGroupIsPrivate] = useState<boolean>(false);
   const [initialPrivate, setInitialPrivate] = useState(false);
+  const [avatarBase64, setAvatarBase64] = useState<string | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
 
   const selectedAsset = useMemo(
     () => (selectedId != null ? (assets.find((a) => a.assetId === selectedId) ?? null) : null),
@@ -101,7 +105,13 @@ export default function ManageAssets() {
         }
         if (!cancelled) {
           setAssets(enriched);
-          if (!selectedId && enriched.length) setSelectedId(enriched[0].assetId);
+          if (!selectedId && enriched.length) {
+            const queryId = Number(searchParams.get('assetId'));
+            const match = Number.isFinite(queryId)
+              ? enriched.find((a) => a.assetId === queryId)
+              : null;
+            setSelectedId(match ? match.assetId : enriched[0].assetId);
+          }
         }
       } finally {
         if (!cancelled) setLoadingAssets(false);
@@ -110,7 +120,7 @@ export default function ManageAssets() {
     return () => {
       cancelled = true;
     };
-  }, [userAddress, selectedId]);
+  }, [userAddress, selectedId, searchParams]);
 
   // Load account groups
   useEffect(() => {
@@ -156,6 +166,10 @@ export default function ManageAssets() {
           setPrimaryGroupName(publication.primaryGroup?.name ?? '');
           setPrimaryGroupJoinLink(publication.primaryGroup?.joinLink ?? '');
           setPrimaryGroupIsPrivate(Boolean(publication.primaryGroup?.isPrivate));
+        }
+        if (!cancelled) {
+          setAvatarBase64(null);
+          setAvatarPreview(null);
         }
       } catch {
         /* ignore */
@@ -241,6 +255,26 @@ export default function ManageAssets() {
         });
       }
 
+      // avatar (encrypt if private)
+      if (avatarBase64) {
+        let avatarData64 = avatarBase64;
+        if (privateAsset && groupIdNum != null) {
+          const enc = await qortalRequest({
+            action: 'ENCRYPT_QORTAL_GROUP_DATA',
+            base64: avatarBase64,
+            groupId: groupIdNum,
+            isAdmins: false,
+          });
+          avatarData64 = enc;
+        }
+        resources.push({
+          name: issuerName,
+          service: publishInfo.services.avatar,
+          identifier: publishInfo.identifiers.avatar,
+          data64: avatarData64,
+        });
+      }
+
       const queued = enqueueQdnPublishJob({
         label: `Update asset ${selectedAsset.name}`,
         resources,
@@ -258,6 +292,7 @@ export default function ManageAssets() {
     alert,
     description,
     html,
+    avatarBase64,
     privateAsset,
     privateGroupId,
     publicKey,
@@ -266,7 +301,7 @@ export default function ManageAssets() {
   ]);
 
   return (
-    <Box sx={{ p: { xs: 1.5, md: 3 }, maxWidth: 1100, mx: 'auto', width: '100%' }}>
+    <Box sx={{ p: { xs: 1.5, md: 3 }, maxWidth: '85%', mx: 'auto', width: '100%' }}>
       <Typography variant="h4" sx={{ mb: 1 }}>
         Asset Management
       </Typography>
@@ -393,6 +428,48 @@ export default function ManageAssets() {
               helperText="Must match the group used to encrypt the publication."
             />
           )}
+
+          <Divider />
+          <Box>
+            <Typography variant="subtitle1" sx={{ mb: 1 }}>
+              Asset Avatar
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+              <Button component="label" variant="outlined" size="small" disabled={saving}>
+                {avatarPreview ? 'Change avatar' : 'Upload avatar'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const base64 = await fileToBase64(file);
+                    setAvatarBase64(base64);
+                    const mime = file.type || 'image/png';
+                    setAvatarPreview(`data:${mime};base64,${base64}`);
+                  }}
+                />
+              </Button>
+              {avatarPreview && (
+                <Box
+                  component="img"
+                  src={avatarPreview}
+                  alt="Avatar preview"
+                  sx={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover' }}
+                />
+              )}
+            </Box>
+            {privateAsset && (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: 'block', mt: 0.5 }}
+              >
+                Avatar will be encrypted with the selected private group.
+              </Typography>
+            )}
+          </Box>
 
           <Divider />
           <Box display="flex" justifyContent="flex-end" gap={1}>

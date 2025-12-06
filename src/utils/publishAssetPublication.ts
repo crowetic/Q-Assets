@@ -34,7 +34,7 @@ export const publishAssetPublication = async (
       groupId: opts.privateGroupId,
       isAdmins: false,
     });
-    finalData = encrypted;
+    finalData = (encrypted as any)?.data64 ?? encrypted;
   }
 
   try {

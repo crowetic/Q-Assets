@@ -62,12 +62,23 @@ export function QortalLinkProvider({ children }: { children: React.ReactNode }) 
 
   const openQortalLink = useCallback(
     async (raw: string) => {
+      // Group-join special-case
+      const lower = (raw || '').toLowerCase();
+      if (lower.startsWith('qortal://use-group/action-join/groupid-')) {
+        const num = Number(raw.split('groupid-').pop());
+        if (Number.isFinite(num) && num > 0) {
+          try {
+            await qortalRequest({ action: 'JOIN_GROUP', groupId: num });
+            return;
+          } catch (e) {
+            console.warn('JOIN_GROUP failed from qortal link', e);
+          }
+        }
+      }
+
       const p = parseQortalHref(raw);
-      console.log(p);
       if (!p) return;
       const isOurApp = p.service === 'APP' && p.name === THIS_APP;
-
-      console.log('theme mode from link provider', themeMode);
 
       // const extSrc = renderUrlForQortalHref(p.raw, { theme: themeMode });
       // const extSrc = await resolveRenderUrl(extCands); // e.g. "/render/APP/Other/..."
@@ -81,13 +92,18 @@ export function QortalLinkProvider({ children }: { children: React.ReactNode }) 
           // setPopupSrc(internalPath);
           return;
         }
+
+        // For non-ARBITRARY resources, just delegate to Hub directly
+        if (p.service !== ('ARBITRARY' as Service)) {
+          await hubOpenLink(p.service, p.name, p.identifier, p.path);
+          return;
+        }
+
+        // ARBITRARY: build render URL and open in popup
         const baseArb = await getBaseArbitraryUrl(p.service as Service, p.name, p.identifier);
-        // console.log('baseArbitraryUrl', baseArb);
-        // 2) build /render URL for iframe (always open in popup)
         const pathToAppend = p.service === 'APP' || p.service === 'WEBSITE' ? p.path : undefined;
         const renderUrl = arbitraryToRenderUrl(baseArb, pathToAppend);
         const fullUrl = toAbsoluteHubUrl(hubOrigin, renderUrl);
-        // console.log('[openQortalLink] popup renderUrl', renderUrl);
 
         const clamped = clampWindowPos(wnd);
         setWnd(clamped);

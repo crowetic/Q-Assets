@@ -29,6 +29,7 @@ import { useMemberGroupIds } from '../hooks/useMemberGroupIds';
 import { canViewAsset, type AssetPrivacy } from '../utils/assetPrivacy';
 import { searchSimpleByIdentifierPrefix } from '../utils/searchSimple';
 import { assetPrivacyPrefix } from '../constants/qdnConstants';
+import { useFetchTracker } from '../state/global/fetchTracker';
 
 export interface Asset {
   assetId: number;
@@ -224,6 +225,7 @@ const AssetExplorer = () => {
     const id = setInterval(() => setTick((t) => (t < 10 ? t + 1 : t)), 1000);
     return () => clearInterval(id);
   }, []);
+  const { begin, end } = useFetchTracker();
 
   const viewableAssets = useMemo<EnrichedAsset[]>(() => {
     return assets.filter((a) => {
@@ -402,6 +404,7 @@ const AssetExplorer = () => {
 
   useEffect(() => {
     async function loadAssets() {
+      const trackerId = begin('page:assetExplorer:load');
       try {
         setLoading(true);
         const assetIndex = await ensureAssetsIndexLoaded();
@@ -469,11 +472,12 @@ const AssetExplorer = () => {
         console.error('Asset load error:', err);
       } finally {
         setLoading(false);
+        end(trackerId);
       }
     }
 
     loadAssets();
-  }, [userAddress]);
+  }, [userAddress, begin, end]);
 
   useEffect(() => {
     if (displayAssets.length === 0) return;
