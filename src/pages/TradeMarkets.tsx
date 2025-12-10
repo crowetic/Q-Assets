@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Box, Paper, Typography, CircularProgress, TextField } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import pLimit from 'p-limit';
@@ -33,7 +33,7 @@ export default function TradeMarkets() {
   const VOL_TTL_MS = 10 * 60 * 1000;
   const theme = useTheme();
   const { memberGroupIds, loading: groupsLoading } = useMemberGroupIds();
-  const [privacyMap, setPrivacyMap] = useState<Record<string, AssetPrivacy>>({});
+  const [privacyMap, setPrivacyMap] = useState<Record<number, AssetPrivacy>>({});
 
   const [volumes, setVolumes] = useState<Record<number, VolInfo>>({});
   const [sortKey, setSortKey] = useState<'volume' | 'name' | 'assetId'>('volume');
@@ -117,12 +117,7 @@ export default function TradeMarkets() {
   }, []);
 
   useEffect(() => {
-    const keyFor = (id: number) =>
-      `${id}:${memberGroupIds
-        .slice()
-        .sort((a, b) => a - b)
-        .join(',')}`;
-    const missing = rows.filter((r) => r.assetId > 2 && !privacyMap[keyFor(r.assetId)]);
+    const missing = rows.filter((r) => r.assetId > 2 && !privacyMap[r.assetId]);
     if (!missing.length) return;
     let cancelled = false;
     const limit = pLimit(6);
@@ -130,31 +125,24 @@ export default function TradeMarkets() {
       const results = await Promise.all(
         missing.map((r) =>
           limit(async () => {
-            const priv = await getAssetPrivacy(r.assetId, memberGroupIds);
-            return [keyFor(r.assetId), priv] as const;
+            const priv = await getAssetPrivacy(r.assetId);
+            return [r.assetId, priv] as const;
           })
         )
       );
       if (cancelled) return;
       setPrivacyMap((prev) => {
         const next = { ...prev };
-        for (const [key, priv] of results) next[key] = priv;
+        for (const [assetId, priv] of results) next[assetId] = priv;
         return next;
       });
     })();
     return () => {
       cancelled = true;
     };
-  }, [rows, privacyMap]);
+  }, [rows, privacyMap, memberGroupIds]);
 
-  const keyFor = useCallback(
-    (id: number) =>
-      `${id}:${memberGroupIds
-        .slice()
-        .sort((a, b) => a - b)
-        .join(',')}`,
-    [memberGroupIds]
-  );
+  // (no helper needed anymore)
 
   useEffect(() => {
     let cancelled = false;
@@ -204,7 +192,7 @@ export default function TradeMarkets() {
   const viewableRows = useMemo(() => {
     return rows.filter((r) => {
       if (r.assetId <= 2) return false; // should not appear anyway
-      const privacy = privacyMap[keyFor(r.assetId)];
+      const privacy = privacyMap[r.assetId];
       if (!privacy) return false;
       return canViewAsset(privacy, memberGroupIds);
     });

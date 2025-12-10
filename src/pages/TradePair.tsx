@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import {
   Box,
   Paper,
@@ -29,6 +29,8 @@ import {
   type UiMyOrder,
   getMyOrdersForAssetUi,
   decodePairTradeEnvelope,
+  tradeKey,
+  tradeTs,
 } from '../utils/markets';
 import { VolumeBars, DepthChart } from '../components/trade/PairCharts';
 import { buildDepth } from '../utils/chartTransforms';
@@ -43,7 +45,6 @@ import type { FillEvent } from '../utils/markets';
 import { useMarketConfirmRefresh } from '../trade/useMarketConfirmRefresh';
 import {
   tradesAsCandlesPerTrade,
-  pickBucketMs,
   computeCandlesCompact,
   toMs,
   type Trade,
@@ -61,6 +62,7 @@ export default function TradePair() {
   const [name, setName] = useState<string>('');
   const [divisible, setDivisible] = useState(true);
   const [loading, setLoading] = useState(true);
+  const initialLoadRef = useRef(true);
   const [myOrders, setMyOrders] = useState<UiMyOrder[]>([]);
   const [myFills, setMyFills] = useState<FillEvent[]>([]);
 
@@ -78,10 +80,14 @@ export default function TradePair() {
   const [assetPrivacy, setAssetPrivacy] = useState<AssetPrivacy | null>(null);
   const [privacyChecked, setPrivacyChecked] = useState(false);
   // ---- controls for chart window & bucket
-  const [rangeHours, setRangeHours] = useState<number>(720); // set default range hours
-  const [bucketMinutes, setBucketMinutes] = useState<number>(60); // 1, 5, 15, 60 etc.
   const [allTrades, setAllTrades] = useState<Trade[]>([]);
   const [tradesPage, setTradesPage] = useState(0);
+
+  const historyLoadedRef = useRef(false);
+  const historyLoadingRef = useRef(false);
+  const tradeKeysRef = useRef<Set<string>>(new Set());
+  const lastTradeTsRef = useRef(0);
+  const allTradesRef = useRef<Trade[]>([]);
 
   const TRADES_PAGE_SIZE = 50;
 
@@ -98,14 +104,28 @@ export default function TradePair() {
     return canViewAsset(assetPrivacy, memberGroupIds);
   }, [assetPrivacy, memberGroupIds, privacyChecked]);
 
+  useEffect(() => {
+    initialLoadRef.current = true;
+    setLoading(true);
+    historyLoadedRef.current = false;
+    historyLoadingRef.current = false;
+    tradeKeysRef.current.clear();
+    lastTradeTsRef.current = 0;
+    allTradesRef.current = [];
+    setAllTrades([]);
+    setChartTrades([]);
+  }, [id]);
+
   const candles = useMemo(() => {
-    const lookbackMs = rangeHours * 60 * 60 * 1000;
-    const bucketMs = pickBucketMs(lookbackMs);
-    const now = chartTrades.length ? toMs(chartTrades[chartTrades.length - 1].ts) : Date.now();
+    if (!chartTrades.length) return [];
+    const bucketMs = 24 * 60 * 60 * 1000;
+    const lastTs = toMs(chartTrades[chartTrades.length - 1].ts);
+    const firstTs = toMs(chartTrades[0].ts);
+    const lookbackMs = Math.max(lastTs - firstTs, bucketMs);
+    const now = lastTs;
     let bars = computeCandlesCompact(chartTrades, { bucketMs, lookbackMs, now });
-    // Fallbacks for sparse/flat markets
+
     if (bars.length < 10) {
-      // 1) go to per-trade bars within window (gives you “dots” at each trade)
       bars = tradesAsCandlesPerTrade(chartTrades, lookbackMs, now);
     }
     if (bars.length < 10) {
@@ -118,7 +138,7 @@ export default function TradePair() {
     }
 
     return bars;
-  }, [chartTrades, rangeHours]);
+  }, [chartTrades]);
 
   const candleDataTOHLCV = useMemo(
     () =>
@@ -148,7 +168,7 @@ export default function TradePair() {
     return (Math.trunc(n * f) / f).toString();
   }
 
-  async function refreshBalances() {
+  const refreshBalances = useCallback(async () => {
     if (!privacyAllowed) {
       setBalAsset(null);
       setBalQort(null);
@@ -170,7 +190,7 @@ export default function TradePair() {
       setBalQort(null);
       setBalAsset(null);
     }
-  }
+  }, [authAddress, id, privacyAllowed]);
 
   // floors toward zero at 'dp' decimals (avoid binary fp surprises)
   function quant(n: number, dp: number) {
@@ -199,7 +219,7 @@ export default function TradePair() {
     setPrivacyChecked(false);
     (async () => {
       try {
-        const priv = await getAssetPrivacy(id, memberGroupIds);
+        const priv = await getAssetPrivacy(id);
         if (cancelled) return;
         setAssetPrivacy(priv);
         setPrivacyChecked(true);
@@ -326,14 +346,61 @@ export default function TradePair() {
     return { taken, proceeds, avg };
   }
 
+  const fetchLatestTrades = useCallback(
+    async (sinceMs: number) => {
+      const [envA, envB] = await Promise.all([
+        getTrades(0, id, { limit: 200, reverse: true }),
+        getTrades(id, 0, { limit: 200, reverse: true }),
+      ]);
+      const mergedEnvs = ([] as any[])
+        .concat(Array.isArray(envA) ? envA : [], Array.isArray(envB) ? envB : [])
+        .filter(Boolean);
+      mergedEnvs.sort((a, b) => tradeTs(b) - tradeTs(a));
+
+      const newTrades: Trade[] = [];
+      const newKeys: string[] = [];
+      for (const env of mergedEnvs) {
+        const key = tradeKey(env);
+        if (!key) continue;
+        if (tradeKeysRef.current.has(key)) continue;
+        const rowTs = tradeTs(env);
+        if (sinceMs && rowTs <= sinceMs) break;
+        const base = decodePairTradeEnvelope(env, id);
+        if (!base) continue;
+        const io = env?.initiatingOrder;
+        const takerIsBuyer = Number(io?.haveAssetId) === 0;
+        newTrades.push({
+          price: base.price,
+          quantity: base.assetAmt,
+          side: takerIsBuyer ? 'buy' : 'sell',
+          ts: base.ts,
+        });
+        newKeys.push(key);
+      }
+
+      for (const key of newKeys) {
+        tradeKeysRef.current.add(key);
+      }
+
+      return newTrades;
+    },
+    [id]
+  );
+
   const refreshMarket = useCallback(async () => {
+    const showSpinner = initialLoadRef.current;
     if (!privacyAllowed) {
-      setLoading(false);
+      if (showSpinner) {
+        setLoading(false);
+        initialLoadRef.current = false;
+      }
       return;
     }
+    if (!historyLoadedRef.current && historyLoadingRef.current) {
+      return;
+    }
+    if (showSpinner) setLoading(true);
     try {
-      setLoading(true);
-
       let mini = readAssetsIndexSync()?.[id] ?? null;
       if (!mini) {
         const idx = await ensureAssetsIndexLoaded();
@@ -359,59 +426,60 @@ export default function TradePair() {
       const realBids = [...realBidsRaw].sort((a, b) => b.priceQortPerAsset - a.priceQortPerAsset);
       const realAsks = [...realAsksRaw].sort((a, b) => a.priceQortPerAsset - b.priceQortPerAsset);
 
-      const now = Date.now();
-      // const windowStart = now - rangeHours * 60 * 60 * 1000;
+      let tradesNewestFirst: Trade[] = [];
+      if (!historyLoadedRef.current) {
+        historyLoadingRef.current = true;
+        try {
+          const now = Date.now();
+          const oneYearMs = 365 * 24 * 60 * 60 * 1000;
+          const fromWide = now - oneYearMs;
+          const envAll = await fetchQortToAssetTrades(id, fromWide, 5000, 20000);
 
-      const oneYearMs = 365 * 24 * 60 * 60 * 1000;
-      const fromWide = now - oneYearMs; // tune this
-      const envAll = await fetchQortToAssetTrades(id, fromWide, 5000, 20000);
+          const seenKeys = new Set<string>();
+          const rows = (envAll ?? [])
+            .map((env: any) => {
+              const base = decodePairTradeEnvelope(env, id);
+              if (!base) return null;
+              const io = env?.initiatingOrder;
+              const takerIsBuyer = Number(io?.haveAssetId) === 0;
+              const key = tradeKey(env);
+              if (key) seenKeys.add(key);
+              return {
+                price: base.price,
+                quantity: base.assetAmt,
+                side: takerIsBuyer ? 'buy' : 'sell',
+                ts: base.ts,
+              } as Trade;
+            })
+            .filter(Boolean) as Trade[];
 
-      // const rows = (envAll ?? [])
-      //   .map((env: any) => {
-      //     const io = env.initiatingOrder;
-      //     const t = env.trade;
-      //     const to = env.targetOrder;
-      //     const qtyAsset = Number(t?.targetAmount ?? io?.amount ?? 0);
-      //     const price = Number(to.price);
-      //     const ts = Number(t?.timestamp ?? io?.timestamp ?? 0);
-      //     const side =
-      //       io && typeof io.haveAssetId === 'number'
-      //         ? io.haveAssetId === 0
-      //           ? 'buy'
-      //           : 'sell'
-      //         : 'buy';
-      //     return Number.isFinite(price) && qtyAsset > 0 && ts > 0
-      //       ? ({ price, quantity: qtyAsset, side, ts } as Trade)
-      //       : null;
-      //   })
-      //   .filter(Boolean) as Trade[];
-      const rows = (envAll ?? [])
-        .map((env: any) => {
-          const base = decodePairTradeEnvelope(env, id);
-          if (!base) return null;
+          tradesNewestFirst = rows.sort((a, b) => b.ts - a.ts);
+          tradeKeysRef.current = seenKeys;
+          historyLoadedRef.current = true;
+        } finally {
+          historyLoadingRef.current = false;
+        }
+      } else {
+        tradesNewestFirst = await fetchLatestTrades(lastTradeTsRef.current);
+      }
 
-          // side for chart coloring = taker side (initiating order):
-          const io = env?.initiatingOrder;
-          const takerIsBuyer = Number(io?.haveAssetId) === 0; // have QORT => buying asset
-          const side: 'buy' | 'sell' = takerIsBuyer ? 'buy' : 'sell';
+      const previousTrades = allTradesRef.current;
+      const mergedTrades =
+        historyLoadedRef.current && tradesNewestFirst.length > 0
+          ? [...tradesNewestFirst, ...previousTrades]
+          : historyLoadedRef.current
+            ? previousTrades
+            : tradesNewestFirst;
 
-          return {
-            price: base.price, // QORT / asset (maker price)
-            quantity: base.assetAmt, // asset units
-            side,
-            ts: base.ts, // ms
-          } as Trade;
-        })
-        .filter(Boolean) as Trade[];
-
-      const fullNewestFirst = rows.sort((a, b) => b.ts - a.ts);
-      const asc = [...fullNewestFirst].sort((a, b) => toMs(a.ts) - toMs(b.ts));
+      allTradesRef.current = mergedTrades;
+      setAllTrades(mergedTrades);
+      const asc = [...mergedTrades].sort((a, b) => toMs(a.ts) - toMs(b.ts));
       setChartTrades(asc);
+      lastTradeTsRef.current = mergedTrades[0]?.ts ?? lastTradeTsRef.current;
+      setTradesPage(0);
 
       setBids(realBids);
       setAsks(realAsks);
-      setAllTrades(fullNewestFirst);
-      setTradesPage(0);
 
       if (authAddress) {
         try {
@@ -430,9 +498,12 @@ export default function TradePair() {
         setMyOrders([]);
       }
     } finally {
-      setLoading(false);
+      if (showSpinner) {
+        setLoading(false);
+        initialLoadRef.current = false;
+      }
     }
-  }, [id, authAddress, divisible, privacyAllowed]);
+  }, [id, authAddress, divisible, privacyAllowed, fetchLatestTrades]);
 
   const refreshMyFills = useCallback(async () => {
     if (!privacyAllowed) {
@@ -464,17 +535,18 @@ export default function TradePair() {
     }
   }, [authAddress, authPublicKey, id, privacyAllowed]);
 
+  const handleMarketTick = useCallback(() => {
+    void refreshMarket();
+    void refreshMyFills();
+    void refreshBalances();
+  }, [refreshMarket, refreshMyFills, refreshBalances]);
+
   useMarketConfirmRefresh({
     assetId: id,
-    onConfirm: () => {
-      // re-fetch only when a market tx confirms
-      void refreshMarket();
-      void refreshMyFills();
-      void refreshBalances();
-    },
-    intervalMs: 3000,
-    hiddenMs: 12000,
-    jitterMs: 1000,
+    onConfirm: handleMarketTick,
+    intervalMs: 30_000,
+    hiddenMs: 60_000,
+    jitterMs: 0,
   });
 
   useEffect(() => {
@@ -715,32 +787,9 @@ export default function TradePair() {
       </Box>
       <ActionsToolbar assetId={id} assetName={name} />
       {/* Chart stub */}
-      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-        <ToggleButtonGroup
-          size="small"
-          value={rangeHours}
-          exclusive
-          onChange={(_, v) => v && setRangeHours(v)}
-          sx={{ flexWrap: 'wrap', rowGap: 0.5 }}
-        >
-          <ToggleButton value={1}>1h</ToggleButton>
-          <ToggleButton value={24}>24h</ToggleButton>
-          <ToggleButton value={24 * 7}>7d</ToggleButton>
-          <ToggleButton value={24 * 30}>30d</ToggleButton>
-        </ToggleButtonGroup>
-        <ToggleButtonGroup
-          size="small"
-          value={bucketMinutes}
-          exclusive
-          onChange={(_, v) => v && setBucketMinutes(v)}
-          sx={{ flexWrap: 'wrap', rowGap: 0.5 }}
-        >
-          <ToggleButton value={1}>1m</ToggleButton>
-          <ToggleButton value={5}>5m</ToggleButton>
-          <ToggleButton value={15}>15m</ToggleButton>
-          <ToggleButton value={60}>1h</ToggleButton>
-        </ToggleButtonGroup>
-      </Box>
+      <Typography variant="caption" color="text.secondary">
+        Daily candles spanning the full recorded trade history.
+      </Typography>
       <Paper sx={{ p: 2, display: 'grid', gap: 2, maxWidth: '100%', overflow: 'hidden' }}>
         {loading ? (
           <Box display="flex" justifyContent="center" py={6}>

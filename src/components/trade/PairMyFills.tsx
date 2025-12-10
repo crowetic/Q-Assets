@@ -1,14 +1,6 @@
 import { Box, Typography } from '@mui/material';
 import { formatPrice, formatQty } from '../../utils/marketUI';
-
-export type FillEvent = {
-  orderId: string;
-  side: 'buy' | 'sell';
-  price: number; // QORT per 1 unit of asset
-  qtyAsset: number; // amount of the non-QORT asset (e.g., GBQ)
-  qort: number; // total QORT paid/received
-  ts: number;
-};
+import type { FillEvent } from '../../utils/markets';
 
 export default function PairMyFills(props: {
   fills: FillEvent[];
@@ -27,7 +19,7 @@ export default function PairMyFills(props: {
 
   return (
     <Box sx={{ display: 'grid', gap: 0.25 }}>
-      {fills.map((f) => {
+      {fills.map((f, i) => {
         const dateStr = new Date(f.ts).toLocaleString(undefined, {
           year: 'numeric',
           month: 'short',
@@ -38,7 +30,7 @@ export default function PairMyFills(props: {
 
         return (
           <Box
-            key={`${f.orderId}:${f.ts}`}
+            key={f.tradeSignature ?? `${f.orderId}:${f.ts}:${i}`}
             sx={{
               display: 'grid',
               gridTemplateColumns: 'auto 1fr auto',

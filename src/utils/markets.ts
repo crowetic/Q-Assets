@@ -73,6 +73,7 @@ export interface FillEvent {
   qtyAsset: number; // ASSET units filled in this trade row
   qort: number; // QORT paid/received in this trade row
   ts: number; // ms
+  tradeSignature?: string;
 }
 
 export type ChartTrade = { price: number; quantity: number; side: 'buy' | 'sell'; ts: number };
@@ -646,14 +647,14 @@ export async function fetchTradesPaged(a: number, b: number, windowStartMs: numb
 }
 
 // Helper: get timestamp (ms) from trade envelope
-function tradeTs(row: any): number {
+export function tradeTs(row: any): number {
   const t = row?.trade;
   const raw = Number(t?.timestamp ?? row?.timestamp ?? 0);
   return raw && raw < 2e10 ? raw : raw; // your node already ms; keep simple
 }
 
 // Helper: stable de-dupe key across both directions
-function tradeKey(row: any): string {
+export function tradeKey(row: any): string {
   const t = row?.trade ?? {};
   const ts = tradeTs(row);
   const io = t.initiatingOrderId ?? row?.initiatingOrder?.orderId ?? '';
@@ -939,23 +940,39 @@ export function envelopesToFills(
   publicKey: string | undefined,
   pairAssetId: number
 ): FillEvent[] {
-  return (Array.isArray(envelopes) ? envelopes : [])
-    .filter((row) => rowHasMe(row, address, publicKey))
-    .map((row) => {
-      const base = decodePairTradeEnvelope(row, pairAssetId);
-      const side = sideForMe(row, address, publicKey);
+  const out: FillEvent[] = [];
+  const seen = new Set<string>();
+  const rows = Array.isArray(envelopes) ? envelopes : [];
 
-      return {
-        orderId: String(row?.initiatingOrder?.orderId ?? row?.targetOrder?.orderId ?? ''),
-        side,
-        qtyAsset: base?.assetAmt ?? 0, // non-QORT amount
-        qort: base?.qortAmt ?? 0, // QORT amount
-        price: base?.price ?? 0, // QORT / asset
-        ts: base?.ts ?? 0,
-      } as FillEvent;
-    })
-    .filter((f) => f.qtyAsset > 0 && f.qort > 0 && f.price > 0 && f.ts > 0)
-    .sort((a, b) => b.ts - a.ts);
+  for (const row of rows) {
+    if (!rowHasMe(row, address, publicKey)) continue;
+    const base = decodePairTradeEnvelope(row, pairAssetId);
+    if (!base) continue;
+    const side = sideForMe(row, address, publicKey);
+
+    const fill: FillEvent = {
+      orderId: String(row?.initiatingOrder?.orderId ?? row?.targetOrder?.orderId ?? ''),
+      side,
+      qtyAsset: base.assetAmt,
+      qort: base.qortAmt,
+      price: base.price,
+      ts: base.ts,
+      tradeSignature: row?.trade?.signature,
+    };
+
+    if (!(fill.qtyAsset > 0 && fill.qort > 0 && fill.price > 0 && fill.ts > 0)) continue;
+
+    const dedupeKey =
+      row?.trade?.signature ??
+      `${fill.orderId}:${fill.ts}:${fill.price}:${fill.qtyAsset}:${fill.side}:${fill.qort}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    out.push(fill);
+  }
+
+  out.sort((a, b) => b.ts - a.ts);
+  return out;
 }
 
 /** Decode a single row from /assets/order/{orderId}/trades (flat or envelope). */

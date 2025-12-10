@@ -365,7 +365,7 @@ export default function AssetDetail() {
     trackerId = begin('page:assetDetails:privacy');
     (async () => {
       try {
-        const priv = await getAssetPrivacy(id, memberGroupIds);
+        const priv = await getAssetPrivacy(id);
         if (!cancelled) {
           setAssetPrivacy(priv);
           setStep('privacy', 'success');

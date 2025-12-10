@@ -145,7 +145,7 @@ export const VolumeBars = memo(function VolumeBars({ data }: { data: OhlcPoint[]
     <ResponsiveContainer width="100%" height={120}>
       <BarChart data={rows}>
         <CartesianGrid strokeOpacity={0.1} />
-        <XAxis dataKey="t" tickFormatter={tsFormatter} />
+        <XAxis dataKey="t" hide />
         <YAxis width={60} />
         <Tooltip labelFormatter={(l) => tsFormatter(Number(l))} />
         <Bar dataKey="v" />
@@ -170,7 +170,7 @@ export const DepthChart = memo(function DepthChart({
     <ResponsiveContainer width="100%" height={220}>
       <AreaChart>
         <CartesianGrid strokeOpacity={0.1} />
-        <XAxis type="number" dataKey="price" domain={['dataMin', 'dataMax']} />
+        <XAxis type="number" dataKey="price" domain={['dataMin', 'dataMax']} hide />
         <YAxis type="number" dataKey="cum" width={60} />
         <Tooltip />
         {/* Bids area */}
