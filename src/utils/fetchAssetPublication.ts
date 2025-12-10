@@ -66,12 +66,12 @@ export const fetchAssetPublication = async (
   };
 
   const fetchAndDecode = async (service: Service, identifier: string) => {
-    console.log(
-      'passed to fetchAndDecode in fetchAssetPublication',
-      service,
-      'identifier',
-      identifier
-    );
+    // console.log(
+    //   'passed to fetchAndDecode in fetchAssetPublication',
+    //   service,
+    //   'identifier',
+    //   identifier
+    // );
     const raw = await qortalRequest({
       action: 'FETCH_QDN_RESOURCE',
       name,
@@ -85,7 +85,7 @@ export const fetchAssetPublication = async (
         : raw && typeof raw === 'object' && typeof (raw as any).data64 === 'string'
           ? (raw as any).data64
           : null;
-    console.log('base64Payload', base64Payload);
+    // console.log('base64Payload', base64Payload);
     if (!base64Payload) return null;
     return decode(base64Payload);
   };
