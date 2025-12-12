@@ -101,8 +101,10 @@ export default function NewsPublisher({
     const raw64 = await objectToBase64(payloadObj);
 
     // Encrypt for private assets
-    const service: Service = isPrivate ? resolveGroupPublishService('group') : ('DOCUMENT' as Service);
-    let data64 = raw64;
+    const service: Service = isPrivate
+      ? resolveGroupPublishService('group')
+      : ('DOCUMENT' as Service);
+    let base64 = raw64;
     if (isPrivate) {
       try {
         const encrypted = await qortalRequest({
@@ -111,7 +113,7 @@ export default function NewsPublisher({
           groupId: effectiveGroupId!,
           isAdmins: false,
         });
-        data64 = encrypted;
+        base64 = encrypted;
       } catch (e: any) {
         const msg = typeof e?.message === 'string' ? e.message : 'Failed to encrypt for group.';
         await alert(msg, 'Publish failed', { severity: 'error' });
@@ -128,7 +130,7 @@ export default function NewsPublisher({
             name: userName as string,
             service,
             identifier: newsItemId,
-            data64,
+            base64,
           },
         ],
       });

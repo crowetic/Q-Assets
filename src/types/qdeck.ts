@@ -49,15 +49,6 @@ export type AnyBoard = {
   privMode?: 'group' | 'direct'; // only when private & accessible
 };
 
-// export interface CardsIndexDoc {
-//   _type: 'QDECK_CARDS_INDEX';
-//   version: 1;
-//   boardId: string;
-//   cardIds: string[];     // minimal; order agnostic
-//   updatedAt: number;
-//   seq: number;
-// }
-
 export type CardsIndexDoc = {
   _type: 'QDECK_CARDS_INDEX';
   version: 1;

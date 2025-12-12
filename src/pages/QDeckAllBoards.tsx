@@ -418,7 +418,12 @@ export default function QDeckAllBoards() {
               {(b.editors?.length || b.editorGroups?.length) && (
                 <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ mt: 0.5 }}>
                   {b.editors?.map((editor) => (
-                    <Chip key={`editor-${editor}`} size="small" color="info" label={`Editor: ${editor}`} />
+                    <Chip
+                      key={`editor-${editor}`}
+                      size="small"
+                      color="info"
+                      label={`Editor: ${editor}`}
+                    />
                   ))}
                   {b.editorGroups?.map((gid) => (
                     <Chip
@@ -433,10 +438,20 @@ export default function QDeckAllBoards() {
               {(b.groupsAllowed?.length || b.usersAllowed?.length) && (
                 <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ mt: 0.5 }}>
                   {b.groupsAllowed?.map((gid) => (
-                    <Chip key={`allowed-group-${gid}`} size="small" color="secondary" label={`Group allowed #${gid}`} />
+                    <Chip
+                      key={`allowed-group-${gid}`}
+                      size="small"
+                      color="secondary"
+                      label={`Group allowed #${gid}`}
+                    />
                   ))}
                   {b.usersAllowed?.map((user) => (
-                    <Chip key={`allowed-user-${user}`} size="small" color="secondary" label={`User allowed: ${user}`} />
+                    <Chip
+                      key={`allowed-user-${user}`}
+                      size="small"
+                      color="secondary"
+                      label={`User allowed: ${user}`}
+                    />
                   ))}
                 </Stack>
               )}

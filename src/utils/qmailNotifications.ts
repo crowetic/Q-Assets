@@ -63,7 +63,7 @@ export async function sendQmailNotifications(params: SendQmailParams) {
         name: senderName,
         service: MAIL_SERVICE_TYPE,
         identifier: buildIdentifier(recipient.name, recipient.address),
-        data64: await objectToBase64(payload),
+        base64: await objectToBase64(payload),
       };
       return {
         resource,

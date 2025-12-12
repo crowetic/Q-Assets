@@ -661,11 +661,7 @@ export default function MyBoards() {
                       <Chip key={`owner-${owner}`} size="small" label={`Admin: ${owner}`} />
                     ))}
                     {detail?.ownerGroups?.map((gid) => (
-                      <Chip
-                        key={`owner-group-${gid}`}
-                        size="small"
-                        label={`Admin group #${gid}`}
-                      />
+                      <Chip key={`owner-group-${gid}`} size="small" label={`Admin group #${gid}`} />
                     ))}
                   </Stack>
                 )}
