@@ -122,7 +122,7 @@ export default function AnnouncementDialog({
             name: userName,
             service: 'DOCUMENT',
             identifier,
-            data64: announcementBase64,
+            base64: announcementBase64,
           },
         ],
       });
@@ -224,9 +224,7 @@ export default function AnnouncementDialog({
         }
 
         if (notifyTasks.length) {
-          for (const task of notifyTasks) {
-            await task();
-          }
+          await Promise.all(notifyTasks.map((task) => task()));
         }
       }
 

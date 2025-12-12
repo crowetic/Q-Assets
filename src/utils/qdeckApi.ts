@@ -14,9 +14,9 @@ import {
 import { base64ToObject, objectToBase64 } from 'qapp-core';
 import { createBoard } from './qdeckDefaults';
 import {
-  addPrivateMagic,
   getQAssetsRevenueAddress,
   parsePrivateBoardIdentV2,
+  PRIVATE_MAGIC_B64,
   QDeckCommentsId,
   QDeckId,
   stripPrivateMagic,
@@ -37,9 +37,16 @@ import {
   canPublisherPublishToBoard,
   cardAuthHeaderMatchesPublisher,
 } from './qdeckAccess';
-import { getCached, setCached, LruTtl } from './cache';
+import { LruTtl } from './cache';
 import type { BatchPublishResource } from './useQdnBatchPublisher';
 import pLimit from 'p-limit';
+import {
+  getGroupResourceServices,
+  resolveGroupPublishService,
+  shouldUseLegacyPrivateMagic,
+  GROUP_ENCRYPTION_SERVICE,
+  LEGACY_GROUP_ENCRYPTION_SERVICE,
+} from './groupEncryption';
 
 export type QUserIdentity = {
   name?: string; // QDN name (issuer)
@@ -72,28 +79,6 @@ export function requireName(u: QUserIdentity) {
   return u.name;
 }
 
-// ---- caching helpers ----
-const FETCH_CACHE_MS = 60_000; // 1 minute TTL to avoid hammering node for unchanged docs
-
-const fetchKey = (
-  name: string,
-  identifier: string,
-  isPrivate?: boolean,
-  groupId?: number,
-  isAdmins?: boolean,
-  privateMode?: 'group' | 'direct'
-) => {
-  return [
-    'qdeckFetch',
-    name || '',
-    identifier || '',
-    isPrivate ? 'priv' : 'pub',
-    groupId ?? 'nog',
-    isAdmins ? 'adm' : 'mem',
-    privateMode || 'auto',
-  ].join(':');
-};
-
 // const cardFetchLimit = pLimit(6);
 
 export async function loadCardsIndex(
@@ -125,7 +110,7 @@ export async function saveCardsIndex(issuerName: string, board: QDeckBoard, doc:
       service: 'DOCUMENT',
       name: issuerName,
       identifier,
-      data64: payloadBase64,
+      base64: payloadBase64,
     });
   }
 
@@ -142,13 +127,14 @@ export async function saveCardsIndex(issuerName: string, board: QDeckBoard, doc:
       },
       240_000
     );
-    const data64 = addPrivateMagic(enc);
+    const service = resolveGroupPublishService('group');
+    const encrypted = enc;
     return qortalRequest({
       action: 'PUBLISH_QDN_RESOURCE',
-      service: 'DOCUMENT_PRIVATE',
+      service,
       name: issuerName,
       identifier,
-      data64,
+      base64: encrypted,
     });
   }
 
@@ -169,13 +155,13 @@ export async function saveCardsIndex(issuerName: string, board: QDeckBoard, doc:
   if (!recipients?.length) throw new Error('saveCardsIndex: no recipients for direct mode');
 
   const enc = await encryptForRecipients(payloadBase64, recipients);
-  const data64 = addPrivateMagic(enc);
+  const data64 = enc;
   return qortalRequest({
     action: 'PUBLISH_QDN_RESOURCE',
-    service: 'DOCUMENT_PRIVATE',
+    service: resolveGroupPublishService('direct'),
     name: issuerName,
     identifier,
-    data64,
+    base64: data64,
   });
 }
 
@@ -184,6 +170,19 @@ export async function repairCardsIndex(
   board: QDeckBoard,
   opts?: { concurrency?: number }
 ): Promise<CardsIndexDoc> {
+  if (
+    board.visibility === 'private' &&
+    (board.privateMeta?.mode ?? 'group') === 'group' &&
+    board.privateMeta?.groupId
+  ) {
+    await migrateLegacyGroupResourceToPublic({
+      issuerName,
+      identifier: QDeckId.cardsIndex(board.boardId),
+      groupId: board.privateMeta.groupId,
+      isAdmins: board.privateMeta?.isAdmins,
+    });
+  }
+
   const current = (await loadCardsIndex(issuerName, board)) ?? {
     _type: 'QDECK_CARDS_INDEX' as const,
     version: 1 as const,
@@ -359,11 +358,18 @@ type PrivatePayloadOptions = {
   groupId?: number;
   isAdmins?: boolean;
   recipients?: string[];
+  service?: Service;
 };
 
 async function encryptPrivatePayload(opts: PrivatePayloadOptions) {
   const { payloadBase64, mode, groupId, isAdmins, recipients } = opts;
   const effMode = mode ?? (groupId != null ? 'group' : 'direct');
+  // if (effMode === 'group' && isAdmins === true) {
+  //   if (isAdmins === undefined) {
+  //     console.error('mode is group and isAdmins is true')
+  //     return;
+  //   }
+  // }
   if (effMode === 'group') {
     if (groupId == null) throw new Error('Group mode requires groupId');
     const enc: string = await qortalRequestWithTimeout(
@@ -376,11 +382,12 @@ async function encryptPrivatePayload(opts: PrivatePayloadOptions) {
       240_000
     );
     if (!enc) throw new Error('ENCRYPT_QORTAL_GROUP_DATA failed');
-    return addPrivateMagic(enc);
+    console.log('encryptedBeforePrivateMagic', enc);
+    return enc;
   }
   if (!recipients?.length) throw new Error('Direct mode requires recipients');
   const enc = await encryptForRecipients(payloadBase64, recipients);
-  return addPrivateMagic(enc);
+  return enc;
 }
 
 type PublishPayloadParams = {
@@ -398,27 +405,45 @@ type PublishPayloadParams = {
 async function preparePublishPayload(params: PublishPayloadParams): Promise<BatchPublishResource> {
   const { name, identifier, object, isPrivate, groupId, isAdmins, mode, recipients, service } =
     params;
-  const data64 = await objectToBase64(object);
+  const base64 = await objectToBase64(object);
+  const effectiveMode = isPrivate ? (mode ?? (groupId != null ? 'group' : 'direct')) : undefined;
+  const resolvedService: Service =
+    service ??
+    (isPrivate ? resolveGroupPublishService(effectiveMode ?? 'group') : ('DOCUMENT' as Service));
   if (isPrivate) {
     const encrypted = await encryptPrivatePayload({
-      payloadBase64: data64,
-      mode,
+      payloadBase64: base64,
+      mode: effectiveMode,
       groupId,
       isAdmins,
       recipients,
+      service: resolvedService,
     });
+    console.log('prepared private payload', {
+      identifier,
+      service: resolvedService,
+      mode: effectiveMode,
+      hasMagic: encrypted.startsWith(PRIVATE_MAGIC_B64),
+      payloadLength: encrypted.length,
+    });
+    console.log('pre-encrypted base64', base64);
+    console.log('encryptedPayloadFromPreparePublishPayload with PrivateMagic', encrypted);
     return {
       name,
-      service: service ?? 'DOCUMENT_PRIVATE',
+      service: resolvedService,
       identifier,
-      data64: encrypted,
+      base64: encrypted,
+      privateMode: effectiveMode,
+      groupId,
+      isAdmins,
+      recipients: effectiveMode === 'direct' ? recipients : undefined,
     };
   }
   return {
     name,
-    service: service ?? 'DOCUMENT',
+    service: resolvedService,
     identifier,
-    data64,
+    base64,
   };
 }
 
@@ -440,7 +465,10 @@ export async function buildCardPublishPayload(
     isAdmins: board.privateMeta?.isAdmins,
     mode: board.privateMeta?.mode,
     recipients: board.privateMeta?.recipients,
-    service: board.visibility === 'private' ? 'DOCUMENT_PRIVATE' : 'DOCUMENT',
+    service:
+      board.visibility === 'private'
+        ? resolveGroupPublishService(board.privateMeta?.mode ?? 'group')
+        : 'DOCUMENT',
   });
 }
 
@@ -459,7 +487,10 @@ export async function buildCardsIndexPublishPayload(
     isAdmins: board.privateMeta?.isAdmins,
     mode: board.privateMeta?.mode,
     recipients: board.privateMeta?.recipients,
-    service: board.visibility === 'private' ? 'DOCUMENT_PRIVATE' : 'DOCUMENT',
+    service:
+      board.visibility === 'private'
+        ? resolveGroupPublishService(board.privateMeta?.mode ?? 'group')
+        : 'DOCUMENT',
   });
 }
 
@@ -485,7 +516,10 @@ export async function buildBoardPublishPayload(
     isAdmins: board.privateMeta?.isAdmins,
     mode: board.privateMeta?.mode,
     recipients: board.privateMeta?.recipients,
-    service: board.visibility === 'private' ? 'DOCUMENT_PRIVATE' : 'DOCUMENT',
+    service:
+      board.visibility === 'private'
+        ? resolveGroupPublishService(board.privateMeta?.mode ?? 'group')
+        : 'DOCUMENT',
   });
 }
 
@@ -524,13 +558,14 @@ async function publishPrivate(opts: {
       );
       if (!enc) throw new Error('ENCRYPT_QORTAL_GROUP_DATA failed');
 
-      const data64 = addPrivateMagic(enc);
+      const service = resolveGroupPublishService('group');
+      const data64 = enc;
       return qortalRequest({
         action: 'PUBLISH_QDN_RESOURCE',
-        service: 'DOCUMENT_PRIVATE',
+        service,
         name: issuerName,
         identifier,
-        data64,
+        base64: data64,
       });
     } catch (e: any) {
       if (isGroupKeyMissing(e)) throw new GroupKeyMissingError();
@@ -541,14 +576,74 @@ async function publishPrivate(opts: {
   // direct
   if (!recipients?.length) throw new Error('Direct mode requires recipients');
   const enc = await encryptForRecipients(payloadBase64, recipients);
-  const data64 = addPrivateMagic(enc);
+  const data64 = enc;
   return qortalRequest({
     action: 'PUBLISH_QDN_RESOURCE',
-    service: 'DOCUMENT_PRIVATE',
+    service: resolveGroupPublishService('direct'),
     name: issuerName,
     identifier,
-    data64,
+    base64: data64,
   });
+}
+
+async function migrateLegacyGroupResourceToPublic(opts: {
+  issuerName: string;
+  identifier: string;
+  groupId?: number;
+  isAdmins?: boolean;
+}) {
+  const { issuerName, identifier, groupId, isAdmins } = opts;
+  if (!groupId) return false;
+  try {
+    const hits = await searchSimpleByFullId(identifier, true);
+    const normalizedIssuer = issuerName.toLowerCase();
+    const matching = hits.filter(
+      (hit) => (hit.name || '').toLowerCase() === normalizedIssuer && !!hit.service
+    );
+    const legacyHit = matching.find(
+      (hit) => (hit.service || '').toUpperCase() === LEGACY_GROUP_ENCRYPTION_SERVICE
+    );
+    if (!legacyHit) return false;
+    const documentHit = matching.find(
+      (hit) => (hit.service || '').toUpperCase() === GROUP_ENCRYPTION_SERVICE
+    );
+    const stamp = (hit?: typeof legacyHit) => (hit ? Number(hit.updated ?? hit.created ?? 0) : 0);
+    if (documentHit && stamp(documentHit) >= stamp(legacyHit)) {
+      return false;
+    }
+
+    const legacyRes = await qortalRequest({
+      action: 'FETCH_QDN_RESOURCE',
+      name: issuerName,
+      service: LEGACY_GROUP_ENCRYPTION_SERVICE,
+      identifier,
+      encoding: 'base64',
+    });
+    const legacyData =
+      typeof legacyRes === 'string' ? legacyRes : (legacyRes?.data64 ?? legacyRes?.base64);
+    if (!legacyData || typeof legacyData !== 'string') return false;
+    const encryptedPayload = stripPrivateMagic(legacyData);
+    const decrypted = await qortalRequest({
+      action: 'DECRYPT_QORTAL_GROUP_DATA',
+      base64: encryptedPayload,
+      groupId,
+      isAdmins: !!isAdmins,
+    });
+    if (!decrypted || typeof decrypted !== 'string') return false;
+    await publishPrivate({
+      identifier,
+      payloadBase64: decrypted,
+      mode: 'group',
+      groupId,
+      isAdmins,
+      issuerName,
+    });
+    console.info(`Migrated legacy group resource ${identifier} for ${issuerName} to DOCUMENT`);
+    return true;
+  } catch (error) {
+    console.warn(`Failed to migrate legacy group resource ${identifier}`, error);
+    return false;
+  }
 }
 
 // --- unified private fetch ---
@@ -561,23 +656,38 @@ async function fetchPrivate<T>(opts: {
 }): Promise<T | null> {
   const { identifier, issuerName, mode, groupId, isAdmins } = opts;
 
+  const services =
+    mode === 'group'
+      ? await getGroupResourceServices()
+      : ([resolveGroupPublishService('direct')] as Service[]);
+
   let base64: string | null = null;
-  try {
-    base64 = await qortalRequest({
-      action: 'FETCH_QDN_RESOURCE',
-      name: issuerName,
-      service: 'DOCUMENT_PRIVATE',
-      identifier,
-      encoding: 'base64',
-    });
-  } catch {
-    return null;
+  let fetchedService: Service | null = null;
+  for (const svc of services) {
+    try {
+      const res = await qortalRequest({
+        action: 'FETCH_QDN_RESOURCE',
+        name: issuerName,
+        service: svc,
+        identifier,
+        encoding: 'base64',
+      });
+      if (res) {
+        base64 = res;
+        fetchedService = svc;
+        break;
+      }
+    } catch {
+      /* try next */
+    }
   }
-  if (!base64) return null;
+  if (!base64 || !fetchedService) return null;
 
   if (mode === 'group') {
     if (groupId == null) return null;
-    base64 = stripPrivateMagic(base64);
+    if (shouldUseLegacyPrivateMagic(fetchedService, 'group')) {
+      base64 = stripPrivateMagic(base64);
+    }
     const clear = await qortalRequest({
       action: 'DECRYPT_QORTAL_GROUP_DATA',
       base64,
@@ -593,7 +703,6 @@ async function fetchPrivate<T>(opts: {
   }
 
   // direct
-  base64 = stripPrivateMagic(base64);
   const clear64 = await decryptDirect(base64);
   if (!clear64) return null;
   try {
@@ -615,21 +724,15 @@ export async function qdeckFetch<T>(
   isAdmins?: boolean,
   privateMode?: 'group' | 'direct'
 ): Promise<T | null> {
-  const key = fetchKey(name, identifier, isPrivate, groupId, isAdmins, privateMode);
-  const cached = getCached<T>(key);
-  if (cached) return cached;
-
   if (isPrivate) {
     const mode: 'group' | 'direct' = privateMode ?? (groupId != null ? 'group' : 'direct');
-    const val = await fetchPrivate<T>({
+    return fetchPrivate<T>({
       identifier,
       issuerName: name,
       mode,
       groupId,
       isAdmins,
     });
-    if (val) setCached(key, val, FETCH_CACHE_MS);
-    return val;
   }
   // console.log('passed service',service)
 
@@ -650,9 +753,7 @@ export async function qdeckFetch<T>(
 
   try {
     const obj = await base64ToObject(res);
-    const val = obj && typeof obj === 'object' ? (obj as T) : null;
-    if (val) setCached(key, val, FETCH_CACHE_MS);
-    return val;
+    return obj && typeof obj === 'object' ? (obj as T) : null;
   } catch {
     // non-JSON = tombstone or opaque
     return null;
@@ -694,14 +795,23 @@ export async function qdeckPublish(
     isAdmins,
     mode,
     recipients,
-    service: isPrivate ? 'DOCUMENT_PRIVATE' : 'DOCUMENT',
+    service: isPrivate ? resolveGroupPublishService(mode ?? 'group') : 'DOCUMENT',
   });
+  if (isPrivate) {
+    console.log('publishing private resource', {
+      identifier,
+      service: payload.service,
+      mode: payload.privateMode ?? mode,
+      hasMagic: payload.base64.startsWith(PRIVATE_MAGIC_B64),
+      payloadLength: payload.base64.length,
+    });
+  }
   return qortalRequest({
     action: 'PUBLISH_QDN_RESOURCE',
     service: payload.service,
     name,
     identifier,
-    data64: payload.data64,
+    data64: payload.base64,
   });
 }
 
@@ -740,7 +850,7 @@ export async function saveBoardDoc(issuerName: string, board: QDeckBoard) {
           board.privateMeta?.groupId
         );
 
-  const data64 = await objectToBase64(board);
+  const base64 = await objectToBase64(board);
 
   if (board.visibility === 'public') {
     board.service = 'DOCUMENT';
@@ -749,35 +859,24 @@ export async function saveBoardDoc(issuerName: string, board: QDeckBoard) {
       service: 'DOCUMENT',
       name: issuerName,
       identifier,
-      data64,
+      base64,
     });
-    setCached(fetchKey(issuerName, identifier, false), board, FETCH_CACHE_MS);
     return res;
   }
 
   try {
     await publishPrivate({
       identifier,
-      payloadBase64: data64,
+      payloadBase64: base64,
       mode: board.privateMeta?.mode ?? 'group',
       groupId: board.privateMeta?.groupId,
       isAdmins: board.privateMeta?.isAdmins,
       recipients: board.privateMeta?.recipients,
       issuerName,
     });
-    board.service = 'DOCUMENT_PRIVATE';
-    setCached(
-      fetchKey(
-        issuerName,
-        identifier,
-        true,
-        board.privateMeta?.groupId,
-        board.privateMeta?.isAdmins,
-        board.privateMeta?.mode ?? 'group'
-      ),
-      board,
-      FETCH_CACHE_MS
-    );
+    board.service = resolveGroupPublishService(board.privateMeta?.mode ?? 'group') as
+      | 'DOCUMENT'
+      | 'DOCUMENT_PRIVATE';
   } catch (e) {
     if (e instanceof GroupKeyMissingError) throw e;
     throw e;
@@ -1172,17 +1271,17 @@ export async function publishPrimaryImageForCard(
         240000
       );
       if (!enc) throw new Error('Encrypt failed for image (group)');
-      const withMagic = addPrivateMagic(enc);
-
+      const service: Service = 'IMAGE';
+      const payload = enc;
       await qortalRequest({
         action: 'PUBLISH_QDN_RESOURCE',
-        service: 'DOCUMENT_PRIVATE',
+        service,
         name: issuerName,
         identifier,
-        data64: withMagic,
+        base64: payload,
       });
 
-      return { service: 'DOCUMENT_PRIVATE', identifier, isPrivate: true };
+      return { service, identifier, isPrivate: true };
     } else {
       // --- DIRECT MODE ---
       // Use existing recipients if present; otherwise resolve like cards/comments.
@@ -1217,14 +1316,13 @@ export async function publishPrimaryImageForCard(
         publicKeys: recipients,
       });
       if (!enc) throw new Error('Encrypt failed for image (direct)');
-      const withMagic = addPrivateMagic(enc);
 
       await qortalRequest({
         action: 'PUBLISH_QDN_RESOURCE',
         service: 'DOCUMENT_PRIVATE',
         name: issuerName,
         identifier,
-        data64: withMagic,
+        base64: enc,
       });
 
       return { service: 'DOCUMENT_PRIVATE', identifier, isPrivate: true };
@@ -1237,7 +1335,7 @@ export async function publishPrimaryImageForCard(
     service: 'IMAGE',
     name: issuerName,
     identifier,
-    data64,
+    base64: data64,
   });
 
   return { service: 'IMAGE', identifier };
@@ -1249,14 +1347,31 @@ export async function resolvePrimaryImageDataUrl(
   groupId?: number,
   isAdmins?: boolean
 ): Promise<string | undefined> {
-  // Fetch as base64
-  let base64: string | null = await qortalRequest({
-    action: 'FETCH_QDN_RESOURCE',
-    name: issuerName,
-    service: ref.isPrivate ? 'DOCUMENT_PRIVATE' : ref.service, // IMAGE for public, DOCUMENT_PRIVATE for private
-    identifier: ref.identifier,
-    encoding: 'base64',
-  });
+  const primaryService = ref.service || 'IMAGE';
+  const servicesToTry = ref.isPrivate
+    ? Array.from(new Set([primaryService, 'DOCUMENT_PRIVATE']))
+    : [primaryService];
+
+  let base64: string | null = null;
+  let resolvedService: Service | null = null;
+  for (const svc of servicesToTry) {
+    try {
+      const res = await qortalRequest({
+        action: 'FETCH_QDN_RESOURCE',
+        name: issuerName,
+        service: svc as Service,
+        identifier: ref.identifier,
+        encoding: 'base64',
+      });
+      if (res) {
+        base64 = res;
+        resolvedService = svc as Service;
+        break;
+      }
+    } catch {
+      /* try next */
+    }
+  }
 
   if (!base64) return undefined;
 
@@ -1266,11 +1381,13 @@ export async function resolvePrimaryImageDataUrl(
   }
 
   // PRIVATE: remove magic, then decrypt (group or direct)
-  if (ref.isPrivate) {
+  if (ref.isPrivate && resolvedService) {
     // You added magic on publish (both group and direct), so strip it first
 
     if (groupId) {
-      base64 = stripPrivateMagic(base64);
+      if (shouldUseLegacyPrivateMagic(resolvedService, 'group')) {
+        base64 = stripPrivateMagic(base64);
+      }
       base64 = await qortalRequest({
         action: 'DECRYPT_QORTAL_GROUP_DATA',
         base64,

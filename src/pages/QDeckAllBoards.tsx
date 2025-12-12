@@ -16,6 +16,7 @@ import {
   Alert,
   DialogActions,
   useMediaQuery,
+  Skeleton,
 } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import LockIcon from '@mui/icons-material/Lock';
@@ -33,13 +34,44 @@ import { useAlert } from '../components/alerts';
 import { pastelBgFromId, pastelBorderFromId } from '../utils/qdeckColors';
 import { useFetchTracker } from '../state/global/fetchTracker';
 
-type WithCreated<T> = T & { createdAt?: number };
+type BoardLoadStatus = 'queued' | 'loading' | 'decrypting' | 'loaded' | 'error';
+type ListedBoard = AnyBoard & {
+  status: BoardLoadStatus;
+  statusMessage?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  listCount?: number;
+  issuerName: string;
+  owners?: string[];
+  ownerGroups?: number[];
+  editors?: string[];
+  editorGroups?: number[];
+  groupsAllowed?: number[];
+  usersAllowed?: string[];
+};
+
+const statusPriority: Record<BoardLoadStatus, number> = {
+  loaded: 4,
+  decrypting: 3,
+  loading: 2,
+  queued: 1,
+  error: 0,
+};
+
+const formatRelativeTime = (timestamp?: number) => {
+  if (!timestamp) return 'Unknown';
+  const diff = Date.now() - timestamp;
+  if (diff < 60 * 1000) return 'Just now';
+  if (diff < 60 * 60 * 1000) return `${Math.floor(diff / (60 * 1000))}m ago`;
+  if (diff < 24 * 60 * 60 * 1000) return `${Math.floor(diff / (60 * 60 * 1000))}h ago`;
+  return new Date(timestamp).toLocaleDateString();
+};
 
 export default function QDeckAllBoards() {
   const { name: myName } = useAuth();
-  const [boards, setBoards] = React.useState<AnyBoard[]>([]);
+  const [boardMap, setBoardMap] = React.useState<Record<string, ListedBoard>>({});
   const [q, setQ] = React.useState('');
-  const [stats, setStats] = React.useState({ pubFound: 0, privFound: 0, hydrated: 0 });
+  const [stats, setStats] = React.useState({ pubFound: 0, privFound: 0 });
 
   const [confirmDel, setConfirmDel] = React.useState<null | {
     issuer: string;
@@ -61,126 +93,178 @@ export default function QDeckAllBoards() {
     [track]
   );
 
+  const loadTokenRef = React.useRef(0);
+
+  const upsertBoard = React.useCallback(
+    (key: string, next: ListedBoard | ((prev?: ListedBoard) => ListedBoard)) => {
+      setBoardMap((prev) => {
+        const current = prev[key];
+        const updated =
+          typeof next === 'function' ? (next as (arg?: ListedBoard) => ListedBoard)(current) : next;
+        if (!updated) return prev;
+        return { ...prev, [key]: updated };
+      });
+    },
+    []
+  );
+
+  const removeBoard = React.useCallback((key: string) => {
+    setBoardMap((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }, []);
+
+  const hydrateBoard = React.useCallback(
+    async (
+      head: { identifier: string; name: string; created?: number; updated?: number },
+      kind: 'public' | 'private',
+      token: number
+    ) => {
+      const key = `${head.name}::${head.identifier}`;
+      const parsedPrivate =
+        kind === 'private' ? parsePrivateBoardIdentV2(head.identifier) : undefined;
+      const shortId =
+        kind === 'public'
+          ? head.identifier.replace(QDeckId.prefixPublicBoards, '')
+          : (parsedPrivate?.boardId ?? head.identifier);
+      if (!shortId) return;
+
+      const placeholder: ListedBoard = {
+        name: head.name,
+        issuerName: head.name,
+        shortId,
+        title: kind === 'public' ? shortId : '(Private board)',
+        createdAt: head.created,
+        updatedAt: head.updated,
+        visibility: kind === 'public' ? 'public' : 'private',
+        service: kind === 'public' ? ('DOCUMENT' as const) : ('DOCUMENT_PRIVATE' as const),
+        accessible: kind === 'public',
+        status: kind === 'public' ? 'loading' : 'decrypting',
+        statusMessage: kind === 'public' ? 'Fetching board metadata…' : 'Decrypting private board…',
+        privMode: parsedPrivate?.mode,
+        owners: [],
+        ownerGroups: [],
+        editors: [],
+        editorGroups: [],
+        groupsAllowed: [],
+        usersAllowed: [],
+      };
+
+      if (loadTokenRef.current !== token) return;
+      upsertBoard(key, (prev) => ({ ...(prev ?? placeholder), ...placeholder }));
+
+      try {
+        const doc = await qdeckFetch<QDeckBoard>(
+          head.name,
+          head.identifier,
+          kind === 'private',
+          parsedPrivate?.mode === 'group' ? parsedPrivate.groupId : undefined,
+          parsedPrivate?.mode === 'group' ? !!parsedPrivate.isAdmins : undefined,
+          parsedPrivate?.mode ?? 'group'
+        );
+        if (loadTokenRef.current !== token) return;
+        if (!doc || (doc as any)?._type === 'QDECK_TOMBSTONE') {
+          removeBoard(key);
+          return;
+        }
+        upsertBoard(key, (prev) => ({
+          ...(prev ?? placeholder),
+          title: doc.title,
+          createdAt: doc.createdAt,
+          updatedAt: doc.updatedAt,
+          visibility: coerceVisibility(doc.visibility ?? prev?.visibility ?? 'public'),
+          service: coerceService(doc.service ?? prev?.service ?? 'DOCUMENT'),
+          accessible: true,
+          listCount: Array.isArray(doc.lists) ? doc.lists.length : undefined,
+          status: 'loaded',
+          statusMessage: 'Board metadata loaded.',
+          owners: doc.owners ?? prev?.owners ?? [],
+          ownerGroups: doc.ownerGroups ?? prev?.ownerGroups ?? [],
+          editors: doc.editors ?? prev?.editors ?? [],
+          editorGroups: doc.editorGroups ?? prev?.editorGroups ?? [],
+          groupsAllowed: doc.groupsAllowed ?? prev?.groupsAllowed ?? [],
+          usersAllowed: doc.usersAllowed ?? prev?.usersAllowed ?? [],
+        }));
+      } catch (error: any) {
+        if (loadTokenRef.current !== token) return;
+        const message =
+          typeof error?.message === 'string' ? error.message : 'Unable to load board.';
+        upsertBoard(key, (prev) => ({
+          ...(prev ?? placeholder),
+          status: 'error',
+          statusMessage: message,
+          accessible: false,
+        }));
+      }
+    },
+    [upsertBoard, removeBoard]
+  );
+
   const load = React.useCallback(async () => {
+    const token = ++loadTokenRef.current;
+    setBoardMap({});
     await busyWhile(async () => {
-      // 1) Fetch heads
       const [pubRaw, privRaw] = await Promise.all([
         searchSimpleByIdPrefixOnly(QDeckId.prefixPublicBoards, false),
         searchSimpleByIdPrefixOnly(QDeckId.prefixPrivateBoards, true),
       ]);
-
-      // 2) Hydrate PUBLIC
-      const pubBoards = await Promise.all(
-        pubRaw.map(async (h) => {
-          if (!h?.identifier || !h?.name) return null;
-          const shortId = h.identifier.replace(QDeckId.prefixPublicBoards, '');
-          try {
-            const doc = await qdeckFetch<QDeckBoard>(h.name, h.identifier, false);
-            if (!doc || (doc as any)?._type === 'QDECK_TOMBSTONE') return null;
-            return {
-              name: h.name,
-              shortId,
-              title: doc.title,
-              createdAt: doc.createdAt,
-              updatedAt: doc.updatedAt,
-              visibility: 'public' as const,
-              service: 'DOCUMENT' as const,
-              accessible: true,
-            } as WithCreated<AnyBoard>;
-          } catch {
-            return null;
-          }
-        })
-      );
-
-      // 3) Hydrate PRIVATE (v2 ident tells us how to fetch)
-      const privBoards = await Promise.all(
-        privRaw.map(async (h) => {
-          if (!h?.identifier || !h?.name) return null;
-
-          const parsed = parsePrivateBoardIdentV2(h.identifier);
-          if (!parsed) return null; // v2 only
-
-          const shortId = parsed.boardId;
-
-          let doc: QDeckBoard | null = null;
-          try {
-            doc = await qdeckFetch<QDeckBoard>(
-              h.name,
-              h.identifier,
-              /* isPrivate */ true,
-              parsed.mode === 'group' ? parsed.groupId : undefined,
-              parsed.mode === 'group' ? !!parsed.isAdmins : undefined,
-              parsed.mode
-            );
-          } catch {
-            doc = null;
-          }
-
-          if (!doc || (doc as any)?._type === 'QDECK_TOMBSTONE') {
-            return {
-              name: h.name,
-              shortId,
-              title: '(Private board)',
-              createdAt: undefined,
-              updatedAt: undefined,
-              visibility: 'private' as const,
-              service: 'DOCUMENT_PRIVATE' as const,
-              accessible: false,
-              privMode: parsed.mode,
-            } as WithCreated<AnyBoard>;
-          }
-
-          return {
-            name: h.name,
-            shortId,
-            title: doc.title,
-            createdAt: doc.createdAt,
-            updatedAt: doc.updatedAt,
-            visibility: coerceVisibility(doc.visibility ?? 'private'),
-            service: coerceService(doc.service ?? 'DOCUMENT_PRIVATE'),
-            accessible: true,
-            privMode: parsed.mode,
-          } as WithCreated<AnyBoard>;
-        })
-      );
-
-      const list = [...pubBoards, ...privBoards].filter(Boolean) as WithCreated<AnyBoard>[];
-
-      // Dedup by shortId keeping earliest created (fallback to updatedAt)
-      const earliestById = new Map<string, WithCreated<AnyBoard>>();
-      for (const b of list) {
-        const created = b.createdAt ?? b.updatedAt ?? Number.POSITIVE_INFINITY;
-        const existing = earliestById.get(b.shortId);
-        if (!existing) {
-          earliestById.set(b.shortId, b);
-        } else {
-          const existingCreated =
-            existing.createdAt ?? existing.updatedAt ?? Number.POSITIVE_INFINITY;
-          if (created < existingCreated) {
-            earliestById.set(b.shortId, b);
-          }
-        }
-      }
-
-      const deduped = Array.from(earliestById.values()).sort(
-        (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
-      );
-
-      setStats({ pubFound: pubRaw.length, privFound: privRaw.length, hydrated: list.length });
-      setBoards(deduped);
+      if (loadTokenRef.current !== token) return;
+      setStats({ pubFound: pubRaw.length, privFound: privRaw.length });
+      [...pubRaw, ...privRaw].forEach((head) => {
+        if (!head?.identifier || !head?.name) return;
+        const kind = head.identifier.startsWith(QDeckId.prefixPrivateBoards) ? 'private' : 'public';
+        hydrateBoard(head, kind, token);
+      });
     }, 'blocking:qdeck:allboards');
-  }, [busyWhile]);
+  }, [busyWhile, hydrateBoard]);
 
   React.useEffect(() => {
     load().catch(console.error);
   }, [load]);
 
-  const filtered = boards.filter(
-    (b) =>
-      !q ||
-      b.title.toLowerCase().includes(q.toLowerCase()) ||
-      b.name.toLowerCase().includes(q.toLowerCase())
+  const boardList = React.useMemo(() => {
+    const values = Object.values(boardMap);
+    const dedup = new Map<string, ListedBoard>();
+    values.forEach((entry) => {
+      const existing = dedup.get(entry.shortId);
+      if (!existing) {
+        dedup.set(entry.shortId, entry);
+        return;
+      }
+      const statusDiff = statusPriority[entry.status] - statusPriority[existing.status];
+      if (statusDiff > 0) {
+        dedup.set(entry.shortId, entry);
+        return;
+      }
+      if (statusDiff === 0) {
+        const tsDiff = (entry.updatedAt ?? 0) - (existing.updatedAt ?? 0);
+        if (tsDiff > 0) dedup.set(entry.shortId, entry);
+      }
+    });
+    return Array.from(dedup.values()).sort((a, b) => {
+      const statusDiff = statusPriority[b.status] - statusPriority[a.status];
+      if (statusDiff !== 0) return statusDiff;
+      return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+    });
+  }, [boardMap]);
+
+  const filtered = React.useMemo(() => {
+    if (!q) return boardList;
+    const needle = q.toLowerCase();
+    return boardList.filter(
+      (b) =>
+        b.title?.toLowerCase().includes(needle) ||
+        b.name.toLowerCase().includes(needle) ||
+        b.shortId.toLowerCase().includes(needle)
+    );
+  }, [boardList, q]);
+
+  const hydratedCount = React.useMemo(
+    () => boardList.filter((b) => b.status === 'loaded').length,
+    [boardList]
   );
 
   return (
@@ -211,7 +295,7 @@ export default function QDeckAllBoards() {
       </Stack>
 
       <Typography variant="caption" sx={{ opacity: 0.7, display: 'block', mb: 1 }}>
-        Public hits: {stats.pubFound} • Private hits: {stats.privFound} • Listed: {stats.hydrated}
+        Public hits: {stats.pubFound} • Private hits: {stats.privFound} • Loaded: {hydratedCount}
       </Typography>
 
       {filtered.map((b) => {
@@ -219,6 +303,13 @@ export default function QDeckAllBoards() {
         const canDelete = myName === b.name;
         const bg = (t: any) => pastelBgFromId(b.shortId, t.palette.mode);
         const border = (t: any) => `1px solid ${pastelBorderFromId(b.shortId, t.palette.mode)}`;
+        const isLoaded = b.status === 'loaded';
+        const statusColor =
+          b.status === 'error'
+            ? 'error.main'
+            : b.status === 'loaded'
+              ? 'success.main'
+              : 'info.main';
 
         const chip =
           b.visibility === 'public' ? (
@@ -241,11 +332,7 @@ export default function QDeckAllBoards() {
             <Chip
               size="small"
               icon={<LockIcon fontSize="small" />}
-              label={
-                b.privMode === 'group'
-                  ? 'Private (no access, group)'
-                  : 'Private (no access, direct)'
-              }
+              label="Private (locked)"
               variant="outlined"
               color="warning"
             />
@@ -274,12 +361,7 @@ export default function QDeckAllBoards() {
           >
             {/* left */}
             <Box sx={{ minWidth: 0 }}>
-              <Stack
-                direction="row"
-                spacing={1}
-                alignItems="center"
-                sx={{ mb: 0.5, minWidth: 0, flexWrap: 'wrap' }}
-              >
+              {isLoaded ? (
                 <Typography
                   variant="subtitle1"
                   sx={{
@@ -292,7 +374,20 @@ export default function QDeckAllBoards() {
                 >
                   {b.title}
                 </Typography>
+              ) : (
+                <Skeleton variant="text" width="60%" height={28} />
+              )}
+
+              <Stack
+                direction="row"
+                spacing={1}
+                alignItems="center"
+                sx={{ mb: 0.5, mt: 0.5, minWidth: 0, flexWrap: 'wrap' }}
+              >
                 {chip}
+                {typeof b.listCount === 'number' && (
+                  <Chip size="small" variant="outlined" label={`${b.listCount} lists`} />
+                )}
               </Stack>
 
               <Typography
@@ -301,6 +396,50 @@ export default function QDeckAllBoards() {
               >
                 {b.name} — {b.shortId}
               </Typography>
+              <Typography variant="caption" sx={{ display: 'block', opacity: 0.8 }}>
+                Updated {formatRelativeTime(b.updatedAt)} • Created{' '}
+                {formatRelativeTime(b.createdAt)}
+              </Typography>
+              {b.statusMessage && (
+                <Typography variant="caption" sx={{ display: 'block' }} color={statusColor}>
+                  {b.statusMessage}
+                </Typography>
+              )}
+              {(b.owners?.length || b.ownerGroups?.length) && (
+                <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ mt: 0.5 }}>
+                  {b.owners?.map((owner) => (
+                    <Chip key={`owner-${owner}`} size="small" label={`Admin: ${owner}`} />
+                  ))}
+                  {b.ownerGroups?.map((gid) => (
+                    <Chip key={`owner-group-${gid}`} size="small" label={`Admin group #${gid}`} />
+                  ))}
+                </Stack>
+              )}
+              {(b.editors?.length || b.editorGroups?.length) && (
+                <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ mt: 0.5 }}>
+                  {b.editors?.map((editor) => (
+                    <Chip key={`editor-${editor}`} size="small" color="info" label={`Editor: ${editor}`} />
+                  ))}
+                  {b.editorGroups?.map((gid) => (
+                    <Chip
+                      key={`editor-group-${gid}`}
+                      size="small"
+                      color="info"
+                      label={`Editor group #${gid}`}
+                    />
+                  ))}
+                </Stack>
+              )}
+              {(b.groupsAllowed?.length || b.usersAllowed?.length) && (
+                <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ mt: 0.5 }}>
+                  {b.groupsAllowed?.map((gid) => (
+                    <Chip key={`allowed-group-${gid}`} size="small" color="secondary" label={`Group allowed #${gid}`} />
+                  ))}
+                  {b.usersAllowed?.map((user) => (
+                    <Chip key={`allowed-user-${user}`} size="small" color="secondary" label={`User allowed: ${user}`} />
+                  ))}
+                </Stack>
+              )}
             </Box>
 
             {/* right */}
@@ -375,12 +514,17 @@ export default function QDeckAllBoards() {
                     cascadeComments,
                   });
                 }, 'blocking:qdeck:delete');
-                setBoards((prev) =>
-                  prev.filter(
-                    (x) => !(x.name === confirmDel.issuer && x.shortId === confirmDel.boardId)
-                  )
-                );
-                setStats((s) => ({ ...s, hydrated: Math.max(0, s.hydrated - 1) }));
+                setBoardMap((prev) => {
+                  const next = { ...prev };
+                  Object.keys(next).forEach((key) => {
+                    const entry = next[key];
+                    if (!entry) return;
+                    if (entry.name === confirmDel.issuer && entry.shortId === confirmDel.boardId) {
+                      delete next[key];
+                    }
+                  });
+                  return next;
+                });
               } catch (e: any) {
                 const msg = String(e?.message || e || '');
                 if (/not authorized/i.test(msg)) {

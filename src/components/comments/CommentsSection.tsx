@@ -24,7 +24,7 @@ import TagChip from '../asset/TagChip';
 import { useAuth, objectToBase64, Spacer, Service } from 'qapp-core';
 // import { useTheme } from '@mui/material';
 import { assetCommentsPrefix, assetCommentId } from '../../constants/qdnConstants';
-import { addPrivateMagic, stripPrivateMagic } from '../../constants/qdeckIdentifiers';
+import { stripPrivateMagic } from '../../constants/qdeckIdentifiers';
 import { uniqueId6 } from '../../utils/ids';
 import { base64ToObject } from '../../utils/data';
 import { fetchAccountAvatarDataUrl } from '../../utils/qdnAvatar';
@@ -38,6 +38,11 @@ import { MINTER_GROUP_ID, DEV_GROUP_ID } from '../../constants/qdnConstants';
 import { SkeletonComment } from '../common/Loading';
 import BusyButton from '../common/BusyButton';
 import { searchSimpleByIdentifierPrefix } from '../../utils/searchSimple';
+import {
+  getGroupResourceServices,
+  resolveGroupPublishService,
+  shouldUseLegacyPrivateMagic,
+} from '../../utils/groupEncryption';
 import { addTagsForName, tagComments } from '../../utils/roles';
 
 import type { ThreadNode } from '../../utils/thread';
@@ -270,7 +275,10 @@ async function fetchHtmlComment(
       encoding: 'base64',
     } as any);
 
-    const cleaned = typeof b64 === 'string' ? stripPrivateMagic(b64) : b64;
+    let cleaned = typeof b64 === 'string' ? b64 : b64;
+    if (typeof cleaned === 'string' && shouldUseLegacyPrivateMagic(service, 'group')) {
+      cleaned = stripPrivateMagic(cleaned);
+    }
     const rawLen = base64ByteLength(cleaned as string);
 
     if (rawLen <= DELETED_SENTINEL_LEN) {
@@ -522,8 +530,10 @@ export default function CommentsSection({
       setError(null);
       try {
         // 1) Find all identifiers quickly (cheap)
-        const svc = isPrivate ? 'DOCUMENT_PRIVATE' : ('DOCUMENT' as Service);
-        const hitsAll = await searchSimpleByIdentifierPrefix(svc, prefix, 0);
+        const servicesToSearch = isPrivate
+          ? await getGroupResourceServices()
+          : (['DOCUMENT'] as Service[]);
+        const hitsAll = await searchSimpleByIdentifierPrefix(servicesToSearch, prefix, 0);
         if (cancelled) return;
 
         // Sort stable (you had this already)
@@ -534,10 +544,10 @@ export default function CommentsSection({
         // Build name map once (for backfill)
         const namesByIdentifier = hitsAll.reduce((m, h) => {
           const arr = m.get(h.identifier) || [];
-          arr.push(h.name);
+          arr.push({ name: h.name, service: h.service as Service | undefined });
           m.set(h.identifier, arr);
           return m;
-        }, new Map<string, string[]>());
+        }, new Map<string, { name: string; service?: Service }[]>());
 
         // 2) Fetch docs progressively with a concurrency cap
         const docs: ThreadComment[] = [];
@@ -547,7 +557,12 @@ export default function CommentsSection({
           hits.map((h) =>
             limit(async () => {
               if (cancelled) return;
-              const doc = await fetchHtmlComment(h.name, h.identifier, prefix, svc);
+              const doc = await fetchHtmlComment(
+                h.name,
+                h.identifier,
+                prefix,
+                ((h.service as Service) || servicesToSearch[0]) as Service
+              );
               if (!doc) return;
               // de-dupe by id
               if (docs.find((d) => d.id === doc.id)) return;
@@ -578,8 +593,14 @@ export default function CommentsSection({
           const fullIdentifier = `${prefix}${mid}`;
           const candidateNames = namesByIdentifier.get(fullIdentifier) ?? [];
           let found: ThreadComment | null = null;
-          for (const nm of candidateNames) {
-            const doc = await fetchHtmlComment(nm, fullIdentifier, prefix, svc);
+          for (const candidate of candidateNames) {
+            const service = candidate.service || servicesToSearch[0];
+            const doc = await fetchHtmlComment(
+              candidate.name,
+              fullIdentifier,
+              prefix,
+              service as Service
+            );
             if (doc) {
               found = doc;
               break;
@@ -588,11 +609,19 @@ export default function CommentsSection({
           if (!found && docs.length) {
             const uniqueAuthors = Array.from(new Set(docs.map((x) => x.author).filter(Boolean)));
             for (const nm of uniqueAuthors) {
-              const doc = await fetchHtmlComment(nm, fullIdentifier, prefix, svc);
-              if (doc) {
-                found = doc;
-                break;
+              for (const svcCandidate of servicesToSearch) {
+                const doc = await fetchHtmlComment(
+                  nm,
+                  fullIdentifier,
+                  prefix,
+                  svcCandidate as Service
+                );
+                if (doc) {
+                  found = doc;
+                  break;
+                }
               }
+              if (found) break;
             }
           }
           if (found && !haveIds.has(found.id)) {
@@ -710,7 +739,7 @@ export default function CommentsSection({
 
       const identifier = assetCommentId(assetId, id);
       const data64 = await objectToBase64(entry);
-      const service = isPrivate ? ('DOCUMENT_PRIVATE' as Service) : ('DOCUMENT' as Service);
+      const service = isPrivate ? resolveGroupPublishService('group') : ('DOCUMENT' as Service);
       let finalData = data64;
       if (isPrivate) {
         if (!effectiveGroupId) throw new Error('Missing private group for comment publish.');
@@ -720,7 +749,7 @@ export default function CommentsSection({
           groupId: effectiveGroupId,
           isAdmins: false,
         });
-        finalData = addPrivateMagic(encrypted);
+        finalData = encrypted;
       }
 
       await qortalRequest({
@@ -790,7 +819,7 @@ export default function CommentsSection({
 
       const identifier = assetCommentId(assetId, editTarget.id);
       const data64 = await objectToBase64(entry);
-      const service = isPrivate ? ('DOCUMENT_PRIVATE' as Service) : ('DOCUMENT' as Service);
+      const service = isPrivate ? resolveGroupPublishService('group') : ('DOCUMENT' as Service);
       let finalData = data64;
       if (isPrivate) {
         if (!effectiveGroupId) throw new Error('Missing private group for comment publish.');
@@ -800,7 +829,7 @@ export default function CommentsSection({
           groupId: effectiveGroupId,
           isAdmins: false,
         });
-        finalData = addPrivateMagic(encrypted);
+        finalData = encrypted;
       }
 
       await qortalRequest({
@@ -808,7 +837,7 @@ export default function CommentsSection({
         name: userName,
         service,
         identifier,
-        data64: finalData,
+        base64: finalData,
       } as any);
 
       // Optimistic local update
@@ -848,7 +877,7 @@ export default function CommentsSection({
       // Publish tiny sentinel payload (1 raw byte) – base64("x") = "eA=="
       const data64 = btoa(DELETED_SENTINEL_RAW);
 
-      const service = isPrivate ? ('DOCUMENT_PRIVATE' as Service) : ('DOCUMENT' as Service);
+      const service = isPrivate ? resolveGroupPublishService('group') : ('DOCUMENT' as Service);
       let finalData = data64;
       if (isPrivate) {
         if (!effectiveGroupId) throw new Error('Missing private group for comment publish.');
@@ -858,7 +887,7 @@ export default function CommentsSection({
           groupId: effectiveGroupId,
           isAdmins: false,
         });
-        finalData = addPrivateMagic(encrypted);
+        finalData = encrypted;
       }
 
       await qortalRequest({
@@ -866,7 +895,7 @@ export default function CommentsSection({
         name: userName,
         service,
         identifier,
-        data64: finalData,
+        base64: finalData,
       } as any);
 
       // Optimistic local mark

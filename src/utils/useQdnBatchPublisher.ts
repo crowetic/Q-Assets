@@ -1,16 +1,45 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
+import { usePublish } from 'qapp-core';
 import type { Service } from 'qapp-core';
 import { useAlert } from '../components/alerts';
+// import { PRIVATE_MAGIC_B64 } from '../constants/qdeckIdentifiers';
 
-export type BatchPublishResource = {
+type PublishableResource = {
   name: string;
   service: Service;
   identifier: string;
-  data64: string;
-  metadata?: Record<string, any>;
-  tags?: string[];
+  base64: string;
   title?: string;
   description?: string;
+  tags?: string[];
+  category?: string;
+  filename?: string;
+  disableEncrypt?: boolean;
+};
+
+export type BatchPublishResource = PublishableResource & {
+  metadata?: Record<string, any>;
+  privateMode?: 'group' | 'direct';
+  groupId?: number;
+  isAdmins?: boolean;
+  recipients?: string[];
+};
+
+type PublishExecutor = (resources: PublishableResource[]) => Promise<void>;
+
+let activePublishExecutor: PublishExecutor | null = null;
+
+const registerPublishExecutor = (executor: PublishExecutor | null) => {
+  activePublishExecutor = executor;
+};
+
+const getPublishExecutor = (): PublishExecutor => {
+  if (!activePublishExecutor) {
+    throw new Error(
+      'QDN publishing is not initialized. Mount useQdnBatchPublisher (which wires qapp-core usePublish) before publishing.'
+    );
+  }
+  return activePublishExecutor;
 };
 
 const KB = 1024;
@@ -82,6 +111,9 @@ const deriveLimit = (service: Service): number => {
 
 export const getServiceLimit = (service: Service): number => deriveLimit(service);
 
+// const isPrivateService = (service: Service): boolean =>
+//   service === 'DOCUMENT_PRIVATE' || service.endsWith('_PRIVATE');
+
 const estimateBase64Bytes = (data64: string) => {
   const padding = data64.endsWith('==') ? 2 : data64.endsWith('=') ? 1 : 0;
   return Math.floor((data64.length * 3) / 4) - padding;
@@ -99,10 +131,18 @@ const formatBytes = (value: number) => {
   return `${current.toFixed(current >= 100 ? 0 : current >= 10 ? 1 : 2)} ${units[unit]}`;
 };
 
+// const ensurePrivateMagicPrefix = (res: BatchPublishResource) => {
+//   if (!isPrivateService(res.service)) return;
+//   if (!res.data64.startsWith(PRIVATE_MAGIC_B64)) {
+//     res.data64 = PRIVATE_MAGIC_B64 + res.data64;
+//   }
+// };
+
 const validateResources = (resources: BatchPublishResource[]) => {
   resources.forEach((res) => {
+    // ensurePrivateMagicPrefix(res);
     const limit = deriveLimit(res.service);
-    const size = estimateBase64Bytes(res.data64);
+    const size = estimateBase64Bytes(res.base64);
     if (size > limit) {
       throw new Error(
         `Resource ${res.identifier} exceeds the ${formatBytes(limit)} limit for ${
@@ -113,42 +153,60 @@ const validateResources = (resources: BatchPublishResource[]) => {
   });
 };
 
-const mapResourceFields = (res: BatchPublishResource) => ({
-  name: res.name,
-  service: res.service,
-  identifier: res.identifier,
-  data64: res.data64,
-  metadata: res.metadata,
-  tags: res.tags,
-  title: res.title,
-  description: res.description,
-});
-
 export async function publishQdnResources(resources: BatchPublishResource[]): Promise<void> {
   if (!resources.length) return;
 
   validateResources(resources);
 
-  if (resources.length === 1) {
-    const [single] = resources;
-    await qortalRequest({
-      action: 'PUBLISH_QDN_RESOURCE',
-      ...mapResourceFields(single),
-    } as any);
-    return;
-  }
+  const publishable: PublishableResource[] = resources.map(
+    ({
+      name,
+      service,
+      identifier,
+      base64,
+      title,
+      description,
+      tags,
+      category,
+      filename,
+      disableEncrypt,
+    }) => ({
+      name,
+      service,
+      identifier,
+      base64,
+      title,
+      description,
+      tags,
+      category,
+      filename,
+      disableEncrypt,
+    })
+  );
 
-  await qortalRequest({
-    action: 'PUBLISH_MULTIPLE_QDN_RESOURCES',
-    resources: resources.map((res) => mapResourceFields(res)),
-  } as any);
+  const executor = getPublishExecutor();
+  await executor(publishable);
 }
 
 export function useQdnBatchPublisher() {
   const { alert } = useAlert();
+  const { publishMultipleResources } = usePublish();
+
+  useEffect(() => {
+    const executor: PublishExecutor = async (mappedResources) => {
+      await publishMultipleResources(mappedResources);
+    };
+    registerPublishExecutor(executor);
+    return () => {
+      if (activePublishExecutor === executor) {
+        registerPublishExecutor(null);
+      }
+    };
+  }, [publishMultipleResources]);
 
   const publish = useCallback(
     async (resources: BatchPublishResource[]) => {
+      console.log('resources to publish in batch mode', resources);
       if (!resources.length) return;
       try {
         await publishQdnResources(resources);

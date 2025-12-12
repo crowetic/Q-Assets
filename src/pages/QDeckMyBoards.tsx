@@ -36,7 +36,7 @@ import {
 import { loadBoardsIndexMerged } from '../utils/qdeckIndexCache';
 import { searchSimpleByIdPrefixOnly } from '../utils/searchSimple';
 import { parsePrivateBoardIdentV2, QDeckId } from '../constants/qdeckIdentifiers';
-import type { QDeckBoard, BoardsIndexDoc } from '../types/qdeck';
+import type { QDeckBoard, BoardsIndexDoc, AnyBoard } from '../types/qdeck';
 import { coerceService, coerceVisibility } from '../types/qdeck';
 import { getAccountGroups, GroupSummary } from '../utils/qortalApi';
 import { useAlert } from '../components/alerts';
@@ -44,11 +44,37 @@ import { collectRecipientPublicKeys } from '../utils/qdeckAccess';
 import { RowActions, RowLinkGuard } from './QDeckPage';
 import { pastelBgFromId, pastelBorderFromId } from '../utils/qdeckColors';
 import { useFetchTracker } from '../state/global/fetchTracker';
+type BoardLoadStatus = 'queued' | 'loading' | 'decrypting' | 'loaded' | 'error';
+type OwnedBoardDetail = {
+  status: BoardLoadStatus;
+  statusMessage?: string;
+  updatedAt?: number;
+  createdAt?: number;
+  listCount?: number;
+  service?: AnyBoard['service'];
+  visibility?: AnyBoard['visibility'];
+  owners?: string[];
+  ownerGroups?: number[];
+  editors?: string[];
+  editorGroups?: number[];
+  groupsAllowed?: number[];
+  usersAllowed?: string[];
+};
+
+const formatRelativeTime = (timestamp?: number) => {
+  if (!timestamp) return 'Unknown';
+  const diff = Date.now() - timestamp;
+  if (diff < 60 * 1000) return 'Just now';
+  if (diff < 60 * 60 * 1000) return `${Math.floor(diff / (60 * 1000))}m ago`;
+  if (diff < 24 * 60 * 60 * 1000) return `${Math.floor(diff / (60 * 60 * 1000))}h ago`;
+  return new Date(timestamp).toLocaleDateString();
+};
 
 export default function MyBoards() {
   const [doc, setDoc] = React.useState<BoardsIndexDoc | null>(null);
   const [open, setOpen] = React.useState(false);
   const [title, setTitle] = React.useState('');
+  const [boardDetails, setBoardDetails] = React.useState<Record<string, OwnedBoardDetail>>({});
 
   // creator form state
   const [groupOptions, setGroupOptions] = React.useState<GroupSummary[]>([]);
@@ -78,6 +104,7 @@ export default function MyBoards() {
     async <T,>(fn: () => Promise<T> | T, label: string) => track(Promise.resolve().then(fn), label),
     [track]
   );
+  const boardHydrateTokenRef = React.useRef(0);
 
   let issuer = userName;
   if (!issuer) authenticateUser();
@@ -128,6 +155,83 @@ export default function MyBoards() {
   //     repairTimer.current = null;
   //   }, 600);
   // };
+
+  const hydrateOwnedBoard = React.useCallback(
+    async (
+      head: { identifier: string; name: string; created?: number; updated?: number },
+      token: number
+    ) => {
+      const isPrivate = head.identifier.startsWith(QDeckId.prefixPrivateBoards);
+      const parsed = isPrivate ? parsePrivateBoardIdentV2(head.identifier) : undefined;
+      const shortId = isPrivate
+        ? (parsed?.boardId ?? head.identifier)
+        : head.identifier.replace(QDeckId.prefixPublicBoards, '');
+      if (!shortId) return;
+
+      if (boardHydrateTokenRef.current !== token) return;
+      setBoardDetails((prev) => ({
+        ...prev,
+        [shortId]: {
+          ...(prev[shortId] ?? {}),
+          status: isPrivate ? 'decrypting' : 'loading',
+          statusMessage: isPrivate ? 'Decrypting private board…' : 'Fetching board metadata…',
+        },
+      }));
+
+      try {
+        const doc = await qdeckFetch<QDeckBoard>(
+          head.name,
+          head.identifier,
+          isPrivate,
+          parsed?.mode === 'group' ? parsed.groupId : undefined,
+          parsed?.mode === 'group' ? !!parsed.isAdmins : undefined,
+          parsed?.mode ?? 'group'
+        );
+        if (boardHydrateTokenRef.current !== token) return;
+        if (!doc || (doc as any)?._type === 'QDECK_TOMBSTONE') {
+          setBoardDetails((prev) => ({
+            ...prev,
+            [shortId]: {
+              ...(prev[shortId] ?? {}),
+              status: 'error',
+              statusMessage: 'Board not found or deleted.',
+            },
+          }));
+          return;
+        }
+        setBoardDetails((prev) => ({
+          ...prev,
+          [shortId]: {
+            status: 'loaded',
+            statusMessage: 'Board ready.',
+            updatedAt: doc.updatedAt,
+            createdAt: doc.createdAt,
+            listCount: Array.isArray(doc.lists) ? doc.lists.length : prev[shortId]?.listCount,
+            service: coerceService(doc.service ?? prev[shortId]?.service ?? 'DOCUMENT'),
+            visibility: coerceVisibility(doc.visibility ?? prev[shortId]?.visibility ?? 'public'),
+            owners: doc.owners ?? prev[shortId]?.owners ?? [],
+            ownerGroups: doc.ownerGroups ?? prev[shortId]?.ownerGroups ?? [],
+            editors: doc.editors ?? prev[shortId]?.editors ?? [],
+            editorGroups: doc.editorGroups ?? prev[shortId]?.editorGroups ?? [],
+            groupsAllowed: doc.groupsAllowed ?? prev[shortId]?.groupsAllowed ?? [],
+            usersAllowed: doc.usersAllowed ?? prev[shortId]?.usersAllowed ?? [],
+          },
+        }));
+      } catch (error: any) {
+        if (boardHydrateTokenRef.current !== token) return;
+        setBoardDetails((prev) => ({
+          ...prev,
+          [shortId]: {
+            ...(prev[shortId] ?? {}),
+            status: 'error',
+            statusMessage:
+              typeof error?.message === 'string' ? error.message : 'Unable to load board metadata.',
+          },
+        }));
+      }
+    },
+    []
+  );
 
   const load = React.useCallback(async () => {
     if (!issuer) return;
@@ -225,6 +329,31 @@ export default function MyBoards() {
   React.useEffect(() => {
     load().catch(console.error);
   }, [load]);
+
+  React.useEffect(() => {
+    if (!doc?.issuerName) {
+      setBoardDetails({});
+      return;
+    }
+    const token = ++boardHydrateTokenRef.current;
+    (async () => {
+      try {
+        const [pubHeads, privHeads] = await Promise.all([
+          searchSimpleByIdPrefixOnly(QDeckId.prefixPublicBoards, false),
+          searchSimpleByIdPrefixOnly(QDeckId.prefixPrivateBoards, true),
+        ]);
+        const targets = [...pubHeads, ...privHeads].filter((h) => h.name === doc.issuerName);
+        const seen = new Set<string>();
+        targets.forEach((head) => {
+          if (!head?.identifier || seen.has(head.identifier)) return;
+          seen.add(head.identifier);
+          hydrateOwnedBoard(head, token);
+        });
+      } catch {
+        /* silent */
+      }
+    })();
+  }, [doc?.issuerName, hydrateOwnedBoard]);
 
   // load groups when dialog opens
   React.useEffect(() => {
@@ -428,7 +557,19 @@ export default function MyBoards() {
 
         {(doc?.boards ?? []).map((b) => {
           const to = `/qdeck/${encodeURIComponent(publisher)}/${b.boardId}`;
-          const isPrivate = (b.visibility ?? 'public') === 'private';
+          const detail = boardDetails[b.boardId];
+          const visibility = detail?.visibility ?? b.visibility ?? 'public';
+          const isPrivate = visibility === 'private';
+          const statusColor =
+            detail?.status === 'error'
+              ? 'error.main'
+              : detail?.status === 'loaded'
+                ? 'success.main'
+                : 'info.main';
+          const statusMessage =
+            detail?.statusMessage ?? (!detail ? 'Queued for hydration…' : undefined);
+          const listsLabel =
+            typeof detail?.listCount === 'number' ? `${detail.listCount} lists` : undefined;
 
           return (
             <Paper
@@ -492,6 +633,7 @@ export default function MyBoards() {
                       color="success"
                     />
                   )}
+                  {listsLabel && <Chip size="small" variant="outlined" label={listsLabel} />}
                 </Stack>
 
                 <Typography
@@ -504,6 +646,69 @@ export default function MyBoards() {
                 >
                   Board ID: {b.boardId}
                 </Typography>
+                <Typography variant="caption" sx={{ display: 'block', opacity: 0.8 }}>
+                  Updated {formatRelativeTime(detail?.updatedAt ?? b.updatedAt)} • Created{' '}
+                  {formatRelativeTime(detail?.createdAt ?? b.createdAt)}
+                </Typography>
+                {statusMessage && (
+                  <Typography variant="caption" color={statusColor} sx={{ display: 'block' }}>
+                    {statusMessage}
+                  </Typography>
+                )}
+                {(detail?.owners?.length || detail?.ownerGroups?.length) && (
+                  <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ mt: 0.5 }}>
+                    {detail?.owners?.map((owner) => (
+                      <Chip key={`owner-${owner}`} size="small" label={`Admin: ${owner}`} />
+                    ))}
+                    {detail?.ownerGroups?.map((gid) => (
+                      <Chip
+                        key={`owner-group-${gid}`}
+                        size="small"
+                        label={`Admin group #${gid}`}
+                      />
+                    ))}
+                  </Stack>
+                )}
+                {(detail?.editors?.length || detail?.editorGroups?.length) && (
+                  <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ mt: 0.5 }}>
+                    {detail?.editors?.map((editor) => (
+                      <Chip
+                        key={`editor-${editor}`}
+                        size="small"
+                        color="info"
+                        label={`Editor: ${editor}`}
+                      />
+                    ))}
+                    {detail?.editorGroups?.map((gid) => (
+                      <Chip
+                        key={`editor-group-${gid}`}
+                        size="small"
+                        color="info"
+                        label={`Editor group #${gid}`}
+                      />
+                    ))}
+                  </Stack>
+                )}
+                {(detail?.groupsAllowed?.length || detail?.usersAllowed?.length) && (
+                  <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ mt: 0.5 }}>
+                    {detail?.groupsAllowed?.map((gid) => (
+                      <Chip
+                        key={`allowed-group-${gid}`}
+                        size="small"
+                        color="secondary"
+                        label={`Group allowed #${gid}`}
+                      />
+                    ))}
+                    {detail?.usersAllowed?.map((user) => (
+                      <Chip
+                        key={`allowed-user-${user}`}
+                        size="small"
+                        color="secondary"
+                        label={`User allowed: ${user}`}
+                      />
+                    ))}
+                  </Stack>
+                )}
               </Box>
 
               {/* Right actions */}

@@ -124,6 +124,7 @@ type QDeckCtx = {
   pendingPublishCount: (boardId: string) => number;
   publishPendingResources: (boardId: string) => Promise<void>;
   isPublishingQueue: (boardId: string) => boolean;
+  clearPublishQueue: (boardId?: string) => void;
   isRepairingIndex: boolean;
   repairCardsIndex: () => Promise<void>;
 
@@ -181,7 +182,18 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (!boardId || resources.length === 0) return;
       setPublishQueue((prev) => {
         const existing = prev[boardId] ?? [];
-        return { ...prev, [boardId]: [...existing, ...resources] };
+        const combined = [...existing, ...resources];
+        const seen = new Set<string>();
+        const deduped: BatchPublishResource[] = [];
+        for (let i = combined.length - 1; i >= 0; i -= 1) {
+          const res = combined[i];
+          const key = `${res.service}::${(res.name || '').toLowerCase()}::${res.identifier}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          deduped.push(res);
+        }
+        deduped.reverse();
+        return { ...prev, [boardId]: deduped };
       });
     },
     []
@@ -195,6 +207,17 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return next;
     });
   }, []);
+
+  const clearPublishQueue = useCallback(
+    (boardId?: string) => {
+      if (boardId) {
+        clearPublishQueueForBoard(boardId);
+        return;
+      }
+      setPublishQueue({});
+    },
+    [clearPublishQueueForBoard]
+  );
 
   const pendingPublishCount = useCallback(
     (boardId: string) => publishQueue[boardId]?.length ?? 0,
@@ -918,6 +941,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       pendingPublishCount,
       publishPendingResources,
       isPublishingQueue,
+      clearPublishQueue,
       isRepairingIndex: repairingIndex,
       repairCardsIndex,
       recordPayment,
@@ -947,6 +971,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       pendingPublishCount,
       publishPendingResources,
       isPublishingQueue,
+      clearPublishQueue,
       repairingIndex,
       repairCardsIndex,
       recordPayment,

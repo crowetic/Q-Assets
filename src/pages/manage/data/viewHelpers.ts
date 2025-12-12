@@ -1,8 +1,8 @@
 import type { QdnResource } from '../../../hooks/useQdnResources';
 import { coerceTags, filterUserTags } from '../../../utils/qdnTags';
-import { ensurePrivateService, isPrivateService } from '../../../utils/qdnServices';
+import { ensurePrivateService, ensurePublicService, isPrivateService } from '../../../utils/qdnServices';
 
-export { isPrivateService, ensurePrivateService };
+export { isPrivateService, ensurePrivateService, ensurePublicService };
 
 const deriveServiceLabel = (upper: string, original: string) => {
   if (upper.includes('DOCUMENT')) return 'Documents';

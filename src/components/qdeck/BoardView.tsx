@@ -240,6 +240,7 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
     pendingPublishCount,
     publishPendingResources,
     isPublishingQueue,
+    clearPublishQueue,
     isRepairingIndex,
     repairCardsIndex,
   } = useQDeck();
@@ -811,6 +812,15 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
             sx={{ whiteSpace: 'nowrap' }}
           >
             {queueButtonLabel}
+          </Button>
+          <Button
+            variant="outlined"
+            color="error"
+            size="small"
+            onClick={() => clearPublishQueue(currentBoardId)}
+            disabled={publishMode !== 'batch' || queuedCount === 0 || queuePublishing}
+          >
+            Clear queue
           </Button>
         </Box>
 

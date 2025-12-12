@@ -29,7 +29,7 @@ import useMediaQuery from '@mui/material/useMediaQuery';
 import type { Wallet } from '../portfolio/portfolioTypes';
 import { objectToBase64 } from '../utils/data';
 import { useQdnBatchPublisher } from '../utils/useQdnBatchPublisher';
-import { addPrivateMagic } from '../constants/qdeckIdentifiers';
+// import { addPrivateMagic } from '../constants/qdeckIdentifiers';
 
 const SAVED_SET_STORAGE_KEY = 'qa_portfolio_saved_wallet_sets';
 
@@ -86,7 +86,7 @@ const encryptForPublicKey = async (data64: string, publicKey: string) => {
   if (!encrypted || typeof encrypted !== 'string') {
     throw new Error('Failed to encrypt saved tracked sets.');
   }
-  return addPrivateMagic(encrypted);
+  return encrypted;
 };
 export default function PortfolioPage() {
   const {
@@ -232,10 +232,10 @@ export default function PortfolioPage() {
       const encrypted = await encryptForPublicKey(base64, authPublicKey);
       await publish([
         {
-          name: userName || authAddress,
+          name: userName!,
           service: 'DOCUMENT_PRIVATE',
           identifier: buildSavedSetsIdentifier(authAddress),
-          data64: encrypted,
+          base64: encrypted,
         },
       ]);
       setPublishStatus('Saved sets published to QDN.');

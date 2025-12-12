@@ -51,11 +51,7 @@ import {
   base64ToUint8Array,
 } from '../../../utils/data';
 import { uniqueId6 } from '../../../utils/ids';
-import {
-  addPrivateMagic,
-  stripPrivateMagic,
-  PRIVATE_MAGIC_B64,
-} from '../../../constants/qdeckIdentifiers';
+import { stripPrivateMagic, PRIVATE_MAGIC_B64 } from '../../../constants/qdeckIdentifiers';
 import { collectRecipientPublicKeys } from '../../../utils/qdeckAccess';
 import { getAccountGroups, type GroupSummary } from '../../../utils/qortalApi';
 import { useAuth, VideoPlayer } from 'qapp-core';
@@ -71,6 +67,7 @@ import {
   serviceLabels,
   isPrivateService,
   ensurePrivateService,
+  ensurePublicService,
   formatBytes,
   formatDate,
   getResourceLabel,
@@ -79,6 +76,7 @@ import {
   getResourceCreatedAt,
   getResourceUpdatedAt,
 } from './viewHelpers';
+import { shouldUseLegacyPrivateMagic } from '../../../utils/groupEncryption';
 import { filterUserTags } from '../../../utils/qdnTags';
 import type {
   FolderDescriptor,
@@ -349,15 +347,13 @@ const hasPrivateMagicPrefix = (base64: string) => base64.startsWith(PRIVATE_MAGI
 
 type EncryptionMode = 'group' | 'direct' | null | undefined;
 
-const applyPrivateMagicIfNeeded = (base64: string, service?: string, mode?: EncryptionMode) => {
-  if (!isPrivateService(service)) return base64;
-  if (mode !== 'group') return base64;
-  return hasPrivateMagicPrefix(base64) ? base64 : addPrivateMagic(base64);
-};
+const usesLegacyPrivateMagic = (service?: string, mode?: EncryptionMode) =>
+  shouldUseLegacyPrivateMagic(service, mode === 'group' ? 'group' : null);
+
+const applyPrivateMagicIfNeeded = (_base64: string) => _base64;
 
 const stripPrivateMagicIfNeeded = (base64: string, service?: string, mode?: EncryptionMode) => {
-  if (!isPrivateService(service)) return base64;
-  if (mode !== 'group') return base64;
+  if (!usesLegacyPrivateMagic(service, mode)) return base64;
   return hasPrivateMagicPrefix(base64) ? stripPrivateMagic(base64) : base64;
 };
 
@@ -742,24 +738,6 @@ const matchesFolderSegments = (segments: string[], prefix: string[]) => {
   return true;
 };
 
-const tryDecryptLegacyBase64 = async (
-  base64: string,
-  groups: GroupSummary[]
-): Promise<string | null> => {
-  const payload = hasPrivateMagicPrefix(base64) ? stripPrivateMagic(base64) : base64;
-  try {
-    const direct = await qortalRequest({
-      action: 'DECRYPT_DATA',
-      encryptedData: payload,
-    });
-    if (direct) return direct;
-  } catch {
-    // ignore direct failure; try groups
-  }
-  const attempts = buildGroupDecryptAttempts(groups);
-  return tryGroupDecryptSequence(payload, attempts);
-};
-
 const useResolveResourceBase64 = (groups: GroupSummary[]) =>
   useCallback(
     async (
@@ -778,18 +756,7 @@ const useResolveResourceBase64 = (groups: GroupSummary[]) =>
         } else {
           base64 = await fetchResourceBase64(resource);
           onStep?.('fetch', 'success');
-          if (base64 && hasPrivateMagicPrefix(base64)) {
-            onStep?.('decrypt', 'active');
-            const legacy = await tryDecryptLegacyBase64(base64, groups);
-            if (!legacy) {
-              onStep?.('decrypt', 'error', 'Encrypted resource could not be decrypted.');
-              throw new Error('Encrypted resource could not be decrypted with your keys.');
-            }
-            base64 = legacy;
-            onStep?.('decrypt', 'success');
-          } else {
-            onStep?.('decrypt', 'success');
-          }
+          onStep?.('decrypt', 'success');
         }
       } catch (e: any) {
         if (!base64) onStep?.('fetch', 'error', e?.message || 'Unable to fetch resource.');
@@ -1068,17 +1035,17 @@ export default function DataExplorer() {
   const republishWithMetadata = useCallback(
     async (params: {
       resource: QdnResource;
-      data64: string;
+      base64: string;
       metadata: Record<string, any>;
       tags?: string[];
     }) => {
-      const { resource, data64, metadata, tags } = params;
+      const { resource, base64, metadata, tags } = params;
       await queueOrPublishResources([
         {
           name: resource.name,
           service: resource.service as Service,
           identifier: resource.identifier,
-          data64,
+          base64,
           metadata,
           tags,
           title: resource.metadata?.title,
@@ -2136,7 +2103,7 @@ export default function DataExplorer() {
           name: activeName,
           service: resource.service as Service,
           identifier,
-          data64: rawBase64,
+          base64: rawBase64,
           title: resource.metadata?.title || targetName,
           description: saveToFilesDialog.description || resource.metadata?.description,
           tags,
@@ -2361,8 +2328,8 @@ export default function DataExplorer() {
               groupId,
               isAdmins: groupAdminsOnly,
             });
-            const finalService = ensurePrivateService(form.service);
-            const privData64 = applyPrivateMagicIfNeeded(enc, finalService, 'group');
+            const finalService = ensurePublicService(form.service);
+            const privData64 = applyPrivateMagicIfNeeded(enc);
             return {
               data64: privData64,
               service: finalService,
@@ -2392,7 +2359,7 @@ export default function DataExplorer() {
           });
           const finalService = ensurePrivateService(form.service);
           return {
-            data64: applyPrivateMagicIfNeeded(enc, finalService, 'direct'),
+            data64: applyPrivateMagicIfNeeded(enc),
             service: finalService,
             metadataExtra: { encrypted: { mode: 'direct', recipients } },
             tagExtra: ['private', 'encrypted:direct'],
@@ -2425,7 +2392,7 @@ export default function DataExplorer() {
           name: activeName,
           service: finalService as Service,
           identifier,
-          data64: finalData64,
+          base64: finalData64,
           title,
           description,
           tags,
@@ -2487,7 +2454,7 @@ export default function DataExplorer() {
           folderService as Service,
           activeName || folderRootName
         );
-        const data64 = await fileToBase64(entry.file);
+        const base64 = await fileToBase64(entry.file);
         const tags = ['qassets-fs'];
         if (folderPath) tags.push(`fs-path:${folderPath}`);
         tags.push(`fs-name:${fileName}`);
@@ -2504,7 +2471,7 @@ export default function DataExplorer() {
           name: activeName,
           service: folderService as Service,
           identifier,
-          data64,
+          base64,
           title: fileName,
           description: `Folder publish: ${folderRootName || 'folder'}`,
           tags,
@@ -2530,7 +2497,7 @@ export default function DataExplorer() {
           name: activeName,
           service: 'DOCUMENT' as Service,
           identifier: `qassets-fs-folder-${uniqueId6()}`,
-          data64: manifestData64,
+          base64: manifestData64,
           title: manifest.root,
           description: `Folder snapshot (${manifest.folderPath || '/'})`,
           tags: manifestTags,
@@ -2720,7 +2687,7 @@ export default function DataExplorer() {
     const nextFileName = fileName.trim() || entry.fileName;
     setManifestDialog((prev) => ({ ...prev, saving: true, error: null }));
     try {
-      const data64 = await resolveResourceBase64(entry.resource);
+      const base64 = await resolveResourceBase64(entry.resource);
       const tags = ['qassets-fs'];
       if (normalizedPath) tags.push(`fs-path:${normalizedPath}`);
       tags.push(`fs-name:${nextFileName}`);
@@ -2733,7 +2700,7 @@ export default function DataExplorer() {
           version: 1,
         },
       };
-      await republishWithMetadata({ resource: entry.resource, data64, metadata, tags });
+      await republishWithMetadata({ resource: entry.resource, base64, metadata, tags });
       await refreshResources();
       const manifestOverrides: ManifestOverrides = {
         structured: {
@@ -2827,7 +2794,7 @@ export default function DataExplorer() {
       try {
         await flushPendingPublishRequests();
         const manifestPayload = buildManifestPayload(overrides);
-        const data64 = await objectToBase64(manifestPayload);
+        const base64 = await objectToBase64(manifestPayload);
         const publisherAddress = await resolvePublisherAddress();
         const { publicKeys } = await collectRecipientPublicKeys({
           includeSelf: true,
@@ -2838,10 +2805,10 @@ export default function DataExplorer() {
         if (!publicKeys.length) throw new Error('Unable to resolve your public key.');
         const encrypted = await qortalRequest({
           action: 'ENCRYPT_DATA',
-          base64: data64,
+          base64,
           publicKeys,
         });
-        const privateData64 = applyPrivateMagicIfNeeded(encrypted, MANIFEST_SERVICE, 'direct');
+        const privateData64 = applyPrivateMagicIfNeeded(encrypted);
         const metadata = {
           qassetsManifest: { version: 1, visibility: 'private' },
           encrypted: { mode: 'direct', recipients: [publisherAddress] },
@@ -2851,7 +2818,7 @@ export default function DataExplorer() {
             name: activeName,
             service: MANIFEST_SERVICE as Service,
             identifier: MANIFEST_IDENTIFIER,
-            data64: privateData64,
+            base64: privateData64,
             title: 'Q-Assets Manifest',
             description: 'Aggregated service and folder metadata for faster browsing.',
             tags: ['qassets-manifest', 'private', 'encrypted:direct'],
@@ -2931,7 +2898,7 @@ export default function DataExplorer() {
       });
       const shareRequests: BatchPublishResource[] = [];
       for (const resource of targets) {
-        const data64 = await resolveResourceBase64(resource);
+        const base64 = await resolveResourceBase64(resource);
         const metadataBase = {
           ...(resource.metadata || {}),
           qassetsShare: {
@@ -2951,17 +2918,17 @@ export default function DataExplorer() {
         for (const gid of privateGroups) {
           const enc = await qortalRequest({
             action: 'ENCRYPT_QORTAL_GROUP_DATA',
-            base64: data64,
+            base64,
             groupId: gid,
             isAdmins: false,
           });
-          const service = ensurePrivateService(resource.service);
-          const privData = applyPrivateMagicIfNeeded(enc, service, 'group');
+          const service = ensurePublicService(resource.service);
+          const privData = applyPrivateMagicIfNeeded(enc);
           shareRequests.push({
             name: publisherName,
             service,
             identifier: `${resource.identifier}-g${gid}-${uniqueId6()}`,
-            data64: privData,
+            base64: privData,
             title: resource.metadata?.title,
             description: resource.metadata?.description,
             tags: [...tagsBase, 'private', `share:group:${gid}`],
@@ -2993,16 +2960,16 @@ export default function DataExplorer() {
             }));
           const enc = await qortalRequest({
             action: 'ENCRYPT_DATA',
-            base64: data64,
+            base64,
             publicKeys,
           });
           const service = ensurePrivateService(resource.service);
-          const privData = applyPrivateMagicIfNeeded(enc, service, 'direct');
+          const privData = applyPrivateMagicIfNeeded(enc);
           shareRequests.push({
             name: publisherName,
             service,
             identifier: `${resource.identifier}-direct-${uniqueId6()}`,
-            data64: privData,
+            base64: privData,
             title: resource.metadata?.title,
             description: resource.metadata?.description,
             tags: [...tagsBase, 'private', 'share:direct'],
@@ -3255,7 +3222,7 @@ export default function DataExplorer() {
       const { metadata, tags } = stripStructuredMetadata(selectedStructuredEntry.resource);
       await republishWithMetadata({
         resource: selectedStructuredEntry.resource,
-        data64: base64,
+        base64,
         metadata,
         tags,
       });
@@ -3345,7 +3312,7 @@ export default function DataExplorer() {
           identifier: entry.resource.identifier,
           reason: 'user-delete',
         };
-        const data64 = await objectToBase64(tombstone);
+        const base64 = await objectToBase64(tombstone);
         removedIdentifiers.push(entry.resource.identifier);
         const metadata = {
           tags: ['qassets-tombstone'],
@@ -3362,7 +3329,7 @@ export default function DataExplorer() {
           name: entry.resource.name,
           service: entry.resource.service as Service,
           identifier: entry.resource.identifier,
-          data64,
+          base64,
           title: 'TOMBSTONE',
           description: 'Resource removed by publisher',
           metadata,
@@ -3432,13 +3399,13 @@ export default function DataExplorer() {
           identifier: resource.identifier,
           reason: 'user-delete',
         };
-        const data64 = await objectToBase64(tombstone);
+        const base64 = await objectToBase64(tombstone);
         removedIdentifiers.push(resource.identifier);
         requests.push({
           name: resource.name,
           service: resource.service as Service,
           identifier: resource.identifier,
-          data64,
+          base64,
           title: 'TOMBSTONE',
           description: 'Resource removed by publisher',
           metadata: {

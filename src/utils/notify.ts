@@ -1,9 +1,5 @@
 import type { Service } from 'qapp-core';
-import {
-  addPrivateMagic,
-  qAssetsRevenueAddress,
-  stripPrivateMagic,
-} from '../constants/qdeckIdentifiers';
+import { qAssetsRevenueAddress, stripPrivateMagic } from '../constants/qdeckIdentifiers';
 import { buildNotificationIndexResource, IndexMode } from '../notifications/notifyIndex';
 import {
   NotifPaymentProof,
@@ -17,6 +13,7 @@ import { sendChatMessage } from './qchat';
 import { getAccount, getTransactionInfoBySignature, transferAsset } from './qortalApi';
 import { BatchPublishResource } from './useQdnBatchPublisher';
 import { enqueueQdnPublishJob } from '../state/publishQueue';
+import { resolveGroupPublishService } from './groupEncryption';
 
 export type NotifPriority = 'low' | 'normal' | 'high';
 export type NotifScopeStr =
@@ -68,7 +65,7 @@ const resolveServiceForScope = (
 ): { service: Service; encryption?: { groupId: number; adminsOnly?: boolean } } => {
   if (isPrivateGroupScope(scope)) {
     return {
-      service: 'DOCUMENT_PRIVATE',
+      service: resolveGroupPublishService('group'),
       encryption: { groupId: scope.groupId, adminsOnly: scope.adminsOnly },
     };
   }
@@ -127,7 +124,7 @@ async function encryptNotificationForGroup(
   if (!encrypted || typeof encrypted !== 'string') {
     throw new Error('Failed to encrypt notification payload for group.');
   }
-  return addPrivateMagic(encrypted);
+  return encrypted;
 }
 export async function verifyPayment(
   p: NotifPaymentProof,
@@ -269,7 +266,7 @@ export async function publishNotification(args: {
       name: publisherName,
       service,
       identifier: id,
-      data64: finalNotif64,
+      base64: finalNotif64,
       metadata: notifMetadata,
       tags: notifTags,
     },
@@ -299,7 +296,7 @@ export async function publishNotification(args: {
       name: publisherName,
       service: indexResource.service as Service,
       identifier: indexResource.identifier,
-      data64: indexResource.data64,
+      base64: indexResource.data64,
     });
   }
 
@@ -401,13 +398,12 @@ export async function fetchNotificationByRid(
     let data64 = res?.data64 ?? res;
     if (!data64 || typeof data64 !== 'string') return null;
     if (parsed.service === 'DOCUMENT_PRIVATE') {
-      const stripped = stripPrivateMagic(data64);
-      if (!stripped) return null;
       const groupId = scopeKeyToGroupId(opts?.scopeKey);
+      const payload = stripPrivateMagic(data64);
       if (groupId != null) {
         const clear = await qortalRequest({
           action: 'DECRYPT_QORTAL_GROUP_DATA',
-          base64: stripped,
+          base64: payload,
           groupId,
           isAdmins: false,
         });
@@ -416,7 +412,7 @@ export async function fetchNotificationByRid(
       } else {
         const clear = await qortalRequest({
           action: 'DECRYPT_DATA',
-          encryptedData: stripped,
+          encryptedData: payload,
         });
         if (!clear || typeof clear !== 'string') return null;
         data64 = clear;

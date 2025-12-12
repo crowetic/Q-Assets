@@ -1,36 +1,30 @@
 import { useCallback } from 'react';
 import type { QdnResource } from '../../../../hooks/useQdnResources';
 import type { GroupSummary } from '../../../../utils/qortalApi';
-import {
-  addPrivateMagic,
-  stripPrivateMagic,
-  PRIVATE_MAGIC_B64,
-} from '../../../../constants/qdeckIdentifiers';
+import { stripPrivateMagic, PRIVATE_MAGIC_B64 } from '../../../../constants/qdeckIdentifiers';
 import { isPrivateService } from '../viewHelpers';
-
+import { shouldUseLegacyPrivateMagic } from '../../../../utils/groupEncryption';
 declare function qortalRequest<T = any>(req: any): Promise<T>;
 
 export const hasPrivateMagicPrefix = (base64: string) => base64.startsWith(PRIVATE_MAGIC_B64);
 
 type EncryptionMode = 'group' | 'direct' | null | undefined;
 
+const usesLegacyPrivateMagic = (service?: string, mode?: EncryptionMode) =>
+  shouldUseLegacyPrivateMagic(service, mode === 'group' ? 'group' : null);
+
 export const applyPrivateMagicIfNeeded = (
   base64: string,
-  service?: string,
-  mode?: EncryptionMode
-) => {
-  if (!isPrivateService(service)) return base64;
-  if (mode !== 'group') return base64;
-  return hasPrivateMagicPrefix(base64) ? base64 : addPrivateMagic(base64);
-};
+  _service?: string,
+  _mode?: EncryptionMode
+) => base64;
 
 export const stripPrivateMagicIfNeeded = (
   base64: string,
   service?: string,
   mode?: EncryptionMode
 ) => {
-  if (!isPrivateService(service)) return base64;
-  if (mode !== 'group') return base64;
+  if (!usesLegacyPrivateMagic(service, mode)) return base64;
   return hasPrivateMagicPrefix(base64) ? stripPrivateMagic(base64) : base64;
 };
 
@@ -184,24 +178,6 @@ async function decryptPrivateBase64(
   throw new Error('Unable to decrypt this resource with your current keys.');
 }
 
-const tryDecryptLegacyBase64 = async (
-  base64: string,
-  groups: GroupSummary[]
-): Promise<string | null> => {
-  const payload = hasPrivateMagicPrefix(base64) ? stripPrivateMagic(base64) : base64;
-  try {
-    const direct = await qortalRequest({
-      action: 'DECRYPT_DATA',
-      encryptedData: payload,
-    });
-    if (direct) return direct;
-  } catch {
-    // ignore direct failure; try groups
-  }
-  const attempts = buildGroupDecryptAttempts(groups);
-  return tryGroupDecryptSequence(payload, attempts);
-};
-
 export const useResolveResourceBase64 = (groups: GroupSummary[]) =>
   useCallback(
     async (
@@ -224,18 +200,7 @@ export const useResolveResourceBase64 = (groups: GroupSummary[]) =>
         } else {
           base64 = await fetchResourceBase64(resource);
           onStep?.('fetch', 'success');
-          if (base64 && hasPrivateMagicPrefix(base64)) {
-            onStep?.('decrypt', 'active');
-            const legacy = await tryDecryptLegacyBase64(base64, groups);
-            if (!legacy) {
-              onStep?.('decrypt', 'error', 'Encrypted resource could not be decrypted.');
-              throw new Error('Encrypted resource could not be decrypted with your keys.');
-            }
-            base64 = legacy;
-            onStep?.('decrypt', 'success');
-          } else {
-            onStep?.('decrypt', 'success');
-          }
+          onStep?.('decrypt', 'success');
         }
       } catch (e: any) {
         if (!base64) onStep?.('fetch', 'error', e?.message || 'Unable to fetch resource.');

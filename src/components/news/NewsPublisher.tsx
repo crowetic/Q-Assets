@@ -13,6 +13,7 @@ import {
   Tooltip,
 } from '@mui/material';
 import { useAuth } from 'qapp-core';
+import type { Service } from 'qapp-core';
 import TiptapEditor from '../TipTapEditor';
 import PublishQueueStatus from '../common/PublishQueueStatus';
 import { prepareHtmlForPublish } from '../../utils/publicationPublisher';
@@ -25,7 +26,8 @@ import { objectToBase64 } from '../../utils/data';
 import { enqueueQdnPublishJob } from '../../state/publishQueue';
 import { PublishJobError } from '../../utils/qdnProgressivePublisher';
 import { resolveAssetPublicationById } from '../../utils/resolveAssetPublication';
-import { addPrivateMagic } from '../../constants/qdeckIdentifiers';
+import { resolveGroupPublishService } from '../../utils/groupEncryption';
+// import { addPrivateMagic } from '../../constants/qdeckIdentifiers';
 
 export default function NewsPublisher({
   assetId,
@@ -99,7 +101,7 @@ export default function NewsPublisher({
     const raw64 = await objectToBase64(payloadObj);
 
     // Encrypt for private assets
-    const service: 'DOCUMENT' | 'DOCUMENT_PRIVATE' = isPrivate ? 'DOCUMENT_PRIVATE' : 'DOCUMENT';
+    const service: Service = isPrivate ? resolveGroupPublishService('group') : ('DOCUMENT' as Service);
     let data64 = raw64;
     if (isPrivate) {
       try {
@@ -109,7 +111,7 @@ export default function NewsPublisher({
           groupId: effectiveGroupId!,
           isAdmins: false,
         });
-        data64 = addPrivateMagic(encrypted);
+        data64 = encrypted;
       } catch (e: any) {
         const msg = typeof e?.message === 'string' ? e.message : 'Failed to encrypt for group.';
         await alert(msg, 'Publish failed', { severity: 'error' });

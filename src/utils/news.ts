@@ -9,6 +9,7 @@ import { getNewsPromoExpiryDays, publisherHasPermission } from './managementMani
 import { base64ToObject, base64ToUtf8 } from './data';
 import { getCached, setCached, invalidateByPrefix } from './cache';
 import { resolveAssetPublicationById } from './resolveAssetPublication';
+import { getGroupResourceServices } from './groupEncryption';
 
 async function canPublishAnnouncement(publisher: string): Promise<boolean> {
   try {
@@ -166,8 +167,9 @@ export async function fetchAnnouncements(
     let docHits: Awaited<ReturnType<typeof searchSimpleByIdentifierPrefix>> = [];
 
     try {
+      const services = await getGroupResourceServices();
       [docHits] = await Promise.all([
-        searchSimpleByIdentifierPrefix('DOCUMENT', qaAnnouncementPrefix, limit * 2),
+        searchSimpleByIdentifierPrefix(services, qaAnnouncementPrefix, limit * 2),
       ]);
     } catch (e) {
       console.warn('Failed to fetch announcement list', e);
@@ -232,7 +234,8 @@ export async function fetchLatestAssetNews(
         : null;
     let hits: Awaited<ReturnType<typeof searchSimpleByIdentifierPrefix>> = [];
     try {
-      hits = await searchSimpleByIdentifierPrefix('DOCUMENT', assetNewsGlobalPrefix, limit);
+      const services = await getGroupResourceServices();
+      hits = await searchSimpleByIdentifierPrefix(services, assetNewsGlobalPrefix, limit);
     } catch (e) {
       console.warn('Failed to fetch asset news list', e);
       return [];
