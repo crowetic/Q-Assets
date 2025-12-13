@@ -2,7 +2,11 @@ import { useCallback, useEffect } from 'react';
 import { usePublish } from 'qapp-core';
 import type { Service } from 'qapp-core';
 import { useAlert } from '../components/alerts';
+import { ENCRYPTION_MODE_TAG_PREFIX, ENC_METADATA_TAG_PREFIX } from './qdnEncryption';
+import { isPrivateService } from './qdnServices';
 // import { PRIVATE_MAGIC_B64 } from '../constants/qdeckIdentifiers';
+
+declare function qortalRequest<T = any>(request: any): Promise<T>;
 
 type PublishableResource = {
   name: string;
@@ -33,11 +37,20 @@ const registerPublishExecutor = (executor: PublishExecutor | null) => {
   activePublishExecutor = executor;
 };
 
+const fallbackPublishExecutor: PublishExecutor = async (resources) => {
+  if (!resources.length) return;
+  console.warn(
+    '[useQdnBatchPublisher] publish executor not initialized, falling back to direct PUBLISH_MULTIPLE_QDN_RESOURCES'
+  );
+  await qortalRequest({
+    action: 'PUBLISH_MULTIPLE_QDN_RESOURCES',
+    resources,
+  });
+};
+
 const getPublishExecutor = (): PublishExecutor => {
   if (!activePublishExecutor) {
-    throw new Error(
-      'QDN publishing is not initialized. Mount useQdnBatchPublisher (which wires qapp-core usePublish) before publishing.'
-    );
+    return fallbackPublishExecutor;
   }
   return activePublishExecutor;
 };
@@ -45,6 +58,7 @@ const getPublishExecutor = (): PublishExecutor => {
 const KB = 1024;
 const MB = KB * KB;
 const GB = MB * 1024;
+const MAX_TAGS = 5;
 
 // QDN service limits (bytes). Private variants fall back to half of their public counterpart.
 const BASE_SERVICE_LIMITS: Partial<Record<Service, number>> = {
@@ -153,39 +167,233 @@ const validateResources = (resources: BatchPublishResource[]) => {
   });
 };
 
+const normalizeTagList = (tags?: string[]) =>
+  Array.isArray(tags)
+    ? tags
+        .map((tag) => (typeof tag === 'string' ? tag.trim() : ''))
+        .filter((tag) => Boolean(tag && tag.length))
+    : [];
+
+const TAG_PRIORITY_RULES: Array<(tag: string) => boolean> = [
+  (tag) => tag.startsWith('qassets-'),
+  (tag) => tag.startsWith('fs-path:') || tag.startsWith('fs-name:') || tag.startsWith('fs-folder:'),
+  (tag) => tag.startsWith('share:'),
+  (tag) => tag.startsWith(ENCRYPTION_MODE_TAG_PREFIX),
+  (tag) => tag.startsWith(ENC_METADATA_TAG_PREFIX),
+];
+
+const splitTagsByPriority = (tags?: string[]) => {
+  const normalized = normalizeTagList(tags);
+  const kept: string[] = [];
+  const used = new Array(normalized.length).fill(false);
+  const addIndex = (idx: number) => {
+    if (kept.length >= MAX_TAGS) return;
+    kept.push(normalized[idx]);
+    used[idx] = true;
+  };
+
+  TAG_PRIORITY_RULES.forEach((rule) => {
+    if (kept.length >= MAX_TAGS) return;
+    normalized.forEach((tag, idx) => {
+      if (kept.length >= MAX_TAGS || used[idx]) return;
+      if (rule(tag)) addIndex(idx);
+    });
+  });
+
+  if (kept.length < MAX_TAGS) {
+    normalized.forEach((_, idx) => {
+      if (kept.length >= MAX_TAGS || used[idx]) return;
+      addIndex(idx);
+    });
+  }
+
+  const overflow = normalized.filter((_, idx) => !used[idx]);
+  return { kept, overflow };
+};
+
+const stringifyExtra = (label: string, value: unknown) => {
+  if (value == null) return '';
+  try {
+    return `${label}:\n${JSON.stringify(value, null, 2)}`;
+  } catch {
+    return `${label}: ${String(value)}`;
+  }
+};
+
+const sanitizeResource = (resource: BatchPublishResource): PublishableResource => {
+  const {
+    name,
+    service,
+    identifier,
+    base64,
+    title,
+    description,
+    tags,
+    category,
+    filename,
+    disableEncrypt,
+    metadata,
+    privateMode,
+    groupId,
+    isAdmins,
+    recipients,
+  } = resource;
+
+  const { kept: limitedTags, overflow: extraTags } = splitTagsByPriority(tags);
+  const extraSegments: string[] = [];
+  if (metadata && Object.keys(metadata).length) {
+    extraSegments.push(stringifyExtra('Metadata', metadata));
+  }
+  if (privateMode) extraSegments.push(`Private mode: ${privateMode}`);
+  if (typeof groupId !== 'undefined') {
+    extraSegments.push(`Group ID: ${groupId}`);
+  }
+  if (typeof isAdmins !== 'undefined') {
+    extraSegments.push(`Admins only: ${isAdmins ? 'yes' : 'no'}`);
+  }
+  if (recipients && recipients.length) {
+    extraSegments.push(stringifyExtra('Recipients', recipients));
+  }
+  if (extraTags.length) {
+    extraSegments.push(`Additional tags: ${extraTags.join(', ')}`);
+  }
+
+  const combinedDescription = [description?.trim(), extraSegments.join('\n')?.trim()]
+    .filter(Boolean)
+    .join('\n\n');
+
+  return {
+    name,
+    service,
+    identifier,
+    base64,
+    title,
+    description: combinedDescription || undefined,
+    tags: limitedTags.length ? limitedTags : undefined,
+    category,
+    filename,
+    disableEncrypt,
+  };
+};
+
+const shouldUseDirectPublish = (
+  resource: BatchPublishResource,
+  sanitized: PublishableResource
+): boolean => {
+  console.log(
+    'we hit shouldUseDirectPublish function',
+    resource.service,
+    'sanitized',
+    resource.service
+  );
+  if (resource.privateMode === 'direct') return true;
+  if (isPrivateService(resource.service) || isPrivateService(sanitized.service)) return true;
+  if (resource.privateMode === 'group') return false;
+  if (sanitized.disableEncrypt && sanitized.service && isPrivateService(sanitized.service)) {
+    return true;
+  }
+  return false;
+};
+
+const summarizeResourceForLog = (resource: PublishableResource) => ({
+  name: resource.name,
+  service: resource.service,
+  identifier: resource.identifier,
+  disableEncrypt: Boolean(resource.disableEncrypt),
+  tagCount: resource.tags?.length ?? 0,
+  hasTitle: Boolean(resource.title),
+  hasDescription: Boolean(resource.description),
+  bytes: estimateBase64Bytes(resource.base64),
+});
+
 export async function publishQdnResources(resources: BatchPublishResource[]): Promise<void> {
   if (!resources.length) return;
 
   validateResources(resources);
 
-  const publishable: PublishableResource[] = resources.map(
-    ({
-      name,
-      service,
-      identifier,
-      base64,
-      title,
-      description,
-      tags,
-      category,
-      filename,
-      disableEncrypt,
-    }) => ({
-      name,
-      service,
-      identifier,
-      base64,
-      title,
-      description,
-      tags,
-      category,
-      filename,
-      disableEncrypt,
-    })
-  );
+  const publishable: { original: BatchPublishResource; sanitized: PublishableResource }[] =
+    resources.map((res) => ({
+      original: res,
+      sanitized: sanitizeResource(res),
+    }));
+
+  const directResources: PublishableResource[] = [];
+  const regularResources: PublishableResource[] = [];
+
+  publishable.forEach(({ original, sanitized }) => {
+    if (shouldUseDirectPublish(original, sanitized)) directResources.push(sanitized);
+    else regularResources.push(sanitized);
+  });
+
+  if (directResources.length >= 4) {
+    try {
+      await qortalRequest({
+        action: 'PUBLISH_MULTIPLE_QDN_RESOURCES',
+        resources: directResources,
+      });
+    } catch (error) {
+      console.error('[useQdnBatchPublisher] direct publish failed', {
+        error,
+        resources: directResources.map(summarizeResourceForLog),
+      });
+      throw error;
+    }
+  } else {
+    try {
+      await Promise.all(
+        directResources.map(
+          async (res) =>
+            await qortalRequest({
+              action: 'PUBLISH_QDN_RESOURCE',
+              name: res.name,
+              service: res.service,
+              identifier: res.identifier,
+              base64: res.base64,
+              title: res.title,
+              description: res.description,
+              tags: res.tags,
+              category: res.category,
+              filename: res.filename,
+              // disableEncrypt: res.disableEncrypt
+            })
+        )
+      );
+    } catch (error) {
+      console.error('[useQdnBatchPublisher] direct publish failed', {
+        error,
+        resources: directResources.map(summarizeResourceForLog),
+      });
+      throw error;
+    }
+  }
 
   const executor = getPublishExecutor();
-  await executor(publishable);
+  if (regularResources.length) {
+    try {
+      await executor(regularResources);
+    } catch (err) {
+      console.error('[useQdnBatchPublisher] executor publish failed', {
+        error: err,
+        resources: regularResources.map(summarizeResourceForLog),
+      });
+      console.warn(
+        'usePublish publishMultipleResources failed, falling back to direct publish',
+        err
+      );
+      try {
+        await qortalRequest({
+          action: 'PUBLISH_MULTIPLE_QDN_RESOURCES',
+          resources: regularResources,
+        });
+      } catch (fallbackErr) {
+        console.error('[useQdnBatchPublisher] fallback publish failed', {
+          error: fallbackErr,
+          resources: regularResources.map(summarizeResourceForLog),
+        });
+        throw fallbackErr;
+      }
+    }
+  }
 }
 
 export function useQdnBatchPublisher() {

@@ -30,29 +30,36 @@ class Semaphore {
 
 const semaphore = new Semaphore(1);
 
-export const fileToBase64 = (file: File): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader(); // Create a new instance
-    semaphore.acquire();
-    reader.readAsDataURL(file);
-    reader.onload = () => {
-      const dataUrl = reader.result;
-      semaphore.release();
-      if (typeof dataUrl === 'string') {
-        resolve(dataUrl.split(',')[1]);
-      } else {
-        reject(new Error('Invalid data URL'));
-      }
-      reader.onload = null; // Clear the handler
-      reader.onerror = null; // Clear the handle
-    };
-    reader.onerror = (error) => {
-      semaphore.release();
-      reject(error);
-      reader.onload = null; // Clear the handler
-      reader.onerror = null; // Clear the handle
-    };
+export const fileToBase64 = async (file: File): Promise<string> => {
+  console.log('[fileToBase64] called with:', {
+    name: file?.name,
+    size: file?.size,
+    type: file?.type,
+    ctor: file?.constructor?.name,
   });
+
+  await semaphore.acquire();
+  console.log('[fileToBase64] semaphore acquired');
+
+  try {
+    const buffer = await file.arrayBuffer();
+    console.log('[fileToBase64] buffer.byteLength:', buffer.byteLength);
+
+    const uint8 = new Uint8Array(buffer);
+    console.log('[fileToBase64] uint8.length:', uint8.length);
+
+    const base64 = uint8ArrayToBase64(uint8);
+    console.log('[fileToBase64] base64.length:', base64.length);
+
+    return base64;
+  } catch (error) {
+    console.error('[fileToBase64] error:', error);
+    throw error;
+  } finally {
+    console.log('[fileToBase64] semaphore released');
+    semaphore.release();
+  }
+};
 
 export function objectToBase64(obj: object): Promise<string> {
   // Step 1: Convert the object to a JSON string

@@ -269,6 +269,8 @@ export async function publishNotification(args: {
       base64: finalNotif64,
       metadata: notifMetadata,
       tags: notifTags,
+      disableEncrypt: Boolean(encryption),
+      privateMode: encryption ? 'group' : undefined,
     },
   ];
 
@@ -433,18 +435,18 @@ export async function sendEncryptedNotifPing(opts: {
   groupPublicKey: string; // if you have it available
 }) {
   const plaintext = await objectToBase64(opts.ping);
-  const { encryptedDataBase64 } = await qortalRequest({
-    action: 'ENCRYPT_QORTAL_GROUP_DATA',
-    base64: plaintext,
-    groupId: opts.groupId,
-    isAdmins: false,
-  });
+  // const { encryptedDataBase64 } = await qortalRequest({
+  //   action: 'ENCRYPT_QORTAL_GROUP_DATA',
+  //   base64: plaintext,
+  //   groupId: opts.groupId,
+  //   isAdmins: false,
+  // });
 
   return sendChatMessage({
     groupId: opts.groupId,
     fullContent: {
       type: 'encrypted',
-      payload64: encryptedDataBase64,
+      payload64: plaintext,
       schema: 'qassets.notif.v1',
     },
   });

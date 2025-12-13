@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import type { QdnResource } from '../../../../hooks/useQdnResources';
 import type { GroupSummary } from '../../../../utils/qortalApi';
 import { stripPrivateMagic, PRIVATE_MAGIC_B64 } from '../../../../constants/qdeckIdentifiers';
-import { isPrivateService } from '../viewHelpers';
+import { getEncryptionInfo } from '../../../../utils/qdnEncryption';
 import { shouldUseLegacyPrivateMagic } from '../../../../utils/groupEncryption';
 declare function qortalRequest<T = any>(req: any): Promise<T>;
 
@@ -14,9 +14,9 @@ const usesLegacyPrivateMagic = (service?: string, mode?: EncryptionMode) =>
   shouldUseLegacyPrivateMagic(service, mode === 'group' ? 'group' : null);
 
 export const applyPrivateMagicIfNeeded = (
-  base64: string,
-  _service?: string,
-  _mode?: EncryptionMode
+  base64: string
+  // _service?: string,
+  // _mode?: EncryptionMode
 ) => base64;
 
 export const stripPrivateMagicIfNeeded = (
@@ -120,26 +120,10 @@ async function decryptPrivateBase64(
   encryptedWithMagic: string,
   groups: GroupSummary[]
 ): Promise<string> {
-  const meta = (resource.metadata || {}) as any;
-  const encryptedMeta = meta.encrypted;
-  const shareTarget = meta.qassetsShareTarget;
-
-  let mode: 'group' | 'direct' | null = null;
-  let groupId: number | null = null;
-  let adminsOnly = false;
-
-  if (encryptedMeta?.mode === 'group') {
-    mode = 'group';
-    groupId = Number(encryptedMeta.groupId);
-    adminsOnly = !!encryptedMeta.adminsOnly;
-  } else if (encryptedMeta?.mode === 'direct') {
-    mode = 'direct';
-  } else if (shareTarget?.type === 'group') {
-    mode = 'group';
-    groupId = Number(shareTarget.groupId);
-  } else if (shareTarget?.type === 'direct') {
-    mode = 'direct';
-  }
+  const info = getEncryptionInfo(resource);
+  const mode = info.mode;
+  const groupId = info.groupId ?? null;
+  const adminsOnly = !!info.adminsOnly;
 
   const encryptedPayload = stripPrivateMagicIfNeeded(encryptedWithMagic, resource.service, mode);
 
@@ -191,7 +175,9 @@ export const useResolveResourceBase64 = (groups: GroupSummary[]) =>
       let base64: string | null = null;
       try {
         onStep?.('fetch', 'active');
-        if (isPrivateService(resource.service)) {
+        const info = getEncryptionInfo(resource);
+        const treatAsEncrypted = info.mode !== null || info.isPrivate;
+        if (treatAsEncrypted) {
           const encrypted = await fetchPrivateBase64(resource);
           onStep?.('fetch', 'success');
           onStep?.('decrypt', 'active');

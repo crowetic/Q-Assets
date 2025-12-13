@@ -6,7 +6,7 @@ import type {
   StructuredEntry,
 } from '../pages/manage/data/DataExplorer.types';
 import { filterUserTags } from './qdnTags';
-import { isPrivateService } from './qdnServices';
+import { resourceIsPrivate } from './qdnEncryption';
 
 export const sanitizeIdentifier = (value: string) => {
   if (!value) return '';
@@ -57,7 +57,7 @@ export const matchesSearch = (resource: QdnResource, query: string) => {
 };
 
 export const stripStructuredMetadata = (
-  resource: QdnResource,
+  resource: QdnResource
 ): { metadata: Record<string, any>; tags: string[] } => {
   const metadata = { ...(resource.metadata || {}) };
   const filteredTags = filterUserTags((metadata as any).tags);
@@ -101,7 +101,7 @@ export const inferStructuredMeta = (resource: QdnResource): StructuredEntry | nu
     resource,
     folderSegments,
     fileName: fallbackName,
-    isPrivate: isPrivateService(resource.service),
+    isPrivate: resourceIsPrivate(resource),
   };
 };
 
@@ -110,7 +110,7 @@ export const inferFolderDescriptor = (resource: QdnResource): FolderDescriptor |
   const folderMeta = (md as any).qassetsFsFolder;
   if (folderMeta) {
     const segments = normalizePathSegments(
-      folderMeta.path || folderMeta.folderPath || folderMeta.name || '',
+      folderMeta.path || folderMeta.folderPath || folderMeta.name || ''
     );
     const name =
       folderMeta.name ||
@@ -147,7 +147,7 @@ export const dedupeFolderDescriptors = (descriptors: FolderDescriptor[]): Folder
 
 export const buildFolderMap = (
   entries: StructuredEntry[],
-  folders: FolderDescriptor[] = [],
+  folders: FolderDescriptor[] = []
 ): Map<string, FolderNode> => {
   const map = new Map<string, FolderNode>();
 

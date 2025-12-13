@@ -77,9 +77,9 @@ export default function TiptapEditor({
       },
     },
   });
-  const linkExt = editor?.extensionManager.extensions.find((e) => e.name === 'link');
-  console.log('link ext options:', linkExt?.options);
-  console.log('schema link attrs:', editor?.schema.marks.link?.spec.attrs);
+  // const linkExt = editor?.extensionManager.extensions.find((e) => e.name === 'link');
+  // console.log('link ext options:', linkExt?.options);
+  // console.log('schema link attrs:', editor?.schema.marks.link?.spec.attrs);
 
   // Inject theme color CSS once (or when theme changes)
   useEffect(() => {

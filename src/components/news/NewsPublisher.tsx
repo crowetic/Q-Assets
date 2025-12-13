@@ -15,7 +15,6 @@ import {
 import { useAuth } from 'qapp-core';
 import type { Service } from 'qapp-core';
 import TiptapEditor from '../TipTapEditor';
-import PublishQueueStatus from '../common/PublishQueueStatus';
 import { prepareHtmlForPublish } from '../../utils/publicationPublisher';
 import { assetNewsItemId } from '../../constants/qdnConstants';
 import { isNameAdminOfGroupId } from '../../utils/access';
@@ -23,10 +22,10 @@ import { uniqueId6 } from '../../utils/ids';
 import { useAlert } from '../alerts';
 import { publishScopedNotification } from '../../utils/notificationPublisher';
 import { objectToBase64 } from '../../utils/data';
-import { enqueueQdnPublishJob } from '../../state/publishQueue';
-import { PublishJobError } from '../../utils/qdnProgressivePublisher';
 import { resolveAssetPublicationById } from '../../utils/resolveAssetPublication';
 import { resolveGroupPublishService } from '../../utils/groupEncryption';
+import { useQdnBatchPublisher } from '../../utils/useQdnBatchPublisher';
+import PublishQueueStatus from '../common/PublishQueueStatus';
 // import { addPrivateMagic } from '../../constants/qdeckIdentifiers';
 
 export default function NewsPublisher({
@@ -53,6 +52,7 @@ export default function NewsPublisher({
     typeof primaryGroupId === 'number' && Number.isFinite(primaryGroupId)
       ? Number(primaryGroupId)
       : null;
+  const { publish } = useQdnBatchPublisher();
 
   const canPublish = async (groupId?: number | null) => {
     if (!userName) authenticateUser();
@@ -123,19 +123,16 @@ export default function NewsPublisher({
 
     setPublishing(true);
     try {
-      const queued = enqueueQdnPublishJob({
-        label: 'Asset news publish',
-        resources: [
-          {
-            name: userName as string,
-            service,
-            identifier: newsItemId,
-            base64,
-          },
-        ],
-      });
-      if (!queued) throw new Error('Unable to queue news publish');
-      await queued.completion;
+      await publish([
+        {
+          name: userName as string,
+          service,
+          identifier: newsItemId,
+          base64,
+          // disableEncrypt: isPrivate,
+          privateMode: isPrivate ? 'group' : undefined,
+        },
+      ]);
 
       const assetLink = `qortal://APP/Q-Assets/assets/${assetId}`;
       const links = [
@@ -181,13 +178,9 @@ export default function NewsPublisher({
       setOpen(false);
       onPublished?.();
     } catch (e: any) {
-      if (e instanceof PublishJobError) {
-        await alert(e.message || 'News publishing cancelled.');
-      } else {
-        const message =
-          typeof e?.message === 'string' ? e.message : 'Failed to publish news article.';
-        await alert(message, 'Publish failed', { severity: 'error' });
-      }
+      const message =
+        typeof e?.message === 'string' ? e.message : 'Failed to publish news article.';
+      await alert(message, 'Publish failed', { severity: 'error' });
     } finally {
       setPublishing(false);
     }

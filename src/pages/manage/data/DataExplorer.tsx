@@ -65,9 +65,9 @@ import {
 import { buildQassetsFileIdentifier, QASSETS_FILE_ID_MAX } from '../../../constants/qdnConstants';
 import {
   serviceLabels,
-  isPrivateService,
   ensurePrivateService,
   ensurePublicService,
+  resolveServiceForEncryptionMode,
   formatBytes,
   formatDate,
   getResourceLabel,
@@ -78,6 +78,11 @@ import {
 } from './viewHelpers';
 import { shouldUseLegacyPrivateMagic } from '../../../utils/groupEncryption';
 import { filterUserTags } from '../../../utils/qdnTags';
+import {
+  buildEncryptionTagSet,
+  getEncryptionInfo,
+  resourceIsPrivate,
+} from '../../../utils/qdnEncryption';
 import type {
   FolderDescriptor,
   FolderNode,
@@ -491,26 +496,10 @@ async function decryptPrivateBase64(
   encryptedWithMagic: string,
   groups: GroupSummary[]
 ): Promise<string> {
-  const meta = (resource.metadata || {}) as any;
-  const encryptedMeta = meta.encrypted;
-  const shareTarget = meta.qassetsShareTarget;
-
-  let mode: 'group' | 'direct' | null = null;
-  let groupId: number | null = null;
-  let adminsOnly = false;
-
-  if (encryptedMeta?.mode === 'group') {
-    mode = 'group';
-    groupId = Number(encryptedMeta.groupId);
-    adminsOnly = !!encryptedMeta.adminsOnly;
-  } else if (encryptedMeta?.mode === 'direct') {
-    mode = 'direct';
-  } else if (shareTarget?.type === 'group') {
-    mode = 'group';
-    groupId = Number(shareTarget.groupId);
-  } else if (shareTarget?.type === 'direct') {
-    mode = 'direct';
-  }
+  const info = getEncryptionInfo(resource);
+  const mode = info.mode;
+  const groupId = info.groupId ?? null;
+  const adminsOnly = !!info.adminsOnly;
 
   const encryptedPayload = stripPrivateMagicIfNeeded(encryptedWithMagic, resource.service, mode);
 
@@ -607,7 +596,7 @@ const inferStructuredMeta = (resource: QdnResource): StructuredEntry | null => {
     resource,
     folderSegments,
     fileName: fallbackName,
-    isPrivate: isPrivateService(resource.service),
+    isPrivate: resourceIsPrivate(resource),
   };
 };
 
@@ -747,7 +736,9 @@ const useResolveResourceBase64 = (groups: GroupSummary[]) =>
       let base64: string | null = null;
       try {
         onStep?.('fetch', 'active');
-        if (isPrivateService(resource.service)) {
+        const encryptionInfo = getEncryptionInfo(resource);
+        const treatAsEncrypted = encryptionInfo.mode !== null || encryptionInfo.isPrivate;
+        if (treatAsEncrypted) {
           const encrypted = await fetchPrivateBase64(resource);
           onStep?.('fetch', 'success');
           onStep?.('decrypt', 'active');
@@ -960,10 +951,21 @@ export default function DataExplorer() {
       await publishResources(chunk);
     }
   }, [pendingPublishRequests, publishResources, chunkResources]);
+  useEffect(() => {
+    if (publishMode === 'immediate' && pendingPublishRequests.length) {
+      flushPendingPublishRequests().catch((err) =>
+        console.warn('Failed to flush queued resources on mode switch', err)
+      );
+    }
+  }, [publishMode, pendingPublishRequests.length, flushPendingPublishRequests]);
   const [manifestDoc, setManifestDoc] = useState<ManifestDoc | null>(null);
   const [manifestDirty, setManifestDirty] = useState(false);
   const [manifestPublishing, setManifestPublishing] = useState(false);
   const [manifestError, setManifestError] = useState<string | null>(null);
+  const hasQueuedChanges = useMemo(
+    () => manifestDirty || pendingPublishRequests.length > 0,
+    [manifestDirty, pendingPublishRequests.length]
+  );
   const [manifestRefreshBlockedUntil, setManifestRefreshBlockedUntil] = useState(0);
   const [manifestLoadState, setManifestLoadState] = useState<ManifestLoadState>('idle');
   const [ignoreManifestCache, setIgnoreManifestCache] = useState(false);
@@ -1230,7 +1232,11 @@ export default function DataExplorer() {
 
   const fetchManifestDoc = useCallback(async (): Promise<ManifestDoc | null> => {
     if (!activeName) return null;
-    const fetchAndMaybeDecrypt = async (service: Service, decrypt: boolean) => {
+    const fetchAndMaybeDecrypt = async (
+      service: Service,
+      decryptMode: 'direct' | null,
+      fallbackToPlain = false
+    ) => {
       const res = await qortalRequest({
         action: 'FETCH_QDN_RESOURCE',
         name: activeName,
@@ -1240,22 +1246,37 @@ export default function DataExplorer() {
       });
       const data64 = normalizeData64(res);
       if (!data64) return null;
-      if (!decrypt) return JSON.parse(base64ToUtf8(data64));
-      const payload = stripPrivateMagicIfNeeded(data64, service, 'direct');
-      const clear = await qortalRequest({
-        action: 'DECRYPT_DATA',
-        encryptedData: payload,
-      });
-      if (!clear) throw new Error('Unable to decrypt manifest.');
-      return JSON.parse(base64ToUtf8(clear));
+      if (!decryptMode) return JSON.parse(base64ToUtf8(data64));
+      const payload = stripPrivateMagicIfNeeded(data64, service, decryptMode);
+      try {
+        const clear = await qortalRequest({
+          action: 'DECRYPT_DATA',
+          encryptedData: payload,
+        });
+        if (!clear) throw new Error('Unable to decrypt manifest.');
+        return JSON.parse(base64ToUtf8(clear));
+      } catch (error) {
+        if (fallbackToPlain) {
+          try {
+            return JSON.parse(base64ToUtf8(data64));
+          } catch {
+            throw error;
+          }
+        }
+        throw error;
+      }
     };
     try {
-      return await fetchAndMaybeDecrypt(MANIFEST_SERVICE as Service, true);
+      return await fetchAndMaybeDecrypt(MANIFEST_SERVICE as Service, 'direct', true);
     } catch {
       try {
-        return await fetchAndMaybeDecrypt('DOCUMENT' as Service, false);
+        return await fetchAndMaybeDecrypt(ensurePrivateService('DOCUMENT_PRIVATE'), 'direct', true);
       } catch {
-        return null;
+        try {
+          return await fetchAndMaybeDecrypt('DOCUMENT' as Service, null);
+        } catch {
+          return null;
+        }
       }
     }
   }, [activeName]);
@@ -1283,6 +1304,15 @@ export default function DataExplorer() {
       applyManifestState(null, true, 'missing');
     }
   }, [activeName, fetchManifestDoc, applyManifestState, manifestDoc, manifestRefreshBlockedUntil]);
+
+  const clearQueuedChanges = useCallback(async () => {
+    if (!hasQueuedChanges) return;
+    setPendingPublishRequests([]);
+    setManifestDirty(false);
+    setManifestError(null);
+    setSystemSaveStatus('Cleared queued changes.');
+    await refreshManifestDoc();
+  }, [hasQueuedChanges, refreshManifestDoc]);
 
   useEffect(() => {
     if (!activeName) {
@@ -1437,7 +1467,7 @@ export default function DataExplorer() {
             resource.metadata?.title ||
             resource.identifier ||
             `resource-${uniqueId6()}`,
-          isPrivate: isPrivateService(resource.service),
+          isPrivate: resourceIsPrivate(resource),
         } as StructuredEntry;
       })
       .filter((entry): entry is StructuredEntry => Boolean(entry));
@@ -2060,54 +2090,77 @@ export default function DataExplorer() {
           targets.length === 1
             ? trimmedName
             : entryMeta?.fileName || resource.metadata?.title || resource.identifier;
-        const rawBase64 = await (isPrivateService(resource.service)
+        const encryptionInfo = getEncryptionInfo(resource);
+        const treatAsEncrypted = encryptionInfo.mode !== null || encryptionInfo.isPrivate;
+        const rawBase64 = await (treatAsEncrypted
           ? fetchPrivateBase64(resource)
           : fetchResourceBase64(resource));
         if (!rawBase64) throw new Error('Unable to fetch resource data for saving.');
         const targetPath = normalizedFolder || entryMeta?.folderSegments.join('/') || '';
+        const normalizedService = resolveServiceForEncryptionMode(
+          resource.service,
+          encryptionInfo.mode
+        );
         const identifier = buildQassetsFileIdentifier(
-          resource.service as Service,
+          normalizedService as Service,
           activeName || resource.name
         );
         const existingMetadata = { ...(resource.metadata || {}) };
         const existingTags = Array.isArray((existingMetadata as any).tags)
           ? ((existingMetadata as any).tags as string[])
           : [];
+        const { metadata: sanitizedMetadata, tags: sanitizedTags } =
+          stripStructuredMetadata(resource);
         const tagsSet = new Set<string>(
-          existingTags.filter((tag): tag is string => typeof tag === 'string' && tag.length > 0)
+          (treatAsEncrypted ? sanitizedTags : existingTags).filter(
+            (tag): tag is string => typeof tag === 'string' && tag.length > 0
+          )
         );
-        tagsSet.add('qassets-fs');
-        if (targetPath) tagsSet.add(`fs-path:${targetPath}`);
-        tagsSet.add(`fs-name:${targetName}`);
-        if (isPrivateService(resource.service)) tagsSet.add('private');
-        if (resource.created) tagsSet.add(`fs-source-created:${resource.created}`);
+        const includeFullFsMetadata = !treatAsEncrypted;
+        if (includeFullFsMetadata) {
+          tagsSet.add('qassets-fs');
+          if (targetPath) tagsSet.add(`fs-path:${targetPath}`);
+          tagsSet.add(`fs-name:${targetName}`);
+          if (resource.created) tagsSet.add(`fs-source-created:${resource.created}`);
+        }
+        if (treatAsEncrypted) tagsSet.add('private');
         const tags = Array.from(tagsSet);
         const metadata: Record<string, any> = {
-          ...existingMetadata,
+          ...(treatAsEncrypted ? sanitizedMetadata : existingMetadata),
           tags,
-          qassetsFs: {
+        };
+        if (includeFullFsMetadata) {
+          metadata.qassetsFs = {
             path: targetPath,
             fileName: targetName,
             version: 1,
-          },
-          qassetsSource: {
+          };
+          metadata.qassetsSource = {
             name: resource.name,
             service: resource.service,
             identifier: resource.identifier,
             created: resource.created,
             savedAt: Date.now(),
-          },
-          title: (existingMetadata as any)?.title || targetName,
-        };
+          };
+          metadata.title = (existingMetadata as any)?.title || targetName;
+        } else {
+          metadata.title = (metadata as any).title || 'Encrypted resource';
+        }
+        const description = treatAsEncrypted
+          ? 'Encrypted resource published via Q-Assets Data Explorer.'
+          : saveToFilesDialog.description || resource.metadata?.description;
+
         publishRequests.push({
           name: activeName,
-          service: resource.service as Service,
+          service: normalizedService,
           identifier,
           base64: rawBase64,
-          title: resource.metadata?.title || targetName,
-          description: saveToFilesDialog.description || resource.metadata?.description,
+          title: metadata.title,
+          description,
           tags,
           metadata,
+          // disableEncrypt: treatAsEncrypted,
+          privateMode: encryptionInfo.mode ?? undefined,
         });
       }
       setSaveToFilesDialog({
@@ -2249,8 +2302,8 @@ export default function DataExplorer() {
     setPublishStatus(null);
   };
 
-  const handlePublishClose = () => {
-    if (publishing) return;
+  const handlePublishClose = (options?: { force?: boolean }) => {
+    if (publishing && !options?.force) return;
     const defaults = createPublishDefaults(
       activeSection === 'files' ? activeFilePath : '',
       activeSection === 'files'
@@ -2267,6 +2320,7 @@ export default function DataExplorer() {
     groupAdminsOnly,
     directRecipients,
   }: PublishSubmitPayload) => {
+    console.log('files', files);
     if (!activeName) {
       setPublishStatus('Select a Qortal name before publishing.');
       return;
@@ -2281,11 +2335,14 @@ export default function DataExplorer() {
     setPublishing(true);
     setPublishStatus(null);
     const baseId = sanitizeIdentifier(form.identifier || '');
+    let success = false;
     try {
       const publishRequests: BatchPublishResource[] = [];
       for (let i = 0; i < files.length; i += 1) {
         const file = files[i];
-        const data64 = await fileToBase64(file);
+        console.log('incoming file[i]', file);
+        const file64 = await fileToBase64(file);
+        console.log('base64 from file (first 100):', file64.slice(0, 100));
         const title = form.title || file.name;
         const description = form.description || `Published via Q-Assets Data Explorer`;
         let tags: string[] = [];
@@ -2305,77 +2362,79 @@ export default function DataExplorer() {
         }
 
         const applyEncryption = async (
-          base64: string
+          file64: string
         ): Promise<{
-          data64: string;
-          service: string;
-          metadataExtra: Record<string, any>;
+          base64: string;
+          service: Service;
           tagExtra: string[];
+          privateMode?: 'group' | 'direct';
         }> => {
-          if (encryptionMode === 'none' && !form.service.includes('PRIVATE')) {
+          if (encryptionMode === 'none') {
             return {
-              data64: base64,
+              base64: file64,
               service: form.service,
-              metadataExtra: {},
               tagExtra: [],
             };
           }
+          const publisherAddress = await resolvePublisherAddress();
           if (encryptionMode === 'group') {
             if (!groupId) throw new Error('Select a group for encryption.');
-            const enc = await qortalRequest({
+            const enc64Group = await qortalRequest({
               action: 'ENCRYPT_QORTAL_GROUP_DATA',
-              base64,
+              base64: file64,
               groupId,
               isAdmins: groupAdminsOnly,
             });
-            const finalService = ensurePublicService(form.service);
-            const privData64 = applyPrivateMagicIfNeeded(enc);
+            // const privData64 = applyPrivateMagicIfNeeded(enc);
+            const tagExtra = buildEncryptionTagSet({
+              mode: 'group',
+              publisher: publisherAddress,
+              groupId,
+              adminsOnly: groupAdminsOnly,
+            });
             return {
-              data64: privData64,
-              service: finalService,
-              metadataExtra: {
-                encrypted: {
-                  mode: 'group',
-                  groupId,
-                  adminsOnly: groupAdminsOnly,
-                },
-              },
-              tagExtra: ['private', 'encrypted:group'],
+              base64: enc64Group,
+              service: resolveServiceForEncryptionMode(form.service, 'group'),
+              tagExtra,
+              privateMode: 'group',
             };
           }
           const recipients = parseRecipientList(directRecipients);
-          if (!recipients.length) alert('no recipients, files will be encrypted for you only.');
-          const addr = await resolvePublisherAddress();
+          if (!recipients.length) {
+            alert('No recipients specified. Files will be encrypted for you only.');
+          }
           const { publicKeys } = await collectRecipientPublicKeys({
             usersAllowed: recipients,
             includeSelf: true,
-            me: { name: activeName || authName || undefined, address: addr },
+            me: { name: activeName || authName || undefined, address: publisherAddress },
           });
           if (!publicKeys.length) throw new Error('No recipient public keys resolved.');
-          const enc = await qortalRequest({
+          const enc64Direct = await qortalRequest({
             action: 'ENCRYPT_DATA',
-            base64,
+            base64: file64,
             publicKeys,
           });
-          const finalService = ensurePrivateService(form.service);
+          const tagExtra = buildEncryptionTagSet({
+            mode: 'direct',
+            publisher: publisherAddress,
+            userCount: publicKeys.length || recipients.length || 1,
+          });
           return {
-            data64: applyPrivateMagicIfNeeded(enc),
-            service: finalService,
-            metadataExtra: { encrypted: { mode: 'direct', recipients } },
-            tagExtra: ['private', 'encrypted:direct'],
+            base64: enc64Direct,
+            service: resolveServiceForEncryptionMode(form.service, 'direct'),
+            tagExtra,
+            privateMode: 'direct',
           };
         };
 
         const {
-          data64: finalData64,
+          base64: finalData64,
           service: finalService,
-          metadataExtra,
           tagExtra,
-        } = await applyEncryption(data64);
-        metadata = { ...metadata, ...metadataExtra };
-        tags = tags.concat(tagExtra);
-        if (isPrivateService(finalService) && !tagExtra.includes('private')) {
-          tags.push('private');
+          privateMode,
+        } = await applyEncryption(file64);
+        if (tagExtra.length) {
+          tags = tagExtra.concat(tags);
         }
         let identifier: string;
         if (baseId) {
@@ -2390,23 +2449,28 @@ export default function DataExplorer() {
 
         publishRequests.push({
           name: activeName,
-          service: finalService as Service,
+          service: finalService,
           identifier,
           base64: finalData64,
           title,
           description,
           tags,
           metadata,
+          // disableEncrypt: encryptionMode !== 'none',
+          privateMode,
         });
       }
 
       await publishResources(publishRequests);
       await refreshResources();
-      handlePublishClose();
+      success = true;
     } catch (e: any) {
       setPublishStatus(e?.message || 'Publish failed');
     } finally {
       setPublishing(false);
+    }
+    if (success) {
+      handlePublishClose({ force: true });
     }
   };
 
@@ -2450,15 +2514,15 @@ export default function DataExplorer() {
         const relativeFolders = trimmedParts.slice(0, -1);
         const folderSegments = [...baseSegments, ...relativeFolders];
         const folderPath = folderSegments.join('/');
+        const normalizedService = ensurePublicService(folderService);
         const identifier = buildQassetsFileIdentifier(
-          folderService as Service,
+          normalizedService as Service,
           activeName || folderRootName
         );
         const base64 = await fileToBase64(entry.file);
         const tags = ['qassets-fs'];
         if (folderPath) tags.push(`fs-path:${folderPath}`);
         tags.push(`fs-name:${fileName}`);
-        if (isPrivateService(folderService)) tags.push('private');
         const metadata: Record<string, any> = {
           qassetsFs: {
             path: folderPath,
@@ -2469,7 +2533,7 @@ export default function DataExplorer() {
         };
         publishRequests.push({
           name: activeName,
-          service: folderService as Service,
+          service: normalizedService as Service,
           identifier,
           base64,
           title: fileName,
@@ -2809,10 +2873,11 @@ export default function DataExplorer() {
           publicKeys,
         });
         const privateData64 = applyPrivateMagicIfNeeded(encrypted);
-        const metadata = {
-          qassetsManifest: { version: 1, visibility: 'private' },
-          encrypted: { mode: 'direct', recipients: [publisherAddress] },
-        };
+        const manifestTags = buildEncryptionTagSet({
+          mode: 'direct',
+          publisher: publisherAddress,
+          userCount: 1,
+        }).concat('qassets-manifest');
         await publishResources([
           {
             name: activeName,
@@ -2821,8 +2886,9 @@ export default function DataExplorer() {
             base64: privateData64,
             title: 'Q-Assets Manifest',
             description: 'Aggregated service and folder metadata for faster browsing.',
-            tags: ['qassets-manifest', 'private', 'encrypted:direct'],
-            metadata,
+            tags: manifestTags,
+            // disableEncrypt: true,
+            privateMode: 'direct',
           },
         ]);
         setManifestRefreshBlockedUntil(Date.now() + MANIFEST_REFRESH_COOLDOWN);
@@ -2897,6 +2963,7 @@ export default function DataExplorer() {
         return grp ? grp.isOpen : false;
       });
       const shareRequests: BatchPublishResource[] = [];
+      const publisherAddress = userAddress || (await resolvePublisherAddress());
       for (const resource of targets) {
         const base64 = await resolveResourceBase64(resource);
         const metadataBase = {
@@ -2922,8 +2989,13 @@ export default function DataExplorer() {
             groupId: gid,
             isAdmins: false,
           });
-          const service = ensurePublicService(resource.service);
+          const service = resolveServiceForEncryptionMode(resource.service, 'group');
           const privData = applyPrivateMagicIfNeeded(enc);
+          const shareTags = buildEncryptionTagSet({
+            mode: 'group',
+            publisher: publisherAddress,
+            groupId: gid,
+          }).concat(`share:group:${gid}`);
           shareRequests.push({
             name: publisherName,
             service,
@@ -2931,7 +3003,9 @@ export default function DataExplorer() {
             base64: privData,
             title: resource.metadata?.title,
             description: resource.metadata?.description,
-            tags: [...tagsBase, 'private', `share:group:${gid}`],
+            tags: [...shareTags, ...tagsBase],
+            // disableEncrypt: true,
+            privateMode: 'group',
             metadata: {
               ...metadataBase,
               qassetsShareTarget: { type: 'group', groupId: gid },
@@ -2940,15 +3014,11 @@ export default function DataExplorer() {
         }
 
         if (publicGroups.length || directRecipients.length) {
-          const addr = userAddress
-            ? userAddress
-            : (await qortalRequest({ action: 'GET_USER_ACCOUNT' }))?.address;
-          if (!addr) throw new Error('Unable to resolve your account address for sharing.');
           const { publicKeys, included } = await collectRecipientPublicKeys({
             groupIds: publicGroups,
             usersAllowed: directRecipients,
             includeSelf: true,
-            me: { name: publisherName, address: addr },
+            me: { name: publisherName, address: publisherAddress },
           });
           if (!publicKeys.length) throw new Error('No recipient keys resolved.');
           directNotificationRecipients = included
@@ -2963,16 +3033,22 @@ export default function DataExplorer() {
             base64,
             publicKeys,
           });
-          const service = ensurePrivateService(resource.service);
-          const privData = applyPrivateMagicIfNeeded(enc);
+          const service = resolveServiceForEncryptionMode(resource.service, 'direct');
+          const shareTags = buildEncryptionTagSet({
+            mode: 'direct',
+            publisher: publisherAddress,
+            userCount: publicKeys.length || 1,
+          }).concat('share:direct');
           shareRequests.push({
             name: publisherName,
             service,
             identifier: `${resource.identifier}-direct-${uniqueId6()}`,
-            base64: privData,
+            base64: enc,
             title: resource.metadata?.title,
             description: resource.metadata?.description,
-            tags: [...tagsBase, 'private', 'share:direct'],
+            tags: [...shareTags, ...tagsBase],
+            // disableEncrypt: true,
+            privateMode: 'direct',
             metadata: {
               ...metadataBase,
               qassetsShareTarget: { type: 'direct', groups: publicGroups, names: directRecipients },
@@ -3680,15 +3756,27 @@ export default function DataExplorer() {
                     <ToggleButton value="batch">Queue Update Publishing</ToggleButton>
                   </ToggleButtonGroup>
                   {publishMode === 'batch' && (
-                    <Button
-                      size="small"
-                      variant="contained"
-                      onClick={() => void handlePublishManifest()}
-                      disabled={!manifestDirty || manifestPublishing || !activeName}
-                      fullWidth
-                    >
-                      {manifestPublishing ? 'Publishing…' : 'Publish queued changes'}
-                    </Button>
+                    <Box sx={{ display: 'flex', gap: 1, width: '100%' }}>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        onClick={() => void handlePublishManifest()}
+                        disabled={!manifestDirty || manifestPublishing || !activeName}
+                        sx={{ flex: 3 }}
+                      >
+                        {manifestPublishing ? 'Publishing…' : 'Publish queued changes'}
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        color="warning"
+                        onClick={clearQueuedChanges}
+                        disabled={!hasQueuedChanges}
+                        sx={{ flex: 1 }}
+                      >
+                        Clear queued
+                      </Button>
+                    </Box>
                   )}
                 </Box>
               </Box>
@@ -4023,7 +4111,7 @@ export default function DataExplorer() {
                               color="success"
                               variant="outlined"
                             />
-                            {isPrivateService(resource.service) && (
+                            {resourceIsPrivate(resource) && (
                               <Chip
                                 size="small"
                                 label="Private"
@@ -4602,7 +4690,7 @@ export default function DataExplorer() {
                       color="success"
                       variant="outlined"
                     />
-                    {isPrivateService(selectedResource.service) && (
+                    {resourceIsPrivate(selectedResource) && (
                       <Chip size="small" label="Private" color="secondary" variant="outlined" />
                     )}
                     {isNewResource(selectedResource) && (

@@ -6,6 +6,12 @@ import { UnconfirmedTxWidget } from './unconfirmedTxTracker/UnconfirmedTxWidget'
 import { UnconfirmedTxAutoScanner } from './unconfirmedTxTracker/UnconfirmedTxAutoScanner';
 import { NotificationProvider } from './notifications/NotificationProvider';
 import { NotificationAutoFetcher } from './notifications/NotificationAutoFetcher';
+import { useQdnBatchPublisher } from './utils/useQdnBatchPublisher';
+
+const QdnPublishBootstrapper = () => {
+  useQdnBatchPublisher();
+  return null;
+};
 
 export const AppWrapper = () => {
   return (
@@ -21,6 +27,7 @@ export const AppWrapper = () => {
     >
       <TxTrackerProvider>
         <NotificationProvider>
+          <QdnPublishBootstrapper />
           <Layout />
           <UnconfirmedTxWidget />
           <NotificationAutoFetcher scopes={['global']} intervalMs={60_000} />

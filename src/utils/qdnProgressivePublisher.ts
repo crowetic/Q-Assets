@@ -259,6 +259,22 @@ export async function publishResourcesWithProgress(
         );
         break;
       } catch (error) {
+        const chunkSummary = chunk.map((res) => ({
+          service: res.service,
+          name: res.name,
+          identifier: res.identifier,
+          disableEncrypt: res.disableEncrypt,
+        }));
+        console.error(
+          '[qdnProgressivePublisher] chunk publish failed',
+          {
+            chunkIndex,
+            attempt,
+            size: chunk.length,
+            chunkSummary,
+          },
+          error
+        );
         ensureNotCancelled(chunkIndex, attempt);
         if (isTooManyUnconfirmed(error)) {
           const delayMs = options.throttleDelayMs ?? DEFAULT_THROTTLE_DELAY_MS;

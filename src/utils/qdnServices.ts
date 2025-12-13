@@ -20,3 +20,14 @@ export const ensurePublicService = (service?: string): Service => {
   }
   return service as Service;
 };
+
+export type EncryptionPublishMode = 'group' | 'direct' | null | undefined;
+
+export const resolveServiceForEncryptionMode = (
+  service?: string,
+  mode?: EncryptionPublishMode
+): Service => {
+  if (mode === 'group') return ensurePublicService(service);
+  if (mode === 'direct') return ensurePrivateService(service);
+  return (service as Service) || 'DOCUMENT';
+};
