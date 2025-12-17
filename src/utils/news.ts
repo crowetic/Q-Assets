@@ -1,4 +1,5 @@
 import { Service } from 'qapp-core';
+import pLimit from 'p-limit';
 import { qaAnnouncementPrefix, assetNewsGlobalPrefix } from '../constants/qdnConstants';
 import { NewsSummary } from '../types/newsAndPromos';
 import { fetchPromotionApprovals } from './promotions';
@@ -60,6 +61,7 @@ type FetchNewsOptions = {
   includeExpired?: boolean;
   forceFresh?: boolean;
   allowedGroupIds?: number[]; // membership list to gate private asset news
+  signal?: AbortSignal;
 };
 
 const LIST_CACHE_MS = 60_000;
@@ -71,6 +73,12 @@ export async function fetchAnnouncements(
   options?: FetchNewsOptions
 ): Promise<NewsSummary[]> {
   try {
+    const ensureNotAborted = () => {
+      if (options?.signal?.aborted) {
+        throw new DOMException('AbortError', 'AbortError');
+      }
+    };
+    ensureNotAborted();
     const includeExpired = options?.includeExpired ?? false;
     const listKey = `ann:list:${includeExpired}:${limit}`;
     if (!options?.forceFresh) {
@@ -81,8 +89,10 @@ export async function fetchAnnouncements(
     const expiryDays = Number(await getNewsPromoExpiryDays());
     const expiryCutoff =
       Number.isFinite(expiryDays) && expiryDays > 0 ? Date.now() - expiryDays * 86_400_000 : null;
+    ensureNotAborted();
     const approvalDoc = await loadAnnouncementApprovalDoc();
     const approvedEntries = approvalDoc.items || [];
+    ensureNotAborted();
     const items: NewsSummary[] = [];
     const seen = new Set<string>();
 
@@ -96,12 +106,14 @@ export async function fetchAnnouncements(
       createdHint?: number
     ) => {
       try {
+        ensureNotAborted();
         const svc = service || ('DOCUMENT' as Service);
         const cacheKey = `ann:item:${(publisher || '').toLowerCase()}:${svc}:${identifier}`;
         let payload: { html: string; title?: string; createdAt?: number } | null | undefined =
           getCached(cacheKey);
 
         if (!payload) {
+          ensureNotAborted();
           const res = await qortalRequest({
             action: 'FETCH_QDN_RESOURCE',
             name: publisher,
@@ -109,10 +121,13 @@ export async function fetchAnnouncements(
             identifier,
             encoding: 'base64',
           });
+          ensureNotAborted();
           payload = await decodeAnnouncementResource(res?.data64 ?? res);
+          ensureNotAborted();
           if (payload) setCached(cacheKey, payload, ITEM_CACHE_MS);
         }
 
+        ensureNotAborted();
         if (!payload) return false;
         const html = payload.html;
         const title = payload.title || extractTitleFromHtml(html, 'Q-Assets Announcement');
@@ -147,6 +162,7 @@ export async function fetchAnnouncements(
         .slice(0, limit * 2);
 
       for (const entry of ordered) {
+        ensureNotAborted();
         const dedupeKey = keyFor(entry.publisher, entry.identifier);
         if (seen.has(dedupeKey)) continue;
         const createdHint = entry.approvedAt || entry.createdAt || Date.now();
@@ -165,9 +181,11 @@ export async function fetchAnnouncements(
 
     // Also surface admin-published announcements even if not explicitly approved
     let docHits: Awaited<ReturnType<typeof searchSimpleByIdentifierPrefix>> = [];
+    ensureNotAborted();
 
     try {
       const services = await getGroupResourceServices();
+      ensureNotAborted();
       [docHits] = await Promise.all([
         searchSimpleByIdentifierPrefix(services, qaAnnouncementPrefix, limit * 2),
       ]);
@@ -191,6 +209,7 @@ export async function fetchAnnouncements(
       if (items.length >= limit * 2) break;
     }
 
+    ensureNotAborted();
     const finalList = items.sort((a, b) => b.created - a.created).slice(0, limit);
     setCached(listKey, finalList, LIST_CACHE_MS);
     return finalList;
@@ -217,7 +236,19 @@ export async function fetchLatestAssetNews(
   limit = 10,
   options?: FetchNewsOptions
 ): Promise<NewsSummary[]> {
+  const isAbortError = (error: unknown) =>
+    Boolean(
+      error && typeof error === 'object' && (error as { name?: string }).name === 'AbortError'
+    );
+
   try {
+    const ensureNotAborted = () => {
+      if (options?.signal?.aborted) {
+        throw new DOMException('AbortError', 'AbortError');
+      }
+    };
+
+    ensureNotAborted();
     const includeExpired = options?.includeExpired ?? false;
     const allowedGroupIds = options?.allowedGroupIds ?? [];
     const listKey = `assetnews:list:${includeExpired}:${limit}:${allowedGroupIds
@@ -232,24 +263,38 @@ export async function fetchLatestAssetNews(
       typeof expiryDays === 'number' && expiryDays > 0
         ? Date.now() - expiryDays * 86_400_000
         : null;
+    ensureNotAborted();
     let hits: Awaited<ReturnType<typeof searchSimpleByIdentifierPrefix>> = [];
     try {
       const services = await getGroupResourceServices();
-      hits = await searchSimpleByIdentifierPrefix(services, assetNewsGlobalPrefix, limit);
+      ensureNotAborted();
+      [hits] = await Promise.all([
+        searchSimpleByIdentifierPrefix(services, assetNewsGlobalPrefix, limit),
+      ]);
     } catch (e) {
       console.warn('Failed to fetch asset news list', e);
       return [];
     }
+    ensureNotAborted();
     if (!hits.length) return [];
 
-    const items: NewsSummary[] = [];
-    const seen = new Set<string>();
-    const privacyCache = new Map<number, { isPrivate: boolean; groupId?: number }>();
+    const dedupedHits: typeof hits = [];
+    const seenIds = new Set<string>();
+    for (const hit of hits) {
+      ensureNotAborted();
+      const dedupeKey = `${hit.name}::${hit.identifier}`;
+      if (seenIds.has(dedupeKey)) continue;
+      seenIds.add(dedupeKey);
+      dedupedHits.push(hit);
+    }
 
+    const privacyCache = new Map<number, { isPrivate: boolean; groupId?: number }>();
     const getPrivacy = async (assetId: number) => {
+      ensureNotAborted();
       if (privacyCache.has(assetId)) return privacyCache.get(assetId)!;
       try {
         const { publication } = await resolveAssetPublicationById(assetId);
+        ensureNotAborted();
         const groupIdRaw = publication?.privateGroupId ?? publication?.primaryGroup?.id;
         const groupIdNum = groupIdRaw != null ? Number(groupIdRaw) : undefined;
         const info = {
@@ -265,125 +310,150 @@ export async function fetchLatestAssetNews(
       }
     };
 
-    for (const hit of hits) {
-      const dedupeKey = `${hit.name}::${hit.identifier}`;
-      if (seen.has(dedupeKey)) continue;
-      seen.add(dedupeKey);
-      const finalService = hit.service ? (hit.service as Service) : ('DOCUMENT' as Service);
-      try {
-        const payloadKey = `assetnews:item:${hit.name.toLowerCase()}:${finalService}:${hit.identifier}`;
-        let payload = getCached<{ html: string; title?: string; createdAt?: number }>(payloadKey);
+    const limiter = pLimit(3);
+    const tasks = dedupedHits.map((hit) =>
+      limiter(async () => {
+        ensureNotAborted();
+        try {
+          const finalService = hit.service ? (hit.service as Service) : ('DOCUMENT' as Service);
+          const payloadKey = `assetnews:item:${hit.name.toLowerCase()}:${finalService}:${hit.identifier}`;
+          let payload = getCached<{ html: string; title?: string; createdAt?: number }>(payloadKey);
 
-        if (!payload) {
-          const res = await qortalRequest({
-            action: 'FETCH_QDN_RESOURCE',
-            name: hit.name,
-            service: finalService,
-            identifier: hit.identifier,
-            encoding: 'base64',
-          });
+          if (!payload) {
+            ensureNotAborted();
+            const res = await qortalRequest({
+              action: 'FETCH_QDN_RESOURCE',
+              name: hit.name,
+              service: finalService,
+              identifier: hit.identifier,
+              encoding: 'base64',
+            });
+            ensureNotAborted();
+            const raw = res?.data64 ?? res;
+            let html = '';
+            let title: string | undefined;
+            let createdAt: number | undefined;
 
-          const raw = res?.data64 ?? res;
-          let html = '';
-          let title: string | undefined;
-          let createdAt: number | undefined;
-
-          try {
-            const parsed = await base64ToObject(raw);
-            if (parsed && typeof parsed === 'object') {
-              html = parsed.html || parsed.fullHtml || '';
-              title = parsed.title;
-              createdAt = parsed.updatedAt || parsed.createdAt || hit.updated || hit.created;
-            }
-          } catch {
-            /* fallback below */
-          }
-
-          if (!html && typeof raw === 'string') {
             try {
-              html = atob(raw);
+              const parsed = await base64ToObject(raw);
+              if (parsed && typeof parsed === 'object') {
+                html = parsed.html || parsed.fullHtml || '';
+                title = parsed.title;
+                createdAt = parsed.updatedAt || parsed.createdAt || hit.updated || hit.created;
+              }
             } catch {
+              /* fallback below */
+            }
+
+            if (!html && typeof raw === 'string') {
               try {
-                html = base64ToUtf8(raw);
+                html = atob(raw);
               } catch {
-                html = String(raw);
+                try {
+                  html = base64ToUtf8(raw);
+                } catch {
+                  html = String(raw);
+                }
               }
             }
+            if (!html) {
+              console.log('wtfnohtml', html);
+              return null;
+            }
+            payload = { html, title, createdAt };
+            setCached(payloadKey, payload, ITEM_CACHE_MS);
           }
-          if (!html) console.log('wtfnohtml', html);
-          if (!html) continue;
-          payload = { html, title, createdAt };
-          setCached(payloadKey, payload, ITEM_CACHE_MS);
-        }
 
-        const html = payload.html;
-        let title = payload.title;
-        const createdAt = payload.createdAt;
+          ensureNotAborted();
+          const html = payload.html;
+          let title = payload.title;
+          const createdAt = payload.createdAt;
 
-        const text = stripHtml(html);
-        const excerpt = text.slice(0, 220) + (text.length > 220 ? '…' : '');
+          const text = stripHtml(html);
+          const excerpt = text.slice(0, 220) + (text.length > 220 ? '…' : '');
 
-        // Try to derive assetId from identifier: asset_news_pub__<assetId>__<id6>
-        let assetId: number | undefined;
-        const m = hit.identifier.match(/^asset_news_pub__([0-9]+)__/);
-        if (m && m[1]) {
-          assetId = Number(m[1]);
-        }
-
-        const assetName = assetId != null ? `Asset #${assetId}` : undefined;
-
-        // Visibility: hide private asset news unless viewer is in the allowed group
-        if (assetId != null) {
-          const privacy = await getPrivacy(assetId);
-          if (privacy.isPrivate) {
-            if (!privacy.groupId) continue; // cannot authorize, skip
-            if (!allowedGroupIds.includes(privacy.groupId)) continue;
+          let assetId: number | undefined;
+          const m = hit.identifier.match(/^asset_news_pub__([0-9]+)__/);
+          if (m && m[1]) {
+            assetId = Number(m[1]);
           }
+
+          const assetName = assetId != null ? `Asset #${assetId}` : undefined;
+
+          if (assetId != null) {
+            const privacy = await getPrivacy(assetId);
+            ensureNotAborted();
+            if (privacy.isPrivate) {
+              if (!privacy.groupId) return null;
+              if (!allowedGroupIds.includes(privacy.groupId)) return null;
+            }
+          }
+
+          title = extractTitleFromHtml(
+            html,
+            assetId != null ? `News for ${assetName}` : 'Asset news'
+          );
+
+          const created = createdAt || hit.updated || hit.created || Date.now();
+          const isExpired = expiryCutoff != null && created < expiryCutoff;
+          if (!includeExpired && isExpired) return null;
+
+          return {
+            type: 'assetNews',
+            identifier: hit.identifier,
+            title,
+            excerpt,
+            created,
+            isExpired: Boolean(isExpired),
+            assetId,
+            assetName,
+            fullHtml: html,
+            publisherName: hit.name,
+            service: finalService,
+          };
+        } catch (err) {
+          if (isAbortError(err)) throw err;
+          console.warn('Failed to fetch asset news item', err);
+          return null;
         }
+      })
+    );
 
-        title = extractTitleFromHtml(
-          html,
-          assetId != null ? `News for ${assetName}` : 'Asset news'
-        );
-        // const finalTitle = typeof title === 'string' && title.trim() ? title : titleExtracted;
-
-        const created = createdAt || hit.updated || hit.created || Date.now();
-        const isExpired = expiryCutoff != null && created < expiryCutoff;
-        if (!includeExpired && isExpired) continue;
-
-        items.push({
-          type: 'assetNews',
-          identifier: hit.identifier,
-          title,
-          excerpt,
-          created,
-          isExpired: Boolean(isExpired),
-          assetId,
-          assetName,
-          fullHtml: html,
-          publisherName: hit.name,
-          service: finalService,
-        });
-      } catch (err) {
-        console.warn('Failed to fetch asset news item', err);
-      }
+    const results = await Promise.all(tasks);
+    const items: NewsSummary[] = [];
+    for (const entry of results) {
+      if (entry) items.push(entry);
     }
 
-    // Sort latest first and trim to limit
+    ensureNotAborted();
     const finalList = items.sort((a, b) => b.created - a.created).slice(0, limit);
     setCached(listKey, finalList, LIST_CACHE_MS);
     return finalList;
   } catch (e) {
+    if (isAbortError(e)) {
+      throw e;
+    }
     console.warn('fetchLatestAssetNews failed', e);
     return [];
   }
 }
 
-export async function fetchActivePromotions(now = Date.now()): Promise<NewsSummary[]> {
+export async function fetchActivePromotions(
+  now = Date.now(),
+  options?: { signal?: AbortSignal }
+): Promise<NewsSummary[]> {
+  const ensureNotAborted = () => {
+    if (options?.signal?.aborted) {
+      throw new DOMException('AbortError', 'AbortError');
+    }
+  };
+
+  ensureNotAborted();
   const approvals = await fetchPromotionApprovals(120);
   const promos: NewsSummary[] = [];
 
   for (const promo of approvals) {
+    ensureNotAborted();
     if (!promo.contentHtml) continue;
     if (!promo.isActive) continue;
     if (now < promo.startsAt || now > promo.endsAt) continue;
@@ -406,5 +476,6 @@ export async function fetchActivePromotions(now = Date.now()): Promise<NewsSumma
     });
   }
 
+  ensureNotAborted();
   return promos.sort((a, b) => (b.promotionEndsAt ?? 0) - (a.promotionEndsAt ?? 0));
 }

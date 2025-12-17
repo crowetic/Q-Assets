@@ -49,6 +49,7 @@ import {
   objectToBase64,
   base64ToUtf8,
   base64ToUint8Array,
+  uint8ArrayToBase64,
 } from '../../../utils/data';
 import { uniqueId6 } from '../../../utils/ids';
 import { stripPrivateMagic, PRIVATE_MAGIC_B64 } from '../../../constants/qdeckIdentifiers';
@@ -83,6 +84,16 @@ import {
   getEncryptionInfo,
   resourceIsPrivate,
 } from '../../../utils/qdnEncryption';
+import {
+  MAX_INLINE_FILE_SIZE,
+  DEFAULT_CHUNK_SIZE,
+  iterateFileChunks,
+  buildChunkIdentifier,
+  createChunkedManifest,
+  FileChunkDescriptor,
+  ChunkedFileManifest,
+  CHUNK_FORCED_THRESHOLD,
+} from '../../../utils/fileChunking';
 import type {
   FolderDescriptor,
   FolderNode,
@@ -124,6 +135,8 @@ type PreviewDialogState = {
   resource?: QdnResource | null;
   zoomed?: boolean;
   expanded?: boolean;
+  videoUrl?: string;
+  chunked?: boolean;
 };
 
 const PREVIEW_STEPS: PreviewStep[] = [
@@ -140,6 +153,8 @@ const createPreviewDialogState = (): PreviewDialogState => ({
   zoomed: false,
   expanded: false,
   loading: false,
+  videoUrl: undefined,
+  chunked: false,
 });
 
 const PUBLISH_MODE_STORAGE_KEY = 'qassets_publish_mode_preference_v1';
@@ -150,6 +165,7 @@ const PENDING_FOLDERS_KEY = 'qassets_data_pending_folders_v1';
 const PUBLISH_CHUNK_SIZE = 25;
 const MANIFEST_REFRESH_COOLDOWN = 90 * 1000;
 const MAX_FILE_IDENTIFIER_LENGTH = QASSETS_FILE_ID_MAX;
+const CHUNK_METADATA_TAG = 'qassets-chunk';
 const MANIFEST_SERVICE = ensurePrivateService('DOCUMENT_PRIVATE');
 type ResourceSort =
   | 'name-asc'
@@ -455,6 +471,7 @@ type LoadedResourceContent = {
   key: string;
   base64: string;
   mime: string;
+  chunkedManifest?: ChunkedFileManifest;
 };
 
 const normalizeData64 = (payload: any): string | null => {
@@ -853,6 +870,32 @@ export default function DataExplorer() {
     createPreviewDialogState()
   );
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
+  const previewChunkedBlobUrlRef = useRef<string | null>(null);
+  const chunkedMediaSourceRef = useRef<{ objectUrl: string; cancel: () => void } | null>(null);
+  const setPreviewChunkedBlobUrl = useCallback((url?: string) => {
+    if (previewChunkedBlobUrlRef.current && previewChunkedBlobUrlRef.current !== url) {
+      URL.revokeObjectURL(previewChunkedBlobUrlRef.current);
+    }
+    previewChunkedBlobUrlRef.current = url ?? null;
+  }, []);
+  const cleanupChunkedBlobUrl = useCallback(() => {
+    if (previewChunkedBlobUrlRef.current) {
+      URL.revokeObjectURL(previewChunkedBlobUrlRef.current);
+      previewChunkedBlobUrlRef.current = null;
+    }
+  }, []);
+  const cleanupChunkedMediaSource = useCallback(() => {
+    const entry = chunkedMediaSourceRef.current;
+    chunkedMediaSourceRef.current = null;
+    if (entry) {
+      entry.cancel();
+      URL.revokeObjectURL(entry.objectUrl);
+    }
+  }, []);
+  const cleanupChunkedVideoPreview = useCallback(() => {
+    cleanupChunkedMediaSource();
+    cleanupChunkedBlobUrl();
+  }, [cleanupChunkedBlobUrl, cleanupChunkedMediaSource]);
   const [manifestDialog, setManifestDialog] = useState<{
     open: boolean;
     entry: StructuredEntry | null;
@@ -1023,6 +1066,19 @@ export default function DataExplorer() {
         base64,
         mime: inferredMime,
       };
+      if ((resource.metadata?.qassetsFs as any)?.chunked) {
+        try {
+          const manifest = JSON.parse(base64ToUtf8(base64)) as ChunkedFileManifest;
+          if (manifest && Array.isArray(manifest.chunks)) {
+            entry.chunkedManifest = manifest;
+            if (manifest.mimeType) {
+              entry.mime = manifest.mimeType;
+            }
+          }
+        } catch {
+          // ignore malformed chunk manifest
+        }
+      }
       setLoadedContent(entry);
       setDetectedTypes((prev) =>
         prev[resource.identifier] === inferredMime
@@ -1444,6 +1500,112 @@ export default function DataExplorer() {
     combinedResources.forEach((res) => map.set(res.identifier, res));
     return map;
   }, [combinedResources]);
+
+  const createChunkedBlobUrl = useCallback(
+    async (manifest: ChunkedFileManifest) => {
+      if (!manifest.chunks?.length) {
+        throw new Error('Chunk manifest is empty.');
+      }
+      const buffers: Uint8Array[] = [];
+      for (const chunk of manifest.chunks) {
+        const chunkResource = combinedResourceMap.get(chunk.identifier);
+        if (!chunkResource) {
+          throw new Error(`Chunk ${chunk.identifier} is not available yet.`);
+        }
+        const chunkBase64 = await resolveResourceBase64(chunkResource);
+        buffers.push(base64ToUint8Array(chunkBase64));
+      }
+      const blob = new Blob(buffers, {
+        type: manifest.mimeType || 'application/octet-stream',
+      });
+      return URL.createObjectURL(blob);
+    },
+    [combinedResourceMap, resolveResourceBase64]
+  );
+
+  const streamChunkedVideo = useCallback(
+    (manifest: ChunkedFileManifest) => {
+      if (!manifest.chunks?.length) {
+        throw new Error('Chunk manifest is empty.');
+      }
+      if (typeof window === 'undefined' || typeof MediaSource === 'undefined') {
+        throw new Error('Chunk streaming is not supported in this environment.');
+      }
+      cleanupChunkedMediaSource();
+      const mediaSource = new MediaSource();
+      const objectUrl = URL.createObjectURL(mediaSource);
+      const sortedChunks = [...manifest.chunks].sort((a, b) => a.index - b.index);
+      let resolved = false;
+      let rejectStream: ((reason?: any) => void) | null = null;
+      const promise = new Promise<void>((resolve, reject) => {
+        rejectStream = reject;
+        const handleSourceOpen = () => {
+          mediaSource.removeEventListener('sourceopen', handleSourceOpen);
+          let sourceBuffer: SourceBuffer;
+          try {
+            sourceBuffer = mediaSource.addSourceBuffer(manifest.mimeType || 'video/mp4');
+          } catch (err) {
+            reject(err);
+            return;
+          }
+          let nextIndex = 0;
+          const appendNextChunk = async () => {
+            if (resolved) return;
+            if (nextIndex >= sortedChunks.length) {
+              resolved = true;
+              if (mediaSource.readyState === 'open') {
+                try {
+                  mediaSource.endOfStream();
+                } catch (e) {
+                  console.log(e);
+                }
+              }
+              resolve();
+              return;
+            }
+            if (sourceBuffer.updating) {
+              sourceBuffer.addEventListener('updateend', appendNextChunk, { once: true });
+              return;
+            }
+            const chunkMeta = sortedChunks[nextIndex];
+            const chunkResource = combinedResourceMap.get(chunkMeta.identifier);
+            if (!chunkResource) {
+              reject(new Error(`Chunk ${chunkMeta.identifier} is not available yet.`));
+              return;
+            }
+            try {
+              const chunkBase64 = await resolveResourceBase64(chunkResource);
+              const chunkData = base64ToUint8Array(chunkBase64);
+              sourceBuffer.appendBuffer(chunkData);
+              nextIndex += 1;
+              sourceBuffer.addEventListener('updateend', appendNextChunk, { once: true });
+            } catch (err) {
+              reject(err);
+            }
+          };
+          appendNextChunk();
+        };
+        mediaSource.addEventListener('sourceopen', handleSourceOpen);
+      });
+      const cancel = () => {
+        if (resolved) return;
+        resolved = true;
+        if (rejectStream) {
+          rejectStream(new Error('Chunk streaming cancelled.'));
+        }
+        if (mediaSource.readyState === 'open') {
+          try {
+            mediaSource.endOfStream();
+          } catch (e) {
+            console.log(e);
+          }
+        }
+      };
+      chunkedMediaSourceRef.current = { objectUrl, cancel };
+      return { objectUrl, promise };
+    },
+    [cleanupChunkedMediaSource, combinedResourceMap, resolveResourceBase64]
+  );
 
   const resourceStructuredEntries = useMemo(
     () =>
@@ -2319,8 +2481,8 @@ export default function DataExplorer() {
     groupId,
     groupAdminsOnly,
     directRecipients,
+    chunkedPublishing,
   }: PublishSubmitPayload) => {
-    console.log('files', files);
     if (!activeName) {
       setPublishStatus('Select a Qortal name before publishing.');
       return;
@@ -2331,18 +2493,104 @@ export default function DataExplorer() {
     }
 
     const normalizedFolder = normalizePathSegments(form.folderPath).join('/');
+    const hasForcedChunking =
+      encryptionMode !== 'none' && files.some((file) => file.size > CHUNK_FORCED_THRESHOLD);
+    const requiresChunkGroup = chunkedPublishing && encryptionMode !== 'none';
+    const needsForcedGroup = hasForcedChunking;
+    if (requiresChunkGroup && encryptionMode !== 'group') {
+      setPublishStatus('Chunked publishing requires group encryption.');
+      return;
+    }
+    if ((requiresChunkGroup || needsForcedGroup) && !groupId) {
+      setPublishStatus('Select a private group for chunked publishing.');
+      return;
+    }
 
     setPublishing(true);
     setPublishStatus(null);
     const baseId = sanitizeIdentifier(form.identifier || '');
     let success = false;
     try {
+      const publisherAddress = await resolvePublisherAddress();
+      const directRecipientList = parseRecipientList(directRecipients);
+      let directPublicKeys: string[] = [];
+      if (encryptionMode === 'direct') {
+        if (!directRecipientList.length) {
+          alert('No recipients specified. Files will be encrypted for you only.');
+        }
+        const { publicKeys } = await collectRecipientPublicKeys({
+          usersAllowed: directRecipientList,
+          includeSelf: true,
+          me: {
+            name: activeName || authName || undefined,
+            address: publisherAddress,
+          },
+        });
+        directPublicKeys = publicKeys;
+        if (!directPublicKeys.length) {
+          throw new Error('No recipient public keys resolved.');
+        }
+      }
+
+      const encryptPayload = async (
+        payload64: string
+      ): Promise<{
+        base64: string;
+        service: Service;
+        tagExtra: string[];
+        privateMode?: 'group' | 'direct';
+      }> => {
+        if (encryptionMode === 'none') {
+          return {
+            base64: payload64,
+            service: form.service,
+            tagExtra: [],
+          };
+        }
+        if (encryptionMode === 'group') {
+          if (!groupId) throw new Error('Select a group for encryption.');
+          const enc64Group = await qortalRequest({
+            action: 'ENCRYPT_QORTAL_GROUP_DATA',
+            base64: payload64,
+            groupId,
+            isAdmins: groupAdminsOnly,
+          });
+          const tagExtra = buildEncryptionTagSet({
+            mode: 'group',
+            publisher: publisherAddress,
+            groupId,
+            adminsOnly: groupAdminsOnly,
+          });
+          return {
+            base64: enc64Group,
+            service: resolveServiceForEncryptionMode(form.service, 'group'),
+            tagExtra,
+            privateMode: 'group',
+          };
+        }
+        const enc64Direct = await qortalRequest({
+          action: 'ENCRYPT_DATA',
+          base64: payload64,
+          publicKeys: directPublicKeys,
+        });
+        const tagExtra = buildEncryptionTagSet({
+          mode: 'direct',
+          publisher: publisherAddress,
+          userCount: directPublicKeys.length || directRecipientList.length || 1,
+        });
+        return {
+          base64: enc64Direct,
+          service: resolveServiceForEncryptionMode(form.service, 'direct'),
+          tagExtra,
+          privateMode: 'direct',
+        };
+      };
+
       const publishRequests: BatchPublishResource[] = [];
+      const chunkSize = DEFAULT_CHUNK_SIZE;
+
       for (let i = 0; i < files.length; i += 1) {
         const file = files[i];
-        console.log('incoming file[i]', file);
-        const file64 = await fileToBase64(file);
-        console.log('base64 from file (first 100):', file64.slice(0, 100));
         const title = form.title || file.name;
         const description = form.description || `Published via Q-Assets Data Explorer`;
         let tags: string[] = [];
@@ -2361,81 +2609,6 @@ export default function DataExplorer() {
           metadata.title = file.name;
         }
 
-        const applyEncryption = async (
-          file64: string
-        ): Promise<{
-          base64: string;
-          service: Service;
-          tagExtra: string[];
-          privateMode?: 'group' | 'direct';
-        }> => {
-          if (encryptionMode === 'none') {
-            return {
-              base64: file64,
-              service: form.service,
-              tagExtra: [],
-            };
-          }
-          const publisherAddress = await resolvePublisherAddress();
-          if (encryptionMode === 'group') {
-            if (!groupId) throw new Error('Select a group for encryption.');
-            const enc64Group = await qortalRequest({
-              action: 'ENCRYPT_QORTAL_GROUP_DATA',
-              base64: file64,
-              groupId,
-              isAdmins: groupAdminsOnly,
-            });
-            // const privData64 = applyPrivateMagicIfNeeded(enc);
-            const tagExtra = buildEncryptionTagSet({
-              mode: 'group',
-              publisher: publisherAddress,
-              groupId,
-              adminsOnly: groupAdminsOnly,
-            });
-            return {
-              base64: enc64Group,
-              service: resolveServiceForEncryptionMode(form.service, 'group'),
-              tagExtra,
-              privateMode: 'group',
-            };
-          }
-          const recipients = parseRecipientList(directRecipients);
-          if (!recipients.length) {
-            alert('No recipients specified. Files will be encrypted for you only.');
-          }
-          const { publicKeys } = await collectRecipientPublicKeys({
-            usersAllowed: recipients,
-            includeSelf: true,
-            me: { name: activeName || authName || undefined, address: publisherAddress },
-          });
-          if (!publicKeys.length) throw new Error('No recipient public keys resolved.');
-          const enc64Direct = await qortalRequest({
-            action: 'ENCRYPT_DATA',
-            base64: file64,
-            publicKeys,
-          });
-          const tagExtra = buildEncryptionTagSet({
-            mode: 'direct',
-            publisher: publisherAddress,
-            userCount: publicKeys.length || recipients.length || 1,
-          });
-          return {
-            base64: enc64Direct,
-            service: resolveServiceForEncryptionMode(form.service, 'direct'),
-            tagExtra,
-            privateMode: 'direct',
-          };
-        };
-
-        const {
-          base64: finalData64,
-          service: finalService,
-          tagExtra,
-          privateMode,
-        } = await applyEncryption(file64);
-        if (tagExtra.length) {
-          tags = tagExtra.concat(tags);
-        }
         let identifier: string;
         if (baseId) {
           const suffix = publishDialog.variant === 'multiple' ? `-${i + 1}-${uniqueId6()}` : '';
@@ -2444,20 +2617,119 @@ export default function DataExplorer() {
               ? `${baseId}${suffix}`.slice(0, MAX_FILE_IDENTIFIER_LENGTH)
               : baseId.slice(0, MAX_FILE_IDENTIFIER_LENGTH);
         } else {
-          identifier = buildQassetsFileIdentifier(finalService as Service, activeName);
+          identifier = buildQassetsFileIdentifier(form.service as Service, activeName);
         }
 
+        const shouldChunk =
+          encryptionMode !== 'none' &&
+          (file.size > CHUNK_FORCED_THRESHOLD ||
+            (chunkedPublishing && file.size > MAX_INLINE_FILE_SIZE));
+        if (!shouldChunk) {
+          const file64 = await fileToBase64(file);
+          const {
+            base64: finalData64,
+            service: finalService,
+            tagExtra,
+            privateMode,
+          } = await encryptPayload(file64);
+          const finalTags = tagExtra.length ? tagExtra.concat(tags) : tags;
+          publishRequests.push({
+            name: activeName,
+            service: finalService,
+            identifier,
+            base64: finalData64,
+            title,
+            description,
+            tags: finalTags,
+            metadata,
+            privateMode,
+          });
+          continue;
+        }
+
+        const chunkDescriptors: FileChunkDescriptor[] = [];
+        const chunkPublishRequests: BatchPublishResource[] = [];
+        for await (const chunk of iterateFileChunks(file, chunkSize)) {
+          const chunk64 = uint8ArrayToBase64(chunk.uint8);
+          const chunkIndexId = buildChunkIdentifier(identifier, chunk.index).slice(
+            0,
+            MAX_FILE_IDENTIFIER_LENGTH
+          );
+          const {
+            base64: chunkData64,
+            service: chunkService,
+            tagExtra,
+            privateMode,
+          } = await encryptPayload(chunk64);
+          chunkDescriptors.push({
+            index: chunk.index,
+            identifier: chunkIndexId,
+            size: chunk.size,
+          });
+
+          const chunkTags = Array.from(new Set([...tagExtra, CHUNK_METADATA_TAG]));
+          chunkPublishRequests.push({
+            name: activeName,
+            service: chunkService,
+            identifier: chunkIndexId,
+            base64: chunkData64,
+            title: `${title} (chunk ${chunk.index + 1})`,
+            description,
+            tags: chunkTags,
+            metadata: {
+              qassetsChunk: {
+                parentIdentifier: identifier,
+                index: chunk.index,
+                chunked: true,
+              },
+            },
+            privateMode,
+          });
+        }
+
+        publishRequests.push(...chunkPublishRequests);
+
+        const chunkEncryptionInfo: ChunkedFileManifest['encryption'] | undefined =
+          encryptionMode === 'group'
+            ? { mode: 'group', groupId: groupId ?? undefined, adminsOnly: groupAdminsOnly }
+            : {
+                mode: 'direct',
+                recipientCount: directPublicKeys.length || directRecipientList.length || 1,
+              };
+        const manifest = createChunkedManifest(
+          file,
+          chunkSize,
+          chunkDescriptors,
+          chunkEncryptionInfo
+        );
+        const manifestJson = await objectToBase64(manifest);
+        const {
+          base64: manifestData64,
+          service: manifestService,
+          tagExtra: manifestTagExtra,
+          privateMode: manifestPrivateMode,
+        } = await encryptPayload(manifestJson);
+        const manifestTags = Array.from(new Set([...manifestTagExtra, ...tags]));
+        const manifestMetadata = {
+          ...metadata,
+          qassetsFs: {
+            ...(metadata.qassetsFs || {}),
+            chunked: true,
+            chunkManifestId: identifier,
+            chunkCount: chunkDescriptors.length,
+            chunkSize,
+          },
+        };
         publishRequests.push({
           name: activeName,
-          service: finalService,
+          service: manifestService,
           identifier,
-          base64: finalData64,
+          base64: manifestData64,
           title,
           description,
-          tags,
-          metadata,
-          // disableEncrypt: encryptionMode !== 'none',
-          privateMode,
+          tags: manifestTags,
+          metadata: manifestMetadata,
+          privateMode: manifestPrivateMode,
         });
       }
 
@@ -2595,6 +2867,7 @@ export default function DataExplorer() {
     if (resourceArg && resourceArg.identifier !== selectedResourceId) {
       setSelectedResourceId(resourceArg.identifier);
     }
+    cleanupChunkedVideoPreview();
     const initialSteps = clonePreviewSteps();
     setPreviewDialog({
       open: true,
@@ -2604,6 +2877,8 @@ export default function DataExplorer() {
       resource: target,
       zoomed: false,
       expanded: false,
+      videoUrl: undefined,
+      chunked: false,
     });
     const updateStep = (key: PreviewStepKey, status: PreviewStepStatus, message?: string) => {
       setPreviewDialog((prev) => ({
@@ -2613,6 +2888,88 @@ export default function DataExplorer() {
     };
     try {
       const loaded = await ensureResourceContent(target, { onStep: updateStep });
+      if (loaded.chunkedManifest) {
+        const chunkManifest = loaded.chunkedManifest!;
+        const chunkedMime = chunkManifest.mimeType || loaded.mime;
+        if (chunkedMime.startsWith('video/')) {
+          updateStep('analyze', 'active', 'Streaming video from chunks…');
+          try {
+            const { objectUrl, promise } = streamChunkedVideo(chunkManifest);
+            setPreviewDialog((prev) => ({
+              ...prev,
+              open: true,
+              loading: false,
+              title: getResourceLabel(target),
+              type: 'video',
+              resource: target,
+              zoomed: false,
+              chunked: true,
+              videoUrl: objectUrl,
+              error: undefined,
+            }));
+            void promise.catch(async (streamError) => {
+              updateStep('analyze', 'error', streamError?.message);
+              cleanupChunkedMediaSource();
+              try {
+                const fallbackUrl = await createChunkedBlobUrl(chunkManifest);
+                setPreviewChunkedBlobUrl(fallbackUrl);
+                setPreviewDialog((prev) => ({
+                  ...prev,
+                  videoUrl: fallbackUrl,
+                  error:
+                    streamError?.message ||
+                    'Streaming unavailable; playing buffered video instead.',
+                }));
+              } catch (fallbackError: any) {
+                setPreviewDialog((prev) => ({
+                  ...prev,
+                  error:
+                    fallbackError?.message ||
+                    streamError?.message ||
+                    'Unable to load chunked video.',
+                }));
+              }
+            });
+            updateStep('analyze', 'success');
+            return;
+          } catch (startError: any) {
+            updateStep('analyze', 'error', startError?.message);
+            cleanupChunkedMediaSource();
+            const fallbackMessage = startError?.message || 'Streaming unavailable.';
+            try {
+              const fallbackUrl = await createChunkedBlobUrl(chunkManifest);
+              setPreviewChunkedBlobUrl(fallbackUrl);
+              setPreviewDialog((prev) => ({
+                ...prev,
+                open: true,
+                loading: false,
+                title: getResourceLabel(target),
+                type: 'video',
+                resource: target,
+                zoomed: false,
+                chunked: true,
+                videoUrl: fallbackUrl,
+                error: fallbackMessage,
+              }));
+            } catch (fallbackError: any) {
+              setPreviewDialog((prev) => ({
+                ...prev,
+                open: true,
+                loading: false,
+                title: getResourceLabel(target),
+                type: 'video',
+                resource: target,
+                zoomed: false,
+                chunked: false,
+                videoUrl: undefined,
+                error:
+                  fallbackError?.message || startError?.message || 'Unable to load chunked video.',
+              }));
+            }
+            return;
+          }
+        }
+      }
       if (loaded.mime.startsWith('image/')) {
         setPreviewDialog((prev) => ({
           ...prev,
@@ -2623,6 +2980,8 @@ export default function DataExplorer() {
           dataUrl: `data:${loaded.mime};base64,${loaded.base64}`,
           resource: target,
           zoomed: false,
+          chunked: false,
+          videoUrl: undefined,
         }));
         return;
       }
@@ -2636,6 +2995,8 @@ export default function DataExplorer() {
           type: 'video',
           resource: target,
           zoomed: false,
+          chunked: false,
+          videoUrl: undefined,
         }));
         return;
       }
@@ -2652,6 +3013,8 @@ export default function DataExplorer() {
             content: text,
             resource: target,
             zoomed: false,
+            chunked: false,
+            videoUrl: undefined,
           }));
         } else {
           setPreviewDialog((prev) => ({
@@ -2663,6 +3026,8 @@ export default function DataExplorer() {
             content: 'This resource appears to be binary. Use Save to system to download it.',
             resource: target,
             zoomed: false,
+            chunked: false,
+            videoUrl: undefined,
           }));
         }
       } catch {
@@ -2676,6 +3041,8 @@ export default function DataExplorer() {
           content: 'Preview not available. Use Save to system to download this resource.',
           resource: fallbackResource || null,
           zoomed: false,
+          chunked: false,
+          videoUrl: undefined,
         }));
       }
     } catch (e: any) {
@@ -2689,6 +3056,8 @@ export default function DataExplorer() {
         error: e?.message || 'Unable to preview this resource.',
         resource: fallbackResource || null,
         zoomed: false,
+        chunked: false,
+        videoUrl: undefined,
       }));
     }
   };
@@ -2717,7 +3086,10 @@ export default function DataExplorer() {
     }));
   };
 
-  const handlePreviewClose = () => setPreviewDialog(createPreviewDialogState());
+  const handlePreviewClose = () => {
+    cleanupChunkedVideoPreview();
+    setPreviewDialog(createPreviewDialogState());
+  };
 
   const handleManifestDialogOpen = (entry: StructuredEntry) => {
     setManifestDialog({
@@ -5085,14 +5457,29 @@ export default function DataExplorer() {
                 height: previewDialog.expanded ? '70vh' : 420,
               }}
             >
-              <VideoPlayer
-                videoRef={previewVideoRef}
-                qortalVideoResource={{
-                  service: previewDialog.resource.service as any,
-                  name: previewDialog.resource.name,
-                  identifier: previewDialog.resource.identifier,
-                }}
-              />
+              {previewDialog.videoUrl ? (
+                <video
+                  ref={previewVideoRef}
+                  src={previewDialog.videoUrl}
+                  controls
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'contain',
+                    borderRadius: 8,
+                    backgroundColor: '#000',
+                  }}
+                />
+              ) : (
+                <VideoPlayer
+                  videoRef={previewVideoRef}
+                  qortalVideoResource={{
+                    service: previewDialog.resource.service as any,
+                    name: previewDialog.resource.name,
+                    identifier: previewDialog.resource.identifier,
+                  }}
+                />
+              )}
             </Box>
           )}
           {previewDialog.type === 'binary' && (
@@ -5139,6 +5526,7 @@ export default function DataExplorer() {
                 : null;
               if (entry) {
                 void handleDeleteFilesCopy([entry]);
+                cleanupChunkedVideoPreview();
                 setPreviewDialog(createPreviewDialogState());
               }
             }}

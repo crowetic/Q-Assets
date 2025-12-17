@@ -21,6 +21,7 @@ import type { GroupSummary } from '../../../../utils/qortalApi';
 import { ALL_QDN_SERVICES } from '../constants';
 import { formatBytes } from '../viewHelpers';
 import { getServiceLimit } from '../../../../utils/useQdnBatchPublisher';
+import { MAX_INLINE_FILE_SIZE, CHUNK_FORCED_THRESHOLD } from '../../../../utils/fileChunking';
 
 export type PublishFormState = {
   service: Service;
@@ -38,6 +39,7 @@ export type PublishSubmitPayload = {
   groupId: number | null;
   groupAdminsOnly: boolean;
   directRecipients: string;
+  chunkedPublishing: boolean;
 };
 
 type PublishDialogProps = {
@@ -71,6 +73,7 @@ export function PublishDialog({
   const [groupId, setGroupId] = useState<number | null>(null);
   const [groupAdminsOnly, setGroupAdminsOnly] = useState(false);
   const [directRecipients, setDirectRecipients] = useState('');
+  const [chunkedPublishing, setChunkedPublishing] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -80,6 +83,7 @@ export function PublishDialog({
     setGroupId(null);
     setGroupAdminsOnly(false);
     setDirectRecipients('');
+    setChunkedPublishing(false);
     onStatusChange(null);
   }, [defaults, open, onStatusChange]);
 
@@ -87,6 +91,27 @@ export function PublishDialog({
     () => formatBytes(getServiceLimit(form.service)),
     [form.service]
   );
+
+  const hasOptionalChunkable = files.some((file) => file.size > MAX_INLINE_FILE_SIZE);
+  const hasForcedChunking = files.some((file) => file.size > CHUNK_FORCED_THRESHOLD);
+
+  useEffect(() => {
+    if (hasForcedChunking) {
+      setChunkedPublishing(true);
+    }
+  }, [hasForcedChunking]);
+
+  useEffect(() => {
+    if (chunkedPublishing && encryptionMode !== 'group') {
+      setEncryptionMode('group');
+    }
+  }, [chunkedPublishing, encryptionMode]);
+
+  useEffect(() => {
+    if (encryptionMode === 'none' && chunkedPublishing) {
+      setChunkedPublishing(false);
+    }
+  }, [encryptionMode, chunkedPublishing]);
 
   const handleSelectFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
     const nextFiles = Array.from(event.target.files ?? []);
@@ -102,6 +127,7 @@ export function PublishDialog({
       groupId,
       groupAdminsOnly,
       directRecipients,
+      chunkedPublishing,
     });
   };
 
@@ -183,9 +209,13 @@ export function PublishDialog({
             value={encryptionMode}
             onChange={(_event, value) => value && setEncryptionMode(value)}
           >
-            <ToggleButton value="none">None</ToggleButton>
+            <ToggleButton value="none" disabled={chunkedPublishing}>
+              None
+            </ToggleButton>
             <ToggleButton value="group">Group</ToggleButton>
-            <ToggleButton value="direct">Direct</ToggleButton>
+            <ToggleButton value="direct" disabled={chunkedPublishing}>
+              Direct
+            </ToggleButton>
           </ToggleButtonGroup>
           {encryptionMode === 'group' && (
             <>
@@ -227,7 +257,30 @@ export function PublishDialog({
               value={directRecipients}
               onChange={(event) => setDirectRecipients(event.target.value)}
               helperText="Direct encryption will use resolved public keys for the listed recipients."
+              disabled={chunkedPublishing}
             />
+          )}
+
+          {encryptionMode !== 'none' && hasOptionalChunkable && (
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={chunkedPublishing}
+                  onChange={(_event, checked) => setChunkedPublishing(checked)}
+                  disabled={hasForcedChunking}
+                />
+              }
+              label={
+                hasForcedChunking
+                  ? 'Chunked upload required for files over 100MB'
+                  : 'Use chunked publishing for large files'
+              }
+            />
+          )}
+          {chunkedPublishing && !groupId && (
+            <Typography variant="caption" color="warning.main">
+              Chunked publishing requires a private group and group encryption.
+            </Typography>
           )}
 
           <Button variant="outlined" component="label">

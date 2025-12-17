@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Box, Card, CardContent, Typography, Divider, Skeleton, Chip, Button } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import { useNavigate } from 'react-router-dom';
@@ -197,7 +197,9 @@ export default function QAssetsNewsSection() {
   const [announcements, setAnnouncements] = useState<NewsSummary[] | null>(null);
   const [assetNews, setAssetNews] = useState<NewsSummary[] | null>(null);
   const [promotions, setPromotions] = useState<NewsSummary[] | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loadingAnnouncements, setLoadingAnnouncements] = useState(true);
+  const [loadingAssetNews, setLoadingAssetNews] = useState(true);
+  const [loadingPromotions, setLoadingPromotions] = useState(true);
 
   const [showArchivedAnnouncements, setShowArchivedAnnouncements] = useState(false);
   const [showArchivedNews, setShowArchivedNews] = useState(false);
@@ -212,51 +214,118 @@ export default function QAssetsNewsSection() {
   const { memberGroupIds, loading: groupsLoading } = useMemberGroupIds();
 
   const theme = useTheme();
+  const controllerRef = useRef<AbortController | null>(null);
+
+  const createAbortController = useCallback(() => {
+    controllerRef.current?.abort();
+    const ctrl = new AbortController();
+    controllerRef.current = ctrl;
+    return ctrl;
+  }, []);
+
+  const isSignalCurrent = useCallback(
+    (signal: AbortSignal) => controllerRef.current?.signal === signal,
+    []
+  );
+
+  const isAbortError = (error: unknown) =>
+    Boolean(
+      error && typeof error === 'object' && (error as { name?: string }).name === 'AbortError'
+    );
 
   // Initial load of lists
   const loadNews = useCallback(
-    async (forceFresh = false) => {
+    (forceFresh = false) => {
+      const controller = createAbortController();
+      const signal = controller.signal;
+
+      setLoadingAnnouncements(true);
+      setLoadingAssetNews(true);
+      setLoadingPromotions(true);
+
       if (forceFresh) {
         invalidateAnnouncementCache();
       }
-      try {
-        setLoading(true);
-        const announcementLimit = showMoreAnnouncements ? 50 : 5;
-        const assetNewsLimit = showMoreNews ? 50 : 8;
-        const [a, n, p] = await Promise.all([
-          fetchAnnouncements(announcementLimit, {
+
+      const announcementLimit = showMoreAnnouncements ? 50 : 5;
+      const assetNewsLimit = showMoreNews ? 50 : 8;
+
+      const loadAnnouncements = async () => {
+        try {
+          const results = await fetchAnnouncements(announcementLimit, {
             includeExpired: showArchivedAnnouncements,
             forceFresh,
-          }),
-          fetchLatestAssetNews(assetNewsLimit, {
+            signal,
+          });
+          if (!isSignalCurrent(signal)) return;
+          setAnnouncements(results);
+        } catch (err) {
+          if (isAbortError(err)) return;
+          console.error('Failed to load Q-Assets announcements', err);
+          if (isSignalCurrent(signal)) {
+            setAnnouncements([]);
+          }
+        } finally {
+          if (isSignalCurrent(signal)) {
+            setLoadingAnnouncements(false);
+          }
+        }
+      };
+
+      const loadAssetNews = async () => {
+        try {
+          const results = await fetchLatestAssetNews(assetNewsLimit, {
             includeExpired: showArchivedNews,
             allowedGroupIds: memberGroupIds,
-          }),
-          fetchActivePromotions(),
-        ]);
-        setAnnouncements(a);
-        setAssetNews(n);
-        setPromotions(p);
-      } catch (e) {
-        console.error('Failed to load Q-Assets news', e);
-        setAnnouncements([]);
-        setAssetNews([]);
-        setPromotions([]);
-      } finally {
-        setLoading(false);
-      }
+            signal,
+          });
+          if (!isSignalCurrent(signal)) return;
+          setAssetNews(results);
+        } catch (err) {
+          if (isAbortError(err)) return;
+          console.error('Failed to load asset news publications', err);
+          if (isSignalCurrent(signal)) {
+            setAssetNews([]);
+          }
+        } finally {
+          if (isSignalCurrent(signal)) {
+            setLoadingAssetNews(false);
+          }
+        }
+      };
+
+      const loadPromotions = async () => {
+        try {
+          const results = await fetchActivePromotions(Date.now(), { signal });
+          if (!isSignalCurrent(signal)) return;
+          setPromotions(results);
+        } catch (err) {
+          if (isAbortError(err)) return;
+          console.error('Failed to load promotions', err);
+          if (isSignalCurrent(signal)) {
+            setPromotions([]);
+          }
+        } finally {
+          if (isSignalCurrent(signal)) {
+            setLoadingPromotions(false);
+          }
+        }
+      };
+
+      void loadAnnouncements();
+      void loadAssetNews();
+      void loadPromotions();
     },
     [
+      createAbortController,
+      isSignalCurrent,
+      memberGroupIds,
       showArchivedAnnouncements,
       showArchivedNews,
       showMoreAnnouncements,
       showMoreNews,
-      memberGroupIds,
     ]
   );
-
-  const loadingLists =
-    loading || groupsLoading || announcements === null || assetNews === null || promotions === null;
 
   const handleClickItem = (item: NewsSummary) => {
     setSelected(item);
@@ -269,27 +338,26 @@ export default function QAssetsNewsSection() {
   };
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (cancelled) return;
-      await loadNews(true);
-    })();
+    if (groupsLoading) return;
+    loadNews(true);
     return () => {
-      cancelled = true;
+      controllerRef.current?.abort();
+      controllerRef.current = null;
     };
-  }, [loadNews]);
+  }, [groupsLoading, loadNews]);
 
   useEffect(() => {
     const handler = () => {
+      if (groupsLoading) return;
       loadNews(true);
     };
     window.addEventListener(NEWS_REFRESH_EVENT, handler);
     return () => {
       window.removeEventListener(NEWS_REFRESH_EVENT, handler);
     };
-  }, [loadNews]);
+  }, [groupsLoading, loadNews]);
 
-  const announcementList = announcements || [];
+  const announcementList = announcements ?? [];
 
   const announcementActive = announcementList.filter((item) => !item.isExpired);
   const announcementArchived = announcementList.filter((item) => item.isExpired);
@@ -303,6 +371,32 @@ export default function QAssetsNewsSection() {
   const visibleNews = (showArchivedNews ? newsArchived : newsActive).slice(
     0,
     showMoreNews ? Number.MAX_SAFE_INTEGER : maxPerList
+  );
+
+  const promotionsList = promotions ?? [];
+
+  const showAnnouncementSkeleton = loadingAnnouncements && announcements === null;
+  const showAssetNewsSkeleton = loadingAssetNews && assetNews === null;
+  const showPromotionsSkeleton = loadingPromotions && promotions === null;
+
+  const ColumnSkeleton = () => (
+    <Card
+      sx={{
+        height: '100%',
+        borderRadius: 3,
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
+        border: `1px solid ${alpha(theme.palette.common.white, 0.08)}`,
+      }}
+    >
+      <CardContent>
+        <Skeleton variant="text" width="60%" sx={{ mb: 1 }} />
+        <Skeleton variant="text" width="90%" />
+        <Skeleton variant="text" width="80%" />
+      </CardContent>
+    </Card>
   );
 
   // Helper for label
@@ -453,100 +547,104 @@ export default function QAssetsNewsSection() {
         Announcements from Q-Assets, latest news from all issuers, and paid promotional content.
       </Typography>
 
-      {loadingLists ? (
-        <Grid container spacing={2}>
-          {[0, 1, 2].map((i) => (
-            <Grid key={i} size={{ xs: 12, md: 4 }}>
-              <Card>
-                <CardContent>
-                  <Skeleton variant="text" width="60%" />
-                  <Skeleton variant="text" width="90%" />
-                  <Skeleton variant="text" width="80%" />
-                </CardContent>
-              </Card>
-            </Grid>
-          ))}
+      <Grid container spacing={2}>
+        <Grid size={{ xs: 12, md: 4 }}>
+          {showAnnouncementSkeleton ? (
+            <ColumnSkeleton />
+          ) : (
+            <>
+              <NewsListColumn
+                title="Q-Assets Announcements"
+                items={visibleAnnouncements}
+                emptyText={
+                  showArchivedAnnouncements
+                    ? 'No archived announcements.'
+                    : 'No Q-Assets announcements yet.'
+                }
+                onClickItem={handleClickItem}
+                variant="announcement"
+              />
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
+                {(showArchivedAnnouncements ? announcementArchived : announcementActive).length >
+                  maxPerList && (
+                  <Button
+                    size="small"
+                    onClick={() => setShowMoreAnnouncements((v) => !v)}
+                    variant="outlined"
+                  >
+                    {showMoreAnnouncements ? 'Show less' : 'Show more'}
+                  </Button>
+                )}
+                {announcementArchived.length > 0 && (
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      setShowArchivedAnnouncements((v) => !v);
+                      setShowMoreAnnouncements(false);
+                    }}
+                  >
+                    {showArchivedAnnouncements ? 'Show active' : 'Show archived'}
+                  </Button>
+                )}
+              </Box>
+            </>
+          )}
         </Grid>
-      ) : (
-        <Grid container spacing={2}>
-          <Grid size={{ xs: 12, md: 4 }}>
-            <NewsListColumn
-              title="Q-Assets Announcements"
-              items={visibleAnnouncements}
-              emptyText={
-                showArchivedAnnouncements
-                  ? 'No archived announcements.'
-                  : 'No Q-Assets announcements yet.'
-              }
-              onClickItem={handleClickItem}
-              variant="announcement"
-            />
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
-              {(showArchivedAnnouncements ? announcementArchived : announcementActive).length >
-                maxPerList && (
-                <Button
-                  size="small"
-                  onClick={() => setShowMoreAnnouncements((v) => !v)}
-                  variant="outlined"
-                >
-                  {showMoreAnnouncements ? 'Show less' : 'Show more'}
-                </Button>
-              )}
-              {announcementArchived.length > 0 && (
-                <Button
-                  size="small"
-                  onClick={() => {
-                    setShowArchivedAnnouncements((v) => !v);
-                    setShowMoreAnnouncements(false);
-                  }}
-                >
-                  {showArchivedAnnouncements ? 'Show active' : 'Show archived'}
-                </Button>
-              )}
-            </Box>
-          </Grid>
-          <Grid size={{ xs: 12, md: 4 }}>
-            <NewsListColumn
-              title="Asset News Publications"
-              items={visibleNews}
-              emptyText={
-                showArchivedNews
-                  ? 'No archived asset news.'
-                  : 'No Assets have not published news yet.'
-              }
-              onClickItem={handleClickItem}
-              variant="news"
-            />
-            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
-              {(showArchivedNews ? newsArchived : newsActive).length > maxPerList && (
-                <Button size="small" onClick={() => setShowMoreNews((v) => !v)} variant="outlined">
-                  {showMoreNews ? 'Show less' : 'Show more'}
-                </Button>
-              )}
-              {newsArchived.length > 0 && (
-                <Button
-                  size="small"
-                  onClick={() => {
-                    setShowArchivedNews((v) => !v);
-                    setShowMoreNews(false);
-                  }}
-                >
-                  {showArchivedNews ? 'Show active' : 'Show archived'}
-                </Button>
-              )}
-            </Box>
-          </Grid>
-          <Grid size={{ xs: 12, md: 4 }}>
+        <Grid size={{ xs: 12, md: 4 }}>
+          {showAssetNewsSkeleton ? (
+            <ColumnSkeleton />
+          ) : (
+            <>
+              <NewsListColumn
+                title="Asset News Publications"
+                items={visibleNews}
+                emptyText={
+                  showArchivedNews
+                    ? 'No archived asset news.'
+                    : 'No Assets have not published news yet.'
+                }
+                onClickItem={handleClickItem}
+                variant="news"
+              />
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
+                {(showArchivedNews ? newsArchived : newsActive).length > maxPerList && (
+                  <Button
+                    size="small"
+                    onClick={() => setShowMoreNews((v) => !v)}
+                    variant="outlined"
+                  >
+                    {showMoreNews ? 'Show less' : 'Show more'}
+                  </Button>
+                )}
+                {newsArchived.length > 0 && (
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      setShowArchivedNews((v) => !v);
+                      setShowMoreNews(false);
+                    }}
+                  >
+                    {showArchivedNews ? 'Show active' : 'Show archived'}
+                  </Button>
+                )}
+              </Box>
+            </>
+          )}
+        </Grid>
+        <Grid size={{ xs: 12, md: 4 }}>
+          {showPromotionsSkeleton ? (
+            <ColumnSkeleton />
+          ) : (
             <NewsListColumn
               title="Promotions"
-              items={promotions ?? []}
+              items={promotionsList}
               emptyText="No active promotions."
               onClickItem={handleClickItem}
               variant="promotion"
             />
-          </Grid>
+          )}
         </Grid>
-      )}
+      </Grid>
       <NewsActionBar
         treasuryAddress="Q-Assets" // TODO put real address for the treasury account. We do not want to utilize Q-Assets.
         defaultPromoPriceQort={5}
