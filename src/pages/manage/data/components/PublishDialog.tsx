@@ -93,25 +93,14 @@ export function PublishDialog({
   );
 
   const hasOptionalChunkable = files.some((file) => file.size > MAX_INLINE_FILE_SIZE);
-  const hasForcedChunking = files.some((file) => file.size > CHUNK_FORCED_THRESHOLD);
+  const chunkingForced =
+    encryptionMode !== 'none' && files.some((file) => file.size > CHUNK_FORCED_THRESHOLD);
 
   useEffect(() => {
-    if (hasForcedChunking) {
+    if (chunkingForced) {
       setChunkedPublishing(true);
     }
-  }, [hasForcedChunking]);
-
-  useEffect(() => {
-    if (chunkedPublishing && encryptionMode !== 'group') {
-      setEncryptionMode('group');
-    }
-  }, [chunkedPublishing, encryptionMode]);
-
-  useEffect(() => {
-    if (encryptionMode === 'none' && chunkedPublishing) {
-      setChunkedPublishing(false);
-    }
-  }, [encryptionMode, chunkedPublishing]);
+  }, [chunkingForced]);
 
   const handleSelectFiles = (event: React.ChangeEvent<HTMLInputElement>) => {
     const nextFiles = Array.from(event.target.files ?? []);
@@ -209,13 +198,9 @@ export function PublishDialog({
             value={encryptionMode}
             onChange={(_event, value) => value && setEncryptionMode(value)}
           >
-            <ToggleButton value="none" disabled={chunkedPublishing}>
-              None
-            </ToggleButton>
+            <ToggleButton value="none">None</ToggleButton>
             <ToggleButton value="group">Group</ToggleButton>
-            <ToggleButton value="direct" disabled={chunkedPublishing}>
-              Direct
-            </ToggleButton>
+            <ToggleButton value="direct">Direct</ToggleButton>
           </ToggleButtonGroup>
           {encryptionMode === 'group' && (
             <>
@@ -257,29 +242,28 @@ export function PublishDialog({
               value={directRecipients}
               onChange={(event) => setDirectRecipients(event.target.value)}
               helperText="Direct encryption will use resolved public keys for the listed recipients."
-              disabled={chunkedPublishing}
             />
           )}
 
-          {encryptionMode !== 'none' && hasOptionalChunkable && (
+          {hasOptionalChunkable && (
             <FormControlLabel
               control={
                 <Switch
                   checked={chunkedPublishing}
                   onChange={(_event, checked) => setChunkedPublishing(checked)}
-                  disabled={hasForcedChunking}
+                  disabled={chunkingForced}
                 />
               }
               label={
-                hasForcedChunking
+                chunkingForced
                   ? 'Chunked upload required for files over 100MB'
                   : 'Use chunked publishing for large files'
               }
             />
           )}
-          {chunkedPublishing && !groupId && (
+          {encryptionMode === 'group' && chunkedPublishing && !groupId && (
             <Typography variant="caption" color="warning.main">
-              Chunked publishing requires a private group and group encryption.
+              Chunked publishing with group encryption requires selecting a private group.
             </Typography>
           )}
 

@@ -48,9 +48,10 @@ export function createChunkedManifest(
   file: File,
   chunkSize: number,
   chunks: FileChunkDescriptor[],
-  encryption?: ChunkedFileManifest['encryption']
+  encryption?: ChunkedFileManifest['encryption'],
+  mimeTypeOverride?: string
 ): ChunkedFileManifest {
-  const mimeType = file.type || 'application/octet-stream';
+  const mimeType = mimeTypeOverride || file.type || 'application/octet-stream';
   return {
     version: 1,
     fileName: file.name,

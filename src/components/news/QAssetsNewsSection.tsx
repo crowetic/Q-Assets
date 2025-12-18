@@ -564,7 +564,15 @@ export default function QAssetsNewsSection() {
                 onClickItem={handleClickItem}
                 variant="announcement"
               />
-              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
+              <Box
+                sx={{
+                  display: 'flex',
+                  gap: 1,
+                  flexWrap: 'wrap',
+                  justifyContent: 'center',
+                  mt: 1,
+                }}
+              >
                 {(showArchivedAnnouncements ? announcementArchived : announcementActive).length >
                   maxPerList && (
                   <Button
@@ -606,7 +614,15 @@ export default function QAssetsNewsSection() {
                 onClickItem={handleClickItem}
                 variant="news"
               />
-              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
+              <Box
+                sx={{
+                  display: 'flex',
+                  gap: 1,
+                  flexWrap: 'wrap',
+                  justifyContent: 'center',
+                  mt: 1,
+                }}
+              >
                 {(showArchivedNews ? newsArchived : newsActive).length > maxPerList && (
                   <Button
                     size="small"

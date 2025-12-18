@@ -638,7 +638,9 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setCards((prev) => ({ ...prev, [cardId]: normalizeCardCollapse(next) }));
       const publisher = auth.name ? auth.name : identity.name;
       const payload = await buildCardPublishPayload(publisher, board, next);
-      await queueOrPublishResources(board.boardId, [payload]);
+      const indexDoc = await addCardToIndex(publisher, board, cardId, publisher, { skipPublish: true });
+      const indexPayload = await buildCardsIndexPublishPayload(publisher, board, indexDoc);
+      await queueOrPublishResources(board.boardId, [payload, indexPayload]);
     },
     [board, cards, auth.name, identity.name, queueOrPublishResources, normalizeCardCollapse]
   );
@@ -664,7 +666,9 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setCards((prev) => ({ ...prev, [card.cardId]: normalizeCardCollapse(card) }));
       const publisher = auth.name ? auth.name : identity.name;
       const payload = await buildCardPublishPayload(publisher, board, card);
-      await queueOrPublishResources(board.boardId, [payload]);
+      const indexDoc = await addCardToIndex(publisher, board, card.cardId, publisher, { skipPublish: true });
+      const indexPayload = await buildCardsIndexPublishPayload(publisher, board, indexDoc);
+      await queueOrPublishResources(board.boardId, [payload, indexPayload]);
     },
     [board, cards, auth.name, identity.name, queueOrPublishResources, normalizeCardCollapse]
   );

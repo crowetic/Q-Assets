@@ -167,6 +167,18 @@ const MANIFEST_REFRESH_COOLDOWN = 90 * 1000;
 const MAX_FILE_IDENTIFIER_LENGTH = QASSETS_FILE_ID_MAX;
 const CHUNK_METADATA_TAG = 'qassets-chunk';
 const MANIFEST_SERVICE = ensurePrivateService('DOCUMENT_PRIVATE');
+
+const getChunkIdentifiersForResource = (resource: QdnResource): string[] => {
+  const chunkMeta = (resource.metadata?.qassetsFs || {}) as Record<string, any>;
+  if (!chunkMeta?.chunked) return [];
+  const chunkCount = Number(chunkMeta.chunkCount);
+  if (!Number.isFinite(chunkCount) || chunkCount <= 0) return [];
+  const baseIdentifier = String(resource.identifier || '');
+  if (!baseIdentifier) return [];
+  return Array.from({ length: chunkCount }, (_item, index) =>
+    buildChunkIdentifier(baseIdentifier, index).slice(0, MAX_FILE_IDENTIFIER_LENGTH)
+  );
+};
 type ResourceSort =
   | 'name-asc'
   | 'name-desc'
@@ -264,6 +276,35 @@ const guessMimeTypeForResource = (resource: QdnResource) => {
   const ext = (identifier.split('.').pop() || '').toLowerCase();
   if (ext && extensionMimeHints[ext]) return extensionMimeHints[ext];
   return 'application/octet-stream';
+};
+
+const guessMimeTypeFromFilename = (fileName: string) => {
+  const ext = (fileName.split('.').pop() || '').toLowerCase();
+  if (ext && extensionMimeHints[ext]) return extensionMimeHints[ext];
+  if (ext === 'mp4' || ext === 'm4v') return 'video/mp4';
+  if (ext === 'mkv') return 'video/x-matroska';
+  if (ext === 'webm') return 'video/webm';
+  if (ext === 'mov') return 'video/quicktime';
+  if (ext === 'mp3') return 'audio/mpeg';
+  return 'application/octet-stream';
+};
+
+const tryParseChunkedManifest = (base64: string): ChunkedFileManifest | null => {
+  try {
+    const parsed = JSON.parse(base64ToUtf8(base64));
+    if (parsed?.version === 1 && Array.isArray(parsed.chunks)) {
+      return parsed as ChunkedFileManifest;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+};
+
+const guessMimeTypeForFile = (file: File) => {
+  if (file.type) return file.type;
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  return ext && extensionMimeHints[ext] ? extensionMimeHints[ext] : 'application/octet-stream';
 };
 
 const getMetadataTags = (metadata: Record<string, any> | undefined) => {
@@ -517,21 +558,31 @@ async function decryptPrivateBase64(
   const mode = info.mode;
   const groupId = info.groupId ?? null;
   const adminsOnly = !!info.adminsOnly;
+  console.log('decryptPrivateBase64 detected mode:', mode);
 
-  const encryptedPayload = stripPrivateMagicIfNeeded(encryptedWithMagic, resource.service, mode);
+  let encryptedPayload = encryptedWithMagic;
+  if (resource.service.includes('PRIVATE')) {
+    encryptedPayload = stripPrivateMagicIfNeeded(encryptedWithMagic, resource.service, mode);
+  }
+
+  // const encryptedPayload = encryptedWithMagic;
 
   // Always try direct decrypt first (covers NODE-inserted metadata-less items)
   try {
-    const direct = await qortalRequest({
-      action: 'DECRYPT_DATA',
-      encryptedData: encryptedPayload,
-    });
-    if (direct) return direct;
+    if (mode != 'group' || !mode) {
+      console.log('no group mode detected, or no mode found, attempting direct decrypt');
+      const direct = await qortalRequest({
+        action: 'DECRYPT_DATA',
+        encryptedData: encryptedPayload,
+      });
+      if (direct) return direct;
+    }
   } catch {
     // ignore; fall through
   }
 
   if (mode === 'group') {
+    console.log('group mode detected, attempting group decrypt');
     if (groupId) {
       const preferredAttempts = buildGroupDecryptAttempts(groups, {
         groupId,
@@ -543,6 +594,7 @@ async function decryptPrivateBase64(
   }
 
   if (mode === 'direct') {
+    console.log('explicit direct mode found, attempting direct...');
     const clear = await qortalRequest({
       action: 'DECRYPT_DATA',
       encryptedData: encryptedPayload,
@@ -871,7 +923,6 @@ export default function DataExplorer() {
   );
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   const previewChunkedBlobUrlRef = useRef<string | null>(null);
-  const chunkedMediaSourceRef = useRef<{ objectUrl: string; cancel: () => void } | null>(null);
   const setPreviewChunkedBlobUrl = useCallback((url?: string) => {
     if (previewChunkedBlobUrlRef.current && previewChunkedBlobUrlRef.current !== url) {
       URL.revokeObjectURL(previewChunkedBlobUrlRef.current);
@@ -884,18 +935,9 @@ export default function DataExplorer() {
       previewChunkedBlobUrlRef.current = null;
     }
   }, []);
-  const cleanupChunkedMediaSource = useCallback(() => {
-    const entry = chunkedMediaSourceRef.current;
-    chunkedMediaSourceRef.current = null;
-    if (entry) {
-      entry.cancel();
-      URL.revokeObjectURL(entry.objectUrl);
-    }
-  }, []);
   const cleanupChunkedVideoPreview = useCallback(() => {
-    cleanupChunkedMediaSource();
     cleanupChunkedBlobUrl();
-  }, [cleanupChunkedBlobUrl, cleanupChunkedMediaSource]);
+  }, [cleanupChunkedBlobUrl]);
   const [manifestDialog, setManifestDialog] = useState<{
     open: boolean;
     entry: StructuredEntry | null;
@@ -1044,6 +1086,18 @@ export default function DataExplorer() {
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [shareTargets, setShareTargets] = useState<QdnResource[]>([]);
   const resolveResourceBase64 = useResolveResourceBase64(groups);
+  const hydrateChunkedEntry = useCallback((entry: LoadedResourceContent): LoadedResourceContent => {
+    if (entry.chunkedManifest) return entry;
+    const manifest = tryParseChunkedManifest(entry.base64);
+    if (!manifest) return entry;
+    const nextMime =
+      manifest.mimeType ||
+      guessMimeTypeFromFilename(manifest.fileName) ||
+      entry.mime ||
+      'application/octet-stream';
+    return { ...entry, chunkedManifest: manifest, mime: nextMime };
+  }, []);
+
   const ensureResourceContent = useCallback(
     async (
       resource: QdnResource,
@@ -1052,9 +1106,22 @@ export default function DataExplorer() {
         skipCache?: boolean;
       }
     ) => {
+      const chunkedMeta = Boolean((resource.metadata?.qassetsFs as any)?.chunked);
       if (!options?.skipCache && loadedContent && loadedContent.key === resource.identifier) {
-        options?.onStep?.('analyze', 'success');
-        return loadedContent;
+        const cachedEntry = hydrateChunkedEntry(loadedContent);
+        if (!chunkedMeta || cachedEntry.chunkedManifest) {
+          options?.onStep?.('analyze', 'success');
+          if (cachedEntry !== loadedContent) {
+            setLoadedContent(cachedEntry);
+          }
+          const detectedMime = cachedEntry.chunkedManifest?.mimeType || cachedEntry.mime;
+          setDetectedTypes((prev) =>
+            prev[resource.identifier] === detectedMime
+              ? prev
+              : { ...prev, [resource.identifier]: detectedMime }
+          );
+          return cachedEntry;
+        }
       }
       const base64 = await resolveResourceBase64(resource, options?.onStep);
       options?.onStep?.('analyze', 'active');
@@ -1066,24 +1133,19 @@ export default function DataExplorer() {
         base64,
         mime: inferredMime,
       };
-      if ((resource.metadata?.qassetsFs as any)?.chunked) {
-        try {
-          const manifest = JSON.parse(base64ToUtf8(base64)) as ChunkedFileManifest;
-          if (manifest && Array.isArray(manifest.chunks)) {
-            entry.chunkedManifest = manifest;
-            if (manifest.mimeType) {
-              entry.mime = manifest.mimeType;
-            }
-          }
-        } catch {
-          // ignore malformed chunk manifest
-        }
+      const chunkManifest = tryParseChunkedManifest(base64);
+      if (chunkManifest) {
+        entry.chunkedManifest = chunkManifest;
+        entry.mime = chunkManifest.mimeType || guessMimeTypeFromFilename(chunkManifest.fileName);
+      } else if ((resource.metadata?.qassetsFs as any)?.chunked) {
+        entry.mime = inferredMime;
       }
       setLoadedContent(entry);
+      const detectedMime = entry.chunkedManifest?.mimeType || entry.mime;
       setDetectedTypes((prev) =>
-        prev[resource.identifier] === inferredMime
+        prev[resource.identifier] === detectedMime
           ? prev
-          : { ...prev, [resource.identifier]: inferredMime }
+          : { ...prev, [resource.identifier]: detectedMime }
       );
       return entry;
     },
@@ -1501,110 +1563,43 @@ export default function DataExplorer() {
     return map;
   }, [combinedResources]);
 
-  const createChunkedBlobUrl = useCallback(
-    async (manifest: ChunkedFileManifest) => {
+  const assembleChunkedBlob = useCallback(
+    async (
+      manifest: ChunkedFileManifest,
+      options?: { onProgress?: (index: number, total: number) => void }
+    ) => {
       if (!manifest.chunks?.length) {
         throw new Error('Chunk manifest is empty.');
       }
       const buffers: Uint8Array[] = [];
-      for (const chunk of manifest.chunks) {
+      const sortedChunks = [...manifest.chunks].sort((a, b) => a.index - b.index);
+      const totalChunks = sortedChunks.length;
+      for (let chunkIndex = 0; chunkIndex < sortedChunks.length; chunkIndex += 1) {
+        const chunk = sortedChunks[chunkIndex];
         const chunkResource = combinedResourceMap.get(chunk.identifier);
         if (!chunkResource) {
           throw new Error(`Chunk ${chunk.identifier} is not available yet.`);
         }
         const chunkBase64 = await resolveResourceBase64(chunkResource);
         buffers.push(base64ToUint8Array(chunkBase64));
+        options?.onProgress?.(chunkIndex + 1, totalChunks);
       }
-      const blob = new Blob(buffers, {
+      return new Blob(buffers, {
         type: manifest.mimeType || 'application/octet-stream',
       });
-      return URL.createObjectURL(blob);
     },
     [combinedResourceMap, resolveResourceBase64]
   );
 
-  const streamChunkedVideo = useCallback(
-    (manifest: ChunkedFileManifest) => {
-      if (!manifest.chunks?.length) {
-        throw new Error('Chunk manifest is empty.');
-      }
-      if (typeof window === 'undefined' || typeof MediaSource === 'undefined') {
-        throw new Error('Chunk streaming is not supported in this environment.');
-      }
-      cleanupChunkedMediaSource();
-      const mediaSource = new MediaSource();
-      const objectUrl = URL.createObjectURL(mediaSource);
-      const sortedChunks = [...manifest.chunks].sort((a, b) => a.index - b.index);
-      let resolved = false;
-      let rejectStream: ((reason?: any) => void) | null = null;
-      const promise = new Promise<void>((resolve, reject) => {
-        rejectStream = reject;
-        const handleSourceOpen = () => {
-          mediaSource.removeEventListener('sourceopen', handleSourceOpen);
-          let sourceBuffer: SourceBuffer;
-          try {
-            sourceBuffer = mediaSource.addSourceBuffer(manifest.mimeType || 'video/mp4');
-          } catch (err) {
-            reject(err);
-            return;
-          }
-          let nextIndex = 0;
-          const appendNextChunk = async () => {
-            if (resolved) return;
-            if (nextIndex >= sortedChunks.length) {
-              resolved = true;
-              if (mediaSource.readyState === 'open') {
-                try {
-                  mediaSource.endOfStream();
-                } catch (e) {
-                  console.log(e);
-                }
-              }
-              resolve();
-              return;
-            }
-            if (sourceBuffer.updating) {
-              sourceBuffer.addEventListener('updateend', appendNextChunk, { once: true });
-              return;
-            }
-            const chunkMeta = sortedChunks[nextIndex];
-            const chunkResource = combinedResourceMap.get(chunkMeta.identifier);
-            if (!chunkResource) {
-              reject(new Error(`Chunk ${chunkMeta.identifier} is not available yet.`));
-              return;
-            }
-            try {
-              const chunkBase64 = await resolveResourceBase64(chunkResource);
-              const chunkData = base64ToUint8Array(chunkBase64);
-              sourceBuffer.appendBuffer(chunkData);
-              nextIndex += 1;
-              sourceBuffer.addEventListener('updateend', appendNextChunk, { once: true });
-            } catch (err) {
-              reject(err);
-            }
-          };
-          appendNextChunk();
-        };
-        mediaSource.addEventListener('sourceopen', handleSourceOpen);
-      });
-      const cancel = () => {
-        if (resolved) return;
-        resolved = true;
-        if (rejectStream) {
-          rejectStream(new Error('Chunk streaming cancelled.'));
-        }
-        if (mediaSource.readyState === 'open') {
-          try {
-            mediaSource.endOfStream();
-          } catch (e) {
-            console.log(e);
-          }
-        }
-      };
-      chunkedMediaSourceRef.current = { objectUrl, cancel };
-      return { objectUrl, promise };
+  const createChunkedBlobUrl = useCallback(
+    async (
+      manifest: ChunkedFileManifest,
+      options?: { onProgress?: (index: number, total: number) => void }
+    ) => {
+      const blob = await assembleChunkedBlob(manifest, options);
+      return URL.createObjectURL(blob);
     },
-    [cleanupChunkedMediaSource, combinedResourceMap, resolveResourceBase64]
+    [assembleChunkedBlob]
   );
 
   const resourceStructuredEntries = useMemo(
@@ -2310,7 +2305,7 @@ export default function DataExplorer() {
         }
         const description = treatAsEncrypted
           ? 'Encrypted resource published via Q-Assets Data Explorer.'
-          : saveToFilesDialog.description || resource.metadata?.description;
+          : saveToFilesDialog.description || '';
 
         publishRequests.push({
           name: activeName,
@@ -2493,15 +2488,8 @@ export default function DataExplorer() {
     }
 
     const normalizedFolder = normalizePathSegments(form.folderPath).join('/');
-    const hasForcedChunking =
-      encryptionMode !== 'none' && files.some((file) => file.size > CHUNK_FORCED_THRESHOLD);
-    const requiresChunkGroup = chunkedPublishing && encryptionMode !== 'none';
-    const needsForcedGroup = hasForcedChunking;
-    if (requiresChunkGroup && encryptionMode !== 'group') {
-      setPublishStatus('Chunked publishing requires group encryption.');
-      return;
-    }
-    if ((requiresChunkGroup || needsForcedGroup) && !groupId) {
+    const groupChunkingRequired = encryptionMode === 'group' && chunkedPublishing;
+    if (groupChunkingRequired && !groupId) {
       setPublishStatus('Select a private group for chunked publishing.');
       return;
     }
@@ -2509,6 +2497,7 @@ export default function DataExplorer() {
     setPublishing(true);
     setPublishStatus(null);
     const baseId = sanitizeIdentifier(form.identifier || '');
+    let chunkedPublishUsed = false;
     let success = false;
     try {
       const publisherAddress = await resolvePublisherAddress();
@@ -2593,14 +2582,15 @@ export default function DataExplorer() {
         const file = files[i];
         const title = form.title || file.name;
         const description = form.description || `Published via Q-Assets Data Explorer`;
+        const includeFsMetadata = form.structured && encryptionMode === 'none';
         let tags: string[] = [];
-        if (form.structured) {
+        if (includeFsMetadata) {
           tags.push('qassets-fs');
           if (normalizedFolder) tags.push(`fs-path:${normalizedFolder}`);
           tags.push(`fs-name:${file.name}`);
         }
         let metadata: Record<string, any> = {};
-        if (form.structured) {
+        if (includeFsMetadata) {
           metadata.qassetsFs = {
             path: normalizedFolder,
             fileName: file.name,
@@ -2620,10 +2610,11 @@ export default function DataExplorer() {
           identifier = buildQassetsFileIdentifier(form.service as Service, activeName);
         }
 
+        const fileExceedsInlineLimit = file.size > MAX_INLINE_FILE_SIZE;
+        const fileExceedsForcedThreshold = file.size > CHUNK_FORCED_THRESHOLD;
         const shouldChunk =
-          encryptionMode !== 'none' &&
-          (file.size > CHUNK_FORCED_THRESHOLD ||
-            (chunkedPublishing && file.size > MAX_INLINE_FILE_SIZE));
+          (encryptionMode !== 'none' && fileExceedsForcedThreshold) ||
+          (chunkedPublishing && fileExceedsInlineLimit);
         if (!shouldChunk) {
           const file64 = await fileToBase64(file);
           const {
@@ -2647,6 +2638,7 @@ export default function DataExplorer() {
           continue;
         }
 
+        chunkedPublishUsed = true;
         const chunkDescriptors: FileChunkDescriptor[] = [];
         const chunkPublishRequests: BatchPublishResource[] = [];
         for await (const chunk of iterateFileChunks(file, chunkSize)) {
@@ -2689,18 +2681,25 @@ export default function DataExplorer() {
 
         publishRequests.push(...chunkPublishRequests);
 
-        const chunkEncryptionInfo: ChunkedFileManifest['encryption'] | undefined =
-          encryptionMode === 'group'
-            ? { mode: 'group', groupId: groupId ?? undefined, adminsOnly: groupAdminsOnly }
-            : {
-                mode: 'direct',
-                recipientCount: directPublicKeys.length || directRecipientList.length || 1,
-              };
+        let chunkEncryptionInfo: ChunkedFileManifest['encryption'] | undefined;
+        if (encryptionMode === 'group') {
+          chunkEncryptionInfo = {
+            mode: 'group',
+            groupId: groupId ?? undefined,
+            adminsOnly: groupAdminsOnly,
+          };
+        } else if (encryptionMode === 'direct') {
+          chunkEncryptionInfo = {
+            mode: 'direct',
+            recipientCount: directPublicKeys.length || directRecipientList.length || 1,
+          };
+        }
         const manifest = createChunkedManifest(
           file,
           chunkSize,
           chunkDescriptors,
-          chunkEncryptionInfo
+          chunkEncryptionInfo,
+          guessMimeTypeForFile(file)
         );
         const manifestJson = await objectToBase64(manifest);
         const {
@@ -2710,15 +2709,23 @@ export default function DataExplorer() {
           privateMode: manifestPrivateMode,
         } = await encryptPayload(manifestJson);
         const manifestTags = Array.from(new Set([...manifestTagExtra, ...tags]));
+        const manifestFsMetadata = includeFsMetadata
+          ? {
+              ...(metadata.qassetsFs || {}),
+              chunked: true,
+              chunkManifestId: identifier,
+              chunkCount: chunkDescriptors.length,
+              chunkSize,
+            }
+          : {
+              chunked: true,
+              chunkManifestId: identifier,
+              chunkCount: chunkDescriptors.length,
+              chunkSize,
+            };
         const manifestMetadata = {
           ...metadata,
-          qassetsFs: {
-            ...(metadata.qassetsFs || {}),
-            chunked: true,
-            chunkManifestId: identifier,
-            chunkCount: chunkDescriptors.length,
-            chunkSize,
-          },
+          qassetsFs: manifestFsMetadata,
         };
         publishRequests.push({
           name: activeName,
@@ -2735,6 +2742,17 @@ export default function DataExplorer() {
 
       await publishResources(publishRequests);
       await refreshResources();
+      if (chunkedPublishUsed) {
+        if (publishMode === 'immediate') {
+          try {
+            await handlePublishManifest();
+          } catch (manifestError) {
+            console.warn('Chunked manifest sync failed', manifestError);
+          }
+        } else {
+          setManifestDirty(true);
+        }
+      }
       success = true;
     } catch (e: any) {
       setPublishStatus(e?.message || 'Publish failed');
@@ -2890,11 +2908,20 @@ export default function DataExplorer() {
       const loaded = await ensureResourceContent(target, { onStep: updateStep });
       if (loaded.chunkedManifest) {
         const chunkManifest = loaded.chunkedManifest!;
-        const chunkedMime = chunkManifest.mimeType || loaded.mime;
+        const chunkedMime =
+          chunkManifest.mimeType ||
+          guessMimeTypeFromFilename(chunkManifest.fileName) ||
+          loaded.mime;
         if (chunkedMime.startsWith('video/')) {
-          updateStep('analyze', 'active', 'Streaming video from chunks…');
+          updateStep('analyze', 'active', 'Decrypting chunked video…');
           try {
-            const { objectUrl, promise } = streamChunkedVideo(chunkManifest);
+            cleanupChunkedVideoPreview();
+            const fallbackUrl = await createChunkedBlobUrl(chunkManifest, {
+              onProgress: (index, total) => {
+                updateStep('analyze', 'active', `Decrypting chunked video (${index}/${total})…`);
+              },
+            });
+            setPreviewChunkedBlobUrl(fallbackUrl);
             setPreviewDialog((prev) => ({
               ...prev,
               open: true,
@@ -2904,68 +2931,27 @@ export default function DataExplorer() {
               resource: target,
               zoomed: false,
               chunked: true,
-              videoUrl: objectUrl,
+              videoUrl: fallbackUrl,
               error: undefined,
             }));
-            void promise.catch(async (streamError) => {
-              updateStep('analyze', 'error', streamError?.message);
-              cleanupChunkedMediaSource();
-              try {
-                const fallbackUrl = await createChunkedBlobUrl(chunkManifest);
-                setPreviewChunkedBlobUrl(fallbackUrl);
-                setPreviewDialog((prev) => ({
-                  ...prev,
-                  videoUrl: fallbackUrl,
-                  error:
-                    streamError?.message ||
-                    'Streaming unavailable; playing buffered video instead.',
-                }));
-              } catch (fallbackError: any) {
-                setPreviewDialog((prev) => ({
-                  ...prev,
-                  error:
-                    fallbackError?.message ||
-                    streamError?.message ||
-                    'Unable to load chunked video.',
-                }));
-              }
-            });
             updateStep('analyze', 'success');
             return;
-          } catch (startError: any) {
-            updateStep('analyze', 'error', startError?.message);
-            cleanupChunkedMediaSource();
-            const fallbackMessage = startError?.message || 'Streaming unavailable.';
-            try {
-              const fallbackUrl = await createChunkedBlobUrl(chunkManifest);
-              setPreviewChunkedBlobUrl(fallbackUrl);
-              setPreviewDialog((prev) => ({
-                ...prev,
-                open: true,
-                loading: false,
-                title: getResourceLabel(target),
-                type: 'video',
-                resource: target,
-                zoomed: false,
-                chunked: true,
-                videoUrl: fallbackUrl,
-                error: fallbackMessage,
-              }));
-            } catch (fallbackError: any) {
-              setPreviewDialog((prev) => ({
-                ...prev,
-                open: true,
-                loading: false,
-                title: getResourceLabel(target),
-                type: 'video',
-                resource: target,
-                zoomed: false,
-                chunked: false,
-                videoUrl: undefined,
-                error:
-                  fallbackError?.message || startError?.message || 'Unable to load chunked video.',
-              }));
-            }
+          } catch (error: any) {
+            updateStep('analyze', 'error', error?.message);
+            cleanupChunkedVideoPreview();
+            setPreviewDialog((prev) => ({
+              ...prev,
+              open: true,
+              loading: false,
+              title: getResourceLabel(target),
+              type: 'binary',
+              content: 'Unable to preview this chunked video. Use Save to system to download.',
+              resource: target,
+              zoomed: false,
+              chunked: false,
+              videoUrl: undefined,
+              error: error?.message || 'Unable to load chunked video.',
+            }));
             return;
           }
         }
@@ -3516,13 +3502,18 @@ export default function DataExplorer() {
       const loaded = await ensureResourceContent(resource);
       const cleanName =
         entry?.fileName || resource.identifier.replace(/[^a-zA-Z0-9._-]+/g, '_') || 'resource';
-      const byteArray = base64ToUint8Array(loaded.base64);
-      const blob = new Blob([byteArray], { type: loaded.mime || 'application/octet-stream' });
+      let blob: Blob;
+      if (loaded.chunkedManifest) {
+        blob = await assembleChunkedBlob(loaded.chunkedManifest);
+      } else {
+        const byteArray = base64ToUint8Array(loaded.base64);
+        blob = new Blob([byteArray], { type: loaded.mime || 'application/octet-stream' });
+      }
       await qortalRequest({
         action: 'SAVE_FILE',
         blob,
         filename: cleanName,
-        mimeType: loaded.mime,
+        mimeType: blob.type || loaded.mime,
       } as any);
       setSystemSaveStatus(statusPrefix);
     } catch (e: any) {
@@ -3741,9 +3732,13 @@ export default function DataExplorer() {
     if (!targets.length) return;
     setFilesActionLoading('delete');
     setSystemSaveStatus(null);
+    const chunkedChildIdentifiers = targets.flatMap((entry) =>
+      getChunkIdentifiersForResource(entry.resource)
+    );
     setPendingDeletes((prev) => {
       const set = new Set(prev);
       targets.forEach((entry) => set.add(entry.resource.identifier));
+      chunkedChildIdentifiers.forEach((id) => set.add(id));
       return Array.from(set);
     });
     try {
@@ -3783,14 +3778,54 @@ export default function DataExplorer() {
           metadata,
           tags: ['qassets-tombstone'],
         });
+        const chunkIds = getChunkIdentifiersForResource(entry.resource);
+        const chunkPath = entry.folderSegments.join('/');
+        for (const [chunkIndex, chunkId] of chunkIds.entries()) {
+          const chunkDescription = entry.isPrivate
+            ? ''
+            : `${entry.fileName} (chunk ${chunkIndex + 1})`;
+          const chunkTombstone = {
+            qassets: { tombstone: true, version: 1 },
+            deleted: true,
+            deletedAt,
+            name: entry.resource.name,
+            service: entry.resource.service,
+            identifier: chunkId,
+            reason: 'user-delete',
+          };
+          const chunkBase64 = await objectToBase64(chunkTombstone);
+          resources.push({
+            name: entry.resource.name,
+            service: entry.resource.service as Service,
+            identifier: chunkId,
+            base64: chunkBase64,
+            title: 'TOMBSTONE',
+            description: 'Resource removed by publisher',
+            metadata: {
+              tags: ['qassets-tombstone'],
+              qassetsTombstone: {
+                version: 1,
+                deleted: true,
+                deletedAt,
+                reason: 'user-delete',
+                path: entry.isPrivate ? '' : chunkPath,
+                fileName: entry.isPrivate ? '' : chunkDescription,
+                chunkIndex,
+              },
+            },
+            tags: ['qassets-tombstone'],
+          });
+          removedIdentifiers.push(chunkId);
+        }
       }
       await queueOrPublishResources(resources);
-      await applyManifestDeletes(removedIdentifiers);
-      prunePendingMoves(removedIdentifiers);
+      const uniqueRemovedIdentifiers = Array.from(new Set(removedIdentifiers));
+      await applyManifestDeletes(uniqueRemovedIdentifiers);
+      prunePendingMoves(uniqueRemovedIdentifiers);
       setSelectedResourceId(null);
-      setSelectedResourceIds((prev) => prev.filter((id) => !removedIdentifiers.includes(id)));
+      setSelectedResourceIds((prev) => prev.filter((id) => !uniqueRemovedIdentifiers.includes(id)));
       await refreshResources();
-      setPendingDeletes((prev) => prev.filter((id) => !removedIdentifiers.includes(id)));
+      setPendingDeletes((prev) => prev.filter((id) => !uniqueRemovedIdentifiers.includes(id)));
       const successMsg =
         publishMode === 'batch' ? 'Delete queued for manifest publish.' : 'Deleted Files copy.';
       setSystemSaveStatus(successMsg);
@@ -3814,11 +3849,15 @@ export default function DataExplorer() {
           ? [primaryResource]
           : [];
     if (!bulkResources.length) return;
+    const chunkedChildIdentifiers = bulkResources.flatMap((resource) =>
+      getChunkIdentifiersForResource(resource)
+    );
     setFilesActionLoading('delete');
     setSystemSaveStatus(null);
     setPendingDeletes((prev) => {
       const set = new Set(prev);
       bulkResources.forEach((resource) => set.add(resource.identifier));
+      chunkedChildIdentifiers.forEach((id) => set.add(id));
       return Array.from(set);
     });
     try {
@@ -3869,14 +3908,53 @@ export default function DataExplorer() {
           },
           tags: ['qassets-tombstone'],
         });
+        removedIdentifiers.push(resource.identifier);
+
+        const chunkIds = getChunkIdentifiersForResource(resource);
+        const isPrivateResource = resourceIsPrivate(resource);
+        for (const [chunkIndex, chunkId] of chunkIds.entries()) {
+          const chunkTombstone = {
+            qassets: { tombstone: true, version: 1 },
+            deleted: true,
+            deletedAt,
+            name: resource.name,
+            service: resource.service,
+            identifier: chunkId,
+            reason: 'user-delete',
+          };
+          const chunkBase64 = await objectToBase64(chunkTombstone);
+          requests.push({
+            name: resource.name,
+            service: resource.service as Service,
+            identifier: chunkId,
+            base64: chunkBase64,
+            title: 'TOMBSTONE',
+            description: 'Resource removed by publisher',
+            metadata: {
+              tags: ['qassets-tombstone'],
+              qassetsTombstone: {
+                version: 1,
+                deleted: true,
+                deletedAt,
+                reason: 'user-delete',
+                path: isPrivateResource ? '' : path,
+                fileName: isPrivateResource ? '' : `${fileName} (chunk ${chunkIndex + 1})`,
+                chunkIndex,
+              },
+            },
+            tags: ['qassets-tombstone'],
+          });
+          removedIdentifiers.push(chunkId);
+        }
       }
       await queueOrPublishResources(requests);
-      await applyManifestDeletes(removedIdentifiers);
-      prunePendingMoves(removedIdentifiers);
+      const uniqueRemovedIdentifiers = Array.from(new Set(removedIdentifiers));
+      await applyManifestDeletes(uniqueRemovedIdentifiers);
+      prunePendingMoves(uniqueRemovedIdentifiers);
       setSelectedResourceId(null);
-      setSelectedResourceIds((prev) => prev.filter((id) => !removedIdentifiers.includes(id)));
+      setSelectedResourceIds((prev) => prev.filter((id) => !uniqueRemovedIdentifiers.includes(id)));
       await refreshResources();
-      setPendingDeletes((prev) => prev.filter((id) => !removedIdentifiers.includes(id)));
+      setPendingDeletes((prev) => prev.filter((id) => !uniqueRemovedIdentifiers.includes(id)));
       const successMsg =
         publishMode === 'batch' ? 'Delete queued for manifest publish.' : 'Deleted service data.';
       setSystemSaveStatus(successMsg);
