@@ -398,7 +398,7 @@ export async function fetchLatestAssetNews(
           const isExpired = expiryCutoff != null && created < expiryCutoff;
           if (!includeExpired && isExpired) return null;
 
-          return {
+          const entry: NewsSummary = {
             type: 'assetNews',
             identifier: hit.identifier,
             title,
@@ -411,6 +411,7 @@ export async function fetchLatestAssetNews(
             publisherName: hit.name,
             service: finalService,
           };
+          return entry;
         } catch (err) {
           if (isAbortError(err)) throw err;
           console.warn('Failed to fetch asset news item', err);
