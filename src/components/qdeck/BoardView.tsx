@@ -318,6 +318,10 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
   // --- per-list inline rename state ---
   const [editingListId, setEditingListId] = useState<string | null>(null);
   const [editingListTitle, setEditingListTitle] = useState('');
+  const [listMenuState, setListMenuState] = useState<{
+    anchor: HTMLElement;
+    listId: string;
+  } | null>(null);
 
   // quick-add per-list
   const [addingForList, setAddingForList] = useState<AddFormState | null>(null);
@@ -390,6 +394,38 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
       handleListTitleDraftChange(list.listId, list.title);
     },
     [handleListTitleDraftChange]
+  );
+
+  const handleOpenListMenu = useCallback(
+    (event: MouseEvent<HTMLElement>, listId: string) => {
+      event.stopPropagation();
+      setListMenuState({ anchor: event.currentTarget, listId });
+    },
+    []
+  );
+  const handleCloseListMenu = useCallback(() => setListMenuState(null), []);
+
+  const selectedList = useMemo(
+    () => board?.lists.find((l) => l.listId === listMenuState?.listId) ?? null,
+    [board?.lists, listMenuState?.listId]
+  );
+
+  const handleRenameListFromMenu = useCallback(() => {
+    if (!selectedList) return;
+    handleCloseListMenu();
+    startEditingList(selectedList);
+  }, [handleCloseListMenu, selectedList, startEditingList]);
+
+  const handleSetListDefaultDisplay = useCallback(
+    async (listId: string, collapsed: boolean) => {
+      handleCloseListMenu();
+      if (!board) return;
+      const nextLists = board.lists.map((l) =>
+        l.listId === listId ? { ...l, defaultCollapsed: collapsed } : l
+      );
+      await persistBoard({ ...board, lists: nextLists, updatedAt: Date.now() });
+    },
+    [board, persistBoard, handleCloseListMenu]
   );
 
   const [sortByPriority, setSortByPriority] = useState(true);
@@ -518,9 +554,6 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
           order,
         });
         setAddingForList(null);
-        if (position === 'top') {
-          markManualReorder();
-        }
       } catch (e: any) {
         console.error('Failed to create card', e);
         const groupsToShow: Array<{ groupId: number; groupName?: string; isOpen?: boolean }> =
@@ -958,10 +991,10 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
             .map((list) => {
               const listCardIds = cardsByList[list.listId] ?? [];
               return (
-                <Paper
-                  key={list.listId}
-                  elevation={2}
-                  sx={{
+            <Paper
+              key={list.listId}
+              elevation={2}
+              sx={{
                     // 100% width on phones; multi-column only at md+
                     flex: { xs: '1 1 100%', md: '0 1 19%' },
                     // maxWidth: { xs: '100%', md: '28rem' },
@@ -1012,14 +1045,19 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
                       </>
                     ) : (
                       <>
-                        <Typography
-                          variant="h6"
-                          sx={{ flex: 1, minWidth: 0, lineHeight: 1.3, userSelect: 'none' }}
-                          onDoubleClick={() => startEditingList(list)}
-                          title="Double-click to rename"
-                        >
-                          {list.title}
-                        </Typography>
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                          <Typography
+                            variant="h6"
+                            sx={{ lineHeight: 1.3, userSelect: 'none' }}
+                            onDoubleClick={() => startEditingList(list)}
+                            title="Double-click to rename"
+                          >
+                            {list.title}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {`${listCardIds.length} ${listCardIds.length === 1 ? 'card' : 'cards'}`}
+                          </Typography>
+                        </Box>
                         <Button
                           size="small"
                           variant="outlined"
@@ -1032,9 +1070,11 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
                         >
                           Add card
                         </Button>
-                        <Tooltip title="Rename list">
-                          <IconButton size="small" onClick={() => startEditingList(list)}>
-                            {/* You can swap for an Edit icon if you prefer */}
+                        <Tooltip title="List options">
+                          <IconButton
+                            size="small"
+                            onClick={(event) => handleOpenListMenu(event, list.listId)}
+                          >
                             <MoreVertIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
@@ -1103,6 +1143,35 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
             })}
         </Box>
       </DndContext>
+
+      <Menu
+        anchorEl={listMenuState?.anchor}
+        open={Boolean(listMenuState)}
+        onClose={handleCloseListMenu}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+      >
+        <MenuItem onClick={handleRenameListFromMenu}>Rename list</MenuItem>
+        <MenuItem disabled>
+          Default display:{' '}
+          <Typography
+            component="span"
+            sx={{ fontWeight: 600, ml: 0.35 }}
+            color="text.primary"
+          >
+            {selectedList?.defaultCollapsed ? 'Minimized' : 'Expanded'}
+          </Typography>
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            if (!listMenuState) return;
+            const current = selectedList?.defaultCollapsed ?? false;
+            handleSetListDefaultDisplay(listMenuState.listId, !current);
+          }}
+        >
+          Set default display to {selectedList?.defaultCollapsed ? 'Expanded' : 'Minimized'}
+        </MenuItem>
+      </Menu>
 
       {/* Archived cards */}
       {board && board.featureFlags?.cardArchive && archivedCards.length > 0 && (

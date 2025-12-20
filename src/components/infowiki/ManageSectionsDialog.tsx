@@ -32,6 +32,86 @@ const slug = (s: string) =>
     .replace(/[^a-z0-9\- _]/g, '')
     .replace(/\s+/g, '-');
 
+type RowProps = {
+  i: number;
+  item: WikiMenuItem;
+  onChange: (idx: number, next: WikiMenuItem) => void;
+  moveItem: (idx: number, dir: -1 | 1) => void;
+  removeItem: (idx: number) => void;
+};
+
+function Row({ i, item, onChange, moveItem, removeItem }: RowProps) {
+  const [idDraft, setIdDraft] = useState(item.id ?? '');
+  const [titleDraft, setTitleDraft] = useState(item.title ?? '');
+  const [tagsDraft, setTagsDraft] = useState((item.tags || []).join(', '));
+
+  useEffect(() => setIdDraft(item.id ?? ''), [item.id]);
+  useEffect(() => setTitleDraft(item.title ?? ''), [item.title]);
+  useEffect(() => setTagsDraft((item.tags || []).join(', ')), [item.tags]);
+
+  const commit = () =>
+    onChange(i, {
+      ...item,
+      id: idDraft,
+      title: titleDraft,
+      tags: tagsDraft
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    });
+
+  const onEnterCommit: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
+    if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
+  };
+
+  return (
+    <Paper sx={{ p: 1 }} elevation={0}>
+      <Box sx={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+        <TextField
+          label="Section ID"
+          value={idDraft}
+          onChange={(e) => setIdDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={onEnterCommit}
+          size="small"
+          sx={{ flex: '1 1 12rem' }}
+          slotProps={{ htmlInput: { inputMode: 'text', spellCheck: false } }}
+        />
+        <TextField
+          label="Title"
+          value={titleDraft}
+          onChange={(e) => setTitleDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={onEnterCommit}
+          size="small"
+          sx={{ flex: '1 1 12rem' }}
+        />
+        <TextField
+          label="Tags (comma sep)"
+          value={tagsDraft}
+          onChange={(e) => setTagsDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={onEnterCommit}
+          size="small"
+          sx={{ flex: '2 1 16rem' }}
+          slotProps={{ htmlInput: { inputMode: 'text', spellCheck: false } }}
+        />
+        <Box sx={{ display: 'flex', gap: '0.5rem', marginLeft: 'auto' }}>
+          <IconButton size="small" onClick={() => moveItem(i, -1)}>
+            <ArrowUpwardIcon fontSize="small" />
+          </IconButton>
+          <IconButton size="small" onClick={() => moveItem(i, +1)}>
+            <ArrowDownwardIcon fontSize="small" />
+          </IconButton>
+          <IconButton size="small" color="error" onClick={() => removeItem(i)}>
+            <DeleteIcon fontSize="small" />
+          </IconButton>
+        </Box>
+      </Box>
+    </Paper>
+  );
+}
+
 const ManageSectionsDialog = memo(function ManageSectionsDialog({
   open,
   initialMenu,
@@ -45,6 +125,15 @@ const ManageSectionsDialog = memo(function ManageSectionsDialog({
   useEffect(() => {
     if (open) setMenu(initialMenu.map((m) => ({ ...m })));
   }, [open, initialMenu]);
+
+  const updateItem = useCallback((idx: number, next: WikiMenuItem) => {
+    setMenu((list) => {
+      const a = [...list];
+      if (idx < 0 || idx >= a.length) return a;
+      a[idx] = next;
+      return a;
+    });
+  }, []);
 
   const moveItem = useCallback((idx: number, dir: -1 | 1) => {
     setMenu((list) => {
@@ -63,86 +152,6 @@ const ManageSectionsDialog = memo(function ManageSectionsDialog({
   const addItem = useCallback(() => {
     setMenu((list) => [...list, { id: '', title: '', tags: [] }]);
   }, []);
-
-  // Row component with local drafts for id/title/tags; commits on blur/Enter
-  const Row = useCallback(
-    ({ i, item }: { i: number; item: WikiMenuItem }) => {
-      const [idDraft, setIdDraft] = useState(item.id ?? '');
-      const [titleDraft, setTitleDraft] = useState(item.title ?? '');
-      const [tagsDraft, setTagsDraft] = useState((item.tags || []).join(', '));
-
-      useEffect(() => setIdDraft(item.id ?? ''), [item.id]);
-      useEffect(() => setTitleDraft(item.title ?? ''), [item.title]);
-      useEffect(() => setTagsDraft((item.tags || []).join(', ')), [item.tags]);
-
-      const commit = () =>
-        setMenu((list) => {
-          const a = [...list];
-          a[i] = {
-            ...a[i],
-            id: idDraft,
-            title: titleDraft,
-            tags: tagsDraft
-              .split(',')
-              .map((s) => s.trim())
-              .filter(Boolean),
-          };
-          return a;
-        });
-
-      const onEnterCommit: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
-        if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur();
-      };
-
-      return (
-        <Paper sx={{ p: 1 }} elevation={0}>
-          <Box sx={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
-            <TextField
-              label="Section ID"
-              value={idDraft}
-              onChange={(e) => setIdDraft(e.target.value)}
-              onBlur={commit}
-              onKeyDown={onEnterCommit}
-              size="small"
-              sx={{ flex: '1 1 12rem' }}
-              slotProps={{ htmlInput: { inputMode: 'text', spellCheck: false } }}
-            />
-            <TextField
-              label="Title"
-              value={titleDraft}
-              onChange={(e) => setTitleDraft(e.target.value)}
-              onBlur={commit}
-              onKeyDown={onEnterCommit}
-              size="small"
-              sx={{ flex: '1 1 12rem' }}
-            />
-            <TextField
-              label="Tags (comma sep)"
-              value={tagsDraft}
-              onChange={(e) => setTagsDraft(e.target.value)}
-              onBlur={commit}
-              onKeyDown={onEnterCommit}
-              size="small"
-              sx={{ flex: '2 1 16rem' }}
-              slotProps={{ htmlInput: { inputMode: 'text', spellCheck: false } }}
-            />
-            <Box sx={{ display: 'flex', gap: '0.5rem', marginLeft: 'auto' }}>
-              <IconButton size="small" onClick={() => moveItem(i, -1)}>
-                <ArrowUpwardIcon fontSize="small" />
-              </IconButton>
-              <IconButton size="small" onClick={() => moveItem(i, +1)}>
-                <ArrowDownwardIcon fontSize="small" />
-              </IconButton>
-              <IconButton size="small" color="error" onClick={() => removeItem(i)}>
-                <DeleteIcon fontSize="small" />
-              </IconButton>
-            </Box>
-          </Box>
-        </Paper>
-      );
-    },
-    [moveItem, removeItem]
-  );
 
   const cleaned = useMemo(
     () =>
@@ -163,7 +172,14 @@ const ManageSectionsDialog = memo(function ManageSectionsDialog({
       <DialogContent dividers>
         <Stack spacing={1.5}>
           {menu.map((m, i) => (
-            <Row key={i} i={i} item={m} />
+            <Row
+              key={i}
+              i={i}
+              item={m}
+              onChange={updateItem}
+              moveItem={moveItem}
+              removeItem={removeItem}
+            />
           ))}
           <Box>
             <Button onClick={addItem}>Add Section</Button>

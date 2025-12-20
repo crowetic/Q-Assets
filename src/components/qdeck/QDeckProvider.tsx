@@ -140,6 +140,17 @@ export const useQDeck = () => {
   return ctx;
 };
 
+const createEmptyCardsIndexDoc = (boardId: string): CardsIndexDoc => ({
+  _type: 'QDECK_CARDS_INDEX',
+  version: 1,
+  boardId,
+  cardIds: [],
+  entries: [],
+  archivedIds: [],
+  updatedAt: 0,
+  seq: 0,
+});
+
 //MAIN PROVIDER EXPORT --------------------------------------------------------------------------------------
 
 export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -150,6 +161,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [cardVariants, setCardVariants] = useState<Record<string, QDeckCard[]>>({});
   const [archivedCardIds, setArchivedCardIds] = useState<Set<string>>(new Set());
   const [comments, setComments] = useState<Record<string, CardCommentThread>>({});
+  const cardsIndexCacheRef = useRef<Record<string, CardsIndexDoc | null>>({});
   const { publish: publishResources } = useQdnBatchPublisher();
   const { alert } = useAlert();
   const [publishQueue, setPublishQueue] = useState<Record<string, BatchPublishResource[]>>(() =>
@@ -158,6 +170,9 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [publishMode, setPublishMode] = useState<PublishMode>(() => readPublishModeFromStorage());
   const [publishingBoardId, setPublishingBoardId] = useState<string | null>(null);
   const [repairingIndex, setRepairingIndex] = useState(false);
+  const setCachedCardsIndexDoc = useCallback((boardId: string, doc: CardsIndexDoc) => {
+    cardsIndexCacheRef.current[boardId] = doc;
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -262,6 +277,15 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     () => board?.lists.find((l) => l.title?.toLowerCase().includes('done'))?.listId,
     [board?.lists]
   );
+  const defaultCollapsedListIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const list of board?.lists ?? []) {
+      if (list.defaultCollapsed || list.title?.toLowerCase().includes('done')) {
+        set.add(list.listId);
+      }
+    }
+    return set;
+  }, [board?.lists]);
   const [collapsedCardPrefs, setCollapsedCardPrefs] = useState<Record<string, boolean>>({});
   const boardIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -281,9 +305,10 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const isCardCollapsed = useCallback(
     (cardId: string, card?: QDeckCard) => {
-      const isDone = Boolean(card?.isDone);
-      const inDoneList = !!doneListId && card?.statusListId === doneListId;
-      if (isDone || inDoneList) return true;
+    const isDone = Boolean(card?.isDone);
+    const inDoneList = !!doneListId && card?.statusListId === doneListId;
+    const listIsDefaultCollapsed = !!card?.statusListId && defaultCollapsedListIds.has(card.statusListId);
+    if (isDone || inDoneList || listIsDefaultCollapsed) return true;
       const override = collapsedCardPrefs[cardId];
       if (override !== undefined) return override;
       return false;
@@ -388,6 +413,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       const usable = loaded.filter(Boolean) as QDeckCard[];
       const archivedSet = new Set(idx?.archivedIds ?? []);
+      const cacheDoc = idx ?? createEmptyCardsIndexDoc(b.boardId);
+      setCachedCardsIndexDoc(b.boardId, cacheDoc);
       const variants: Record<string, QDeckCard[]> = {};
       const byId: Record<string, QDeckCard> = {};
 
@@ -428,7 +455,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!issuer) throw new Error('Identity missing for repair');
     setRepairingIndex(true);
     try {
-      await repairCardsIndexDoc(issuer, board);
+      const repairedDoc = await repairCardsIndexDoc(issuer, board);
+      setCachedCardsIndexDoc(board.boardId, repairedDoc);
       await alert('Cards index repaired.', 'Repair index', { severity: 'success' });
       await track(loadCardsForBoard(issuer, board), `qdeck:repair:${board.boardId}`);
     } catch (e: any) {
@@ -604,9 +632,13 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       setCards((prev) => ({ ...prev, [c.cardId]: normalizeCardCollapse(c) }));
       const publisher = auth.name ? auth.name : identity.name;
+      const currentIndexDoc =
+        cardsIndexCacheRef.current[board.boardId] ?? createEmptyCardsIndexDoc(board.boardId);
       const indexDoc = await addCardToIndex(publisher, board, c.cardId, undefined, {
         skipPublish: true,
+        currentDoc: currentIndexDoc,
       });
+      setCachedCardsIndexDoc(board.boardId, indexDoc);
       const cardPayload = await buildCardPublishPayload(publisher, board, c);
       const indexPayload = await buildCardsIndexPublishPayload(publisher, board, indexDoc);
       await queueOrPublishResources(board.boardId, [cardPayload, indexPayload]);
@@ -638,7 +670,13 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setCards((prev) => ({ ...prev, [cardId]: normalizeCardCollapse(next) }));
       const publisher = auth.name ? auth.name : identity.name;
       const payload = await buildCardPublishPayload(publisher, board, next);
-      const indexDoc = await addCardToIndex(publisher, board, cardId, publisher, { skipPublish: true });
+      const currentIndexDoc =
+        cardsIndexCacheRef.current[board.boardId] ?? createEmptyCardsIndexDoc(board.boardId);
+      const indexDoc = await addCardToIndex(publisher, board, cardId, publisher, {
+        skipPublish: true,
+        currentDoc: currentIndexDoc,
+      });
+      setCachedCardsIndexDoc(board.boardId, indexDoc);
       const indexPayload = await buildCardsIndexPublishPayload(publisher, board, indexDoc);
       await queueOrPublishResources(board.boardId, [payload, indexPayload]);
     },
@@ -666,7 +704,13 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setCards((prev) => ({ ...prev, [card.cardId]: normalizeCardCollapse(card) }));
       const publisher = auth.name ? auth.name : identity.name;
       const payload = await buildCardPublishPayload(publisher, board, card);
-      const indexDoc = await addCardToIndex(publisher, board, card.cardId, publisher, { skipPublish: true });
+      const currentIndexDoc =
+        cardsIndexCacheRef.current[board.boardId] ?? createEmptyCardsIndexDoc(board.boardId);
+      const indexDoc = await addCardToIndex(publisher, board, card.cardId, publisher, {
+        skipPublish: true,
+        currentDoc: currentIndexDoc,
+      });
+      setCachedCardsIndexDoc(board.boardId, indexDoc);
       const indexPayload = await buildCardsIndexPublishPayload(publisher, board, indexDoc);
       await queueOrPublishResources(board.boardId, [payload, indexPayload]);
     },
@@ -690,26 +734,21 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         seq: c.seq + 1,
       };
 
-      const currentIndex = (await loadCardsIndex(publisher, board)) ?? {
-        _type: 'QDECK_CARDS_INDEX' as const,
-        version: 1,
-        boardId: board.boardId,
-        cardIds: [],
-        entries: [],
-        archivedIds: [],
-        updatedAt: 0,
-        seq: 0,
-      };
+      const currentIndex =
+        cardsIndexCacheRef.current[board.boardId] ?? createEmptyCardsIndexDoc(board.boardId);
       const archivedSet = new Set(currentIndex.archivedIds ?? []);
       if (archived) archivedSet.add(cardId);
       else archivedSet.delete(cardId);
       const nextIndexDoc: CardsIndexDoc = {
         ...currentIndex,
+        cardIds: [...(currentIndex.cardIds ?? [])],
+        entries: currentIndex.entries ? [...currentIndex.entries] : [],
         archivedIds: Array.from(archivedSet),
         updatedAt: Date.now(),
         seq: (currentIndex.seq ?? 0) + 1,
       };
 
+      setCachedCardsIndexDoc(board.boardId, nextIndexDoc);
       const cardPayload = await buildCardPublishPayload(publisher, board, nextCard);
       const indexPayload = await buildCardsIndexPublishPayload(publisher, board, nextIndexDoc);
       await queueOrPublishResources(board.boardId, [cardPayload, indexPayload]);

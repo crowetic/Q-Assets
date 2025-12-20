@@ -37,9 +37,21 @@ export const DraggableCard: FC<DraggableProps> = ({
   forceMinimized,
 }) => {
   const theme = useTheme();
-  const { board, cards, moveCard, archiveCard, updateCard, isCardCollapsed, setCardCollapsed } =
-    useQDeck();
+  const {
+    board,
+    cards,
+    moveCard,
+    archiveCard,
+    updateCard,
+    isCardCollapsed,
+    setCardCollapsed,
+    comments,
+    loadCommentsForCard,
+  } = useQDeck();
   const card = cards[cardId];
+  const commentThread = comments[cardId];
+  const commentCount = commentThread?.comments?.length ?? 0;
+  const [loadedAssignees, setLoadedAssignees] = useState<string[] | null>(null);
 
   const [minimized, setMinimized] = useState(false);
 
@@ -203,6 +215,30 @@ export const DraggableCard: FC<DraggableProps> = ({
       alive = false;
     };
   }, [card, board]);
+
+  useEffect(() => {
+    if (!card || commentThread) return;
+    const timer = window.setTimeout(() => {
+      void loadCommentsForCard(cardId);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [card, cardId, commentThread, loadCommentsForCard]);
+
+  useEffect(() => {
+    if (!card) {
+      setLoadedAssignees(null);
+      return;
+    }
+    const assignees = Array.isArray(card.assignees) ? card.assignees.filter(Boolean) : [];
+    if (!assignees.length) {
+      setLoadedAssignees([]);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setLoadedAssignees(assignees);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [card]);
 
   return (
     <Paper
@@ -374,6 +410,35 @@ export const DraggableCard: FC<DraggableProps> = ({
             </Tooltip>
           </Stack>
         </Stack>
+
+        {!minimized && (commentThread !== undefined || (loadedAssignees?.length ?? 0) > 0) && (
+          <Stack
+            direction="row"
+            spacing={0.35}
+            alignItems="center"
+            useFlexGap
+            flexWrap="wrap"
+            sx={{ mb: minimized ? 0 : 0.4 }}
+          >
+            {commentThread && (
+              <Chip
+                size="small"
+                label={`${commentCount} ${commentCount === 1 ? 'comment' : 'comments'}`}
+                variant="outlined"
+                sx={{ height: '1.35rem' }}
+              />
+            )}
+            {(loadedAssignees || []).map((nm) => (
+              <Chip
+                key={nm}
+                size="small"
+                label={nm}
+                variant="outlined"
+                sx={{ height: '1.35rem' }}
+              />
+            ))}
+          </Stack>
+        )}
 
         <Typography
           variant="subtitle1"

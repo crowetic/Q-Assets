@@ -1,4 +1,7 @@
-export const MANIFEST_IDENTIFIER = 'qassets_manifest_v1';
+import { uniqueId6 } from '../../../utils/ids';
+
+export const MANIFEST_ID_PREFIX = 'qassets_manifest';
+export const MANIFEST_IDENTIFIER = `qassets_manifest_v1-${uniqueId6()}`;
 
 export const ALL_QDN_SERVICES: string[] = [
   'ARBITRARY_DATA',

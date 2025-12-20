@@ -108,6 +108,7 @@ export interface QDeckList {
   title: string; // e.g., IN PROGRESS
   faintColor?: string; // e.g., rgba(..,0.08) for background
   order: number; // for column ordering
+  defaultCollapsed?: boolean;
 }
 
 export interface QDeckCard {

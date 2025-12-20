@@ -239,16 +239,21 @@ export async function addCardToIndex(
   board: QDeckBoard,
   cardId: string,
   publisherName?: string, // the *card's* publisher (defaults to issuerName for legacy)
-  opts?: { skipPublish?: boolean }
+  opts?: { skipPublish?: boolean; currentDoc?: CardsIndexDoc }
 ): Promise<CardsIndexDoc> {
-  const doc = (await loadCardsIndex(issuerName, board)) ?? {
-    _type: 'QDECK_CARDS_INDEX' as const,
-    version: 1 as const,
-    boardId: board.boardId,
-    cardIds: [],
-    updatedAt: 0,
-    seq: 0,
-  };
+  const doc =
+    opts?.currentDoc ??
+    (await loadCardsIndex(issuerName, board)) ??
+    ({
+      _type: 'QDECK_CARDS_INDEX' as const,
+      version: 1 as const,
+      boardId: board.boardId,
+      cardIds: [],
+      entries: [],
+      archivedIds: [],
+      updatedAt: 0,
+      seq: 0,
+    } as CardsIndexDoc);
 
   const pub = publisherName || issuerName;
 

@@ -59,6 +59,7 @@ import { useAuth, VideoPlayer } from 'qapp-core';
 import type { Service } from 'qapp-core';
 import {
   MANIFEST_IDENTIFIER,
+  MANIFEST_ID_PREFIX,
   ALL_QDN_SERVICES,
   SERVICE_PAGE_SIZE,
   FOLDER_PAGE_SIZE,
@@ -79,6 +80,12 @@ import {
 } from './viewHelpers';
 import { shouldUseLegacyPrivateMagic } from '../../../utils/groupEncryption';
 import { filterUserTags } from '../../../utils/qdnTags';
+import {
+  encodePrivateStructuredMetadata,
+  decodePrivateStructuredMetadata,
+  extractPrivateStructuredDescription,
+  withPrivateStructuredDescription,
+} from '../../../utils/qassetsPrivateMetadata';
 import {
   buildEncryptionTagSet,
   getEncryptionInfo,
@@ -113,6 +120,7 @@ import {
   type BatchPublishResource,
 } from '../../../utils/useQdnBatchPublisher';
 import { PublishDialog, PublishFormState, PublishSubmitPayload } from './components/PublishDialog';
+import { searchSimpleByIdPrefixOnly, type SimpleHit } from '../../../utils/searchSimple';
 
 type PreviewStepKey = 'fetch' | 'decrypt' | 'analyze';
 type PreviewStepStatus = 'pending' | 'active' | 'success' | 'error';
@@ -313,6 +321,132 @@ const getMetadataTags = (metadata: Record<string, any> | undefined) => {
   return Array.isArray(tags) ? tags : [];
 };
 
+const CHUNK_IDENTIFIER_PATTERN = /__chunk__\d{4}$/i;
+
+const normalizeChunkTitle = (value?: string | null) => {
+  if (!value) return '';
+  return value.replace(/\s*\(chunk\s+\d+\)\s*$/i, '').trim();
+};
+
+const isChunkResource = (resource: QdnResource) => {
+  const metadata = resource.metadata as Record<string, any> | undefined;
+  const tags = getMetadataTags(metadata);
+  if (tags.includes(CHUNK_METADATA_TAG)) return true;
+  if ((metadata as any)?.qassetsChunk?.chunked) return true;
+  const identifier = resource.identifier || '';
+  return CHUNK_IDENTIFIER_PATTERN.test(identifier);
+};
+
+const getStructuredInfo = (resource: QdnResource) => {
+  const metadata = resource.metadata as Record<string, any> | undefined;
+  const decoded = decodePrivateStructuredMetadata(metadata?.description);
+  const fileName =
+    decoded?.fileName ||
+    (metadata as any)?.qassetsFs?.fileName ||
+    (metadata as any)?.qassetsExplorer?.fileName ||
+    (metadata as any)?.qassetsFile?.fileName ||
+    (typeof metadata?.title === 'string' ? metadata.title.trim() : '');
+  const path =
+    decoded?.path ||
+    (metadata as any)?.qassetsFs?.path ||
+    (metadata as any)?.qassetsExplorer?.path ||
+    (metadata as any)?.qassetsFile?.path ||
+    '';
+  return { fileName, path };
+};
+
+const getChunkParentIdentifier = (resource: QdnResource): string | null => {
+  const metadata = resource.metadata as Record<string, any> | undefined;
+  const chunkMeta = (metadata as any)?.qassetsChunk;
+  if (chunkMeta?.parentIdentifier) return String(chunkMeta.parentIdentifier);
+  const tags = getMetadataTags(metadata);
+  if (tags.some((tag) => tag === CHUNK_METADATA_TAG)) {
+    const identifier = resource.identifier || '';
+    if (CHUNK_IDENTIFIER_PATTERN.test(identifier)) {
+      return identifier.slice(0, identifier.lastIndexOf('__chunk__'));
+    }
+  }
+  return null;
+};
+
+const resolveChunkParentResource = (
+  resource: QdnResource,
+  resourceMap: Map<string, QdnResource>
+): { parent: QdnResource | null; missingId: string | null } => {
+  if (!isChunkResource(resource)) return { parent: null, missingId: null };
+  const parentIdentifier = getChunkParentIdentifier(resource);
+  if (parentIdentifier) {
+    return {
+      parent: resourceMap.get(parentIdentifier) || null,
+      missingId: resourceMap.has(parentIdentifier) ? null : parentIdentifier,
+    };
+  }
+  const { fileName, path } = getStructuredInfo(resource);
+  const title = normalizeChunkTitle(
+    typeof resource.metadata?.title === 'string' ? resource.metadata.title : ''
+  );
+  const expectedFileName = fileName || title;
+  if (!expectedFileName) return { parent: null, missingId: resource.identifier };
+  let best: QdnResource | null = null;
+  let bestScore = -1;
+  resourceMap.forEach((candidate) => {
+    if (candidate.identifier === resource.identifier) return;
+    if (isChunkResource(candidate)) return;
+    const candidateInfo = getStructuredInfo(candidate);
+    const candidateTitle = normalizeChunkTitle(
+      typeof candidate.metadata?.title === 'string' ? candidate.metadata.title : ''
+    );
+    const candidateFileName = candidateInfo.fileName || candidateTitle;
+    if (!candidateFileName) return;
+    if (candidateFileName !== expectedFileName && candidateTitle !== expectedFileName) return;
+    if (path && candidateInfo.path && candidateInfo.path !== path) return;
+    let score = 0;
+    if (candidateFileName === expectedFileName) score += 3;
+    if (path && candidateInfo.path === path) score += 2;
+    if (resource.name && candidate.name === resource.name) score += 1;
+    if ((resource.service || '').toUpperCase() === (candidate.service || '').toUpperCase()) {
+      score += 1;
+    }
+    if (candidateTitle && candidateTitle === normalizeChunkTitle(expectedFileName)) score += 1;
+    if (
+      score > bestScore ||
+      (score === bestScore && (candidate.created ?? 0) > (best?.created ?? 0))
+    ) {
+      best = candidate;
+      bestScore = score;
+    }
+  });
+  return { parent: best, missingId: best ? null : resource.identifier };
+};
+
+const normalizeSaveToFilesTargets = (
+  resources: QdnResource[],
+  resourceMap: Map<string, QdnResource>
+) => {
+  const resolved: QdnResource[] = [];
+  const seen = new Set<string>();
+  const missingParents = new Set<string>();
+  resources.forEach((resource) => {
+    const { parent, missingId } = resolveChunkParentResource(resource, resourceMap);
+    if (parent) {
+      if (!seen.has(parent.identifier)) {
+        resolved.push(parent);
+        seen.add(parent.identifier);
+      }
+      return;
+    }
+    if (missingId) {
+      missingParents.add(missingId);
+      return;
+    }
+    const identifier = resource.identifier;
+    if (!identifier || seen.has(identifier)) return;
+    resolved.push(resource);
+    seen.add(identifier);
+  });
+  return { resolved, missingParents: Array.from(missingParents) };
+};
+
 const isShareResource = (resource: QdnResource) => {
   const tags = getMetadataTags(resource.metadata as Record<string, any>);
   return tags.some(
@@ -320,14 +454,36 @@ const isShareResource = (resource: QdnResource) => {
   );
 };
 
+const TOMBSTONE_SIZE_THRESHOLD = 300;
+const GROUP_KEY_IDENTIFIER_PREFIX = /^grp-\d+-anc/i;
+
 const isTombstoneResource = (resource: QdnResource): boolean => {
+  const identifier = resource.identifier || '';
   const metadata = resource.metadata || {};
   const tags = getMetadataTags(metadata);
+  const description = (metadata as any).description;
+  const hasStructuredMetadata =
+    tags.some(
+      (tag) => tag === 'qassets-fs' || tag.startsWith('fs-path:') || tag.startsWith('fs-name:')
+    ) ||
+    Boolean(
+      (metadata as any).qassetsFs ||
+        (metadata as any).qassetsExplorer ||
+        (metadata as any).qassetsFile ||
+        decodePrivateStructuredMetadata(description)
+    );
+  if (
+    typeof resource.size === 'number' &&
+    resource.size > 0 &&
+    resource.size < TOMBSTONE_SIZE_THRESHOLD &&
+    !GROUP_KEY_IDENTIFIER_PREFIX.test(identifier) &&
+    !hasStructuredMetadata
+  )
+    return true;
   if ((metadata as any).qassetsTombstone?.deleted) return true;
   if ((metadata as any).qassets?.tombstone) return true;
   const title = (metadata as any).title;
   if (typeof title === 'string' && title.toUpperCase() === 'TOMBSTONE') return true;
-  const description = (metadata as any).description;
   if (
     typeof description === 'string' &&
     description.toLowerCase().includes('resource removed by publisher')
@@ -454,6 +610,20 @@ const hydrateManifestResources = (doc: ManifestDoc | null): QdnResource[] => {
     status: item.status,
   }));
 };
+
+const getResourceTimestamp = (item: { created?: number; updated?: number }) => {
+  const updated = Number(item.updated);
+  if (Number.isFinite(updated)) return updated;
+  const created = Number(item.created);
+  return Number.isFinite(created) ? created : 0;
+};
+
+function pickMostRecent<T extends { created?: number; updated?: number }>(items: T[]): T | null {
+  if (!items.length) return null;
+  return items.reduce((latest, item) =>
+    getResourceTimestamp(item) > getResourceTimestamp(latest) ? item : latest
+  );
+}
 
 type GroupDecryptAttempt = {
   groupId: number;
@@ -651,8 +821,20 @@ const inferStructuredMeta = (resource: QdnResource): StructuredEntry | null => {
   if (!folderSegments) {
     const fsMeta = (md as any).qassetsFs || (md as any).qassetsExplorer || (md as any).qassetsFile;
     if (fsMeta) {
-      folderSegments = normalizePathSegments(fsMeta.path || fsMeta.folderPath || '');
-      fileName = fsMeta.fileName || null;
+      const fsPath = fsMeta.path || fsMeta.folderPath || '';
+      const fsName = fsMeta.fileName || null;
+      if (fsPath || fsName) {
+        folderSegments = normalizePathSegments(fsPath);
+        fileName = fsName;
+      }
+    }
+  }
+
+  if (!folderSegments) {
+    const decoded = decodePrivateStructuredMetadata(md.description);
+    if (decoded?.path || decoded?.fileName) {
+      folderSegments = normalizePathSegments(decoded.path);
+      fileName = decoded.fileName || fileName;
     }
   }
 
@@ -676,6 +858,16 @@ const stripStructuredMetadata = (
   const filteredTags = filterUserTags((metadata as any).tags);
   if (filteredTags.length) (metadata as any).tags = filteredTags;
   else delete (metadata as any).tags;
+  if (typeof metadata.description === 'string') {
+    const { base, encoded } = extractPrivateStructuredDescription(metadata.description);
+    if (encoded) {
+      if (base) {
+        metadata.description = base;
+      } else {
+        delete metadata.description;
+      }
+    }
+  }
   delete (metadata as any).qassetsFs;
   delete (metadata as any).qassetsExplorer;
   delete (metadata as any).qassetsFile;
@@ -970,6 +1162,9 @@ export default function DataExplorer() {
   >({});
   const [pendingDeletes, setPendingDeletes] = useState<string[]>([]);
   const [pendingPublishRequests, setPendingPublishRequests] = useState<BatchPublishResource[]>([]);
+  const [pendingDeferredPublishRequests, setPendingDeferredPublishRequests] = useState<
+    DeferredPublishRequest[]
+  >([]);
   const [renameFolderDialog, setRenameFolderDialog] = useState({
     open: false,
     newName: '',
@@ -1005,6 +1200,22 @@ export default function DataExplorer() {
   const [nameSuggestions, setNameSuggestions] = useState<string[]>([]);
   const [nameSearchLoading, setNameSearchLoading] = useState(false);
   const [nameSearchError, setNameSearchError] = useState<string | null>(null);
+  type QueueablePublishResource = Omit<BatchPublishResource, 'base64'> & {
+    base64?: string;
+    sourceResource?: QdnResource;
+  };
+  type DeferredPublishRequest = {
+    sourceResource: QdnResource;
+    publish: Omit<BatchPublishResource, 'base64'>;
+  };
+  const MAX_QUEUED_BASE64_BYTES = 400 * 1024 * 1024;
+  const estimateBase64Bytes = (base64?: string) => {
+    if (!base64) return 0;
+    let padding = 0;
+    if (base64.endsWith('==')) padding = 2;
+    else if (base64.endsWith('=')) padding = 1;
+    return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+  };
   const chunkResources = useCallback((resources: BatchPublishResource[]) => {
     const chunks: BatchPublishResource[][] = [];
     for (let i = 0; i < resources.length; i += PUBLISH_CHUNK_SIZE) {
@@ -1012,44 +1223,147 @@ export default function DataExplorer() {
     }
     return chunks;
   }, []);
+  const queuedPublishBytes = useMemo(
+    () =>
+      pendingPublishRequests.reduce(
+        (sum, resource) => sum + estimateBase64Bytes(resource.base64),
+        0
+      ),
+    [pendingPublishRequests, estimateBase64Bytes]
+  );
+  const resolveQueueableResource = useCallback(
+    async (resource: QueueablePublishResource): Promise<BatchPublishResource> => {
+      const { sourceResource, ...publish } = resource;
+      if (resource.base64) {
+        return { ...publish, base64: resource.base64 } as BatchPublishResource;
+      }
+      if (!sourceResource) {
+        throw new Error('Missing resource data for queued publish.');
+      }
+      const encryptionInfo = getEncryptionInfo(sourceResource);
+      const treatAsEncrypted = encryptionInfo.mode !== null || encryptionInfo.isPrivate;
+      const base64 = await (treatAsEncrypted
+        ? fetchPrivateBase64(sourceResource)
+        : fetchResourceBase64(sourceResource));
+      return { ...publish, base64 } as BatchPublishResource;
+    },
+    []
+  );
 
   const queueOrPublishResources = useCallback(
-    async (resources: BatchPublishResource[]) => {
+    async (resources: QueueablePublishResource[]) => {
       if (!resources.length) return;
       if (publishMode === 'immediate') {
-        const chunks = chunkResources(resources);
+        const resolved: BatchPublishResource[] = [];
+        for (const resource of resources) {
+          resolved.push(await resolveQueueableResource(resource));
+        }
+        const chunks = chunkResources(resolved);
         for (const chunk of chunks) {
           await publishResources(chunk);
         }
         return;
       }
-      setPendingPublishRequests((prev) => prev.concat(resources));
+      const immediateRequests: BatchPublishResource[] = [];
+      const deferredRequests: DeferredPublishRequest[] = [];
+      resources.forEach((resource) => {
+        if (resource.sourceResource) {
+          const publish = { ...resource } as DeferredPublishRequest['publish'] & {
+            base64?: string;
+            sourceResource?: QdnResource;
+          };
+          const sourceResource = resource.sourceResource;
+          delete publish.base64;
+          delete publish.sourceResource;
+          deferredRequests.push({ sourceResource, publish });
+          return;
+        }
+        if (!resource.base64) {
+          throw new Error('Unable to queue publish data without file content.');
+        }
+        immediateRequests.push(resource as BatchPublishResource);
+      });
+      if (immediateRequests.length) {
+        const addedBytes = immediateRequests.reduce(
+          (sum, resource) => sum + estimateBase64Bytes(resource.base64),
+          0
+        );
+        if (queuedPublishBytes + addedBytes > MAX_QUEUED_BASE64_BYTES) {
+          alert(
+            `Queued publish data exceeds ${formatBytes(MAX_QUEUED_BASE64_BYTES)}. ` +
+              'Publish queued changes before adding more files.'
+          );
+          throw new Error('Publish queue limit exceeded.');
+        }
+        setPendingPublishRequests((prev) => prev.concat(immediateRequests));
+      }
+      if (deferredRequests.length) {
+        setPendingDeferredPublishRequests((prev) => prev.concat(deferredRequests));
+      }
     },
-    [publishMode, publishResources, chunkResources]
+    [
+      publishMode,
+      publishResources,
+      chunkResources,
+      resolveQueueableResource,
+      queuedPublishBytes,
+      estimateBase64Bytes,
+    ]
   );
   const flushPendingPublishRequests = useCallback(async () => {
-    if (!pendingPublishRequests.length) return;
-    const requests = [...pendingPublishRequests];
+    if (!pendingPublishRequests.length && !pendingDeferredPublishRequests.length) return;
+    const pendingImmediate = [...pendingPublishRequests];
+    const pendingDeferred = [...pendingDeferredPublishRequests];
     setPendingPublishRequests([]);
+    setPendingDeferredPublishRequests([]);
+    const deferredResolved: BatchPublishResource[] = [];
+    for (const request of pendingDeferred) {
+      const encryptionInfo = getEncryptionInfo(request.sourceResource);
+      const treatAsEncrypted = encryptionInfo.mode !== null || encryptionInfo.isPrivate;
+      const base64 = await (treatAsEncrypted
+        ? fetchPrivateBase64(request.sourceResource)
+        : fetchResourceBase64(request.sourceResource));
+      deferredResolved.push({ ...request.publish, base64 });
+    }
+    const requests = pendingImmediate.concat(deferredResolved);
     const chunks = chunkResources(requests);
     for (const chunk of chunks) {
       await publishResources(chunk);
     }
-  }, [pendingPublishRequests, publishResources, chunkResources]);
+  }, [pendingPublishRequests, pendingDeferredPublishRequests, publishResources, chunkResources]);
   useEffect(() => {
-    if (publishMode === 'immediate' && pendingPublishRequests.length) {
+    if (
+      publishMode === 'immediate' &&
+      (pendingPublishRequests.length || pendingDeferredPublishRequests.length)
+    ) {
       flushPendingPublishRequests().catch((err) =>
         console.warn('Failed to flush queued resources on mode switch', err)
       );
     }
-  }, [publishMode, pendingPublishRequests.length, flushPendingPublishRequests]);
+  }, [
+    publishMode,
+    pendingPublishRequests.length,
+    pendingDeferredPublishRequests.length,
+    flushPendingPublishRequests,
+  ]);
   const [manifestDoc, setManifestDoc] = useState<ManifestDoc | null>(null);
+  const [manifestHead, setManifestHead] = useState<SimpleHit | null>(null);
   const [manifestDirty, setManifestDirty] = useState(false);
+  const [manifestPendingOverrides, setManifestPendingOverrides] = useState(false);
   const [manifestPublishing, setManifestPublishing] = useState(false);
   const [manifestError, setManifestError] = useState<string | null>(null);
   const hasQueuedChanges = useMemo(
-    () => manifestDirty || pendingPublishRequests.length > 0,
-    [manifestDirty, pendingPublishRequests.length]
+    () =>
+      manifestDirty ||
+      manifestPendingOverrides ||
+      pendingPublishRequests.length > 0 ||
+      pendingDeferredPublishRequests.length > 0,
+    [
+      manifestDirty,
+      manifestPendingOverrides,
+      pendingPublishRequests.length,
+      pendingDeferredPublishRequests.length,
+    ]
   );
   const [manifestRefreshBlockedUntil, setManifestRefreshBlockedUntil] = useState(0);
   const [manifestLoadState, setManifestLoadState] = useState<ManifestLoadState>('idle');
@@ -1057,6 +1371,7 @@ export default function DataExplorer() {
   const [loadingAllPages, setLoadingAllPages] = useState(false);
   const [detectedTypes, setDetectedTypes] = useState<Record<string, string>>({});
   const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
+  const selectionAnchorRef = useRef<string | null>(null);
   const [loadedContent, setLoadedContent] = useState<LoadedResourceContent | null>(null);
   const [saveToFilesDialog, setSaveToFilesDialog] = useState<{
     open: boolean;
@@ -1155,7 +1470,7 @@ export default function DataExplorer() {
   const republishWithMetadata = useCallback(
     async (params: {
       resource: QdnResource;
-      base64: string;
+      base64?: string;
       metadata: Record<string, any>;
       tags?: string[];
     }) => {
@@ -1166,6 +1481,7 @@ export default function DataExplorer() {
           service: resource.service as Service,
           identifier: resource.identifier,
           base64,
+          sourceResource: resource,
           metadata,
           tags,
           title: resource.metadata?.title,
@@ -1201,7 +1517,19 @@ export default function DataExplorer() {
       alert('Select or register a Qortal name before saving to files.');
       return;
     }
-    const first = resources[0];
+    const { resolved, missingParents } = normalizeSaveToFilesTargets(
+      resources,
+      combinedResourceMap
+    );
+    if (!resolved.length) {
+      alert('Select the chunk manifest or load it before saving to files.');
+      return;
+    }
+    const missingParentsError =
+      missingParents.length > 0
+        ? 'Some selected chunks are missing their parent manifest. Load remaining resources or select the manifest resource.'
+        : null;
+    const first = resolved[0];
     const firstEntry = allStructuredEntryMap.get(first.identifier);
     const defaultFolder = firstEntry
       ? firstEntry.folderSegments.join('/')
@@ -1209,17 +1537,17 @@ export default function DataExplorer() {
         ? activeFilePath
         : '';
     const defaultName =
-      resources.length === 1
+      resolved.length === 1
         ? firstEntry?.fileName || first.metadata?.title || first.identifier
-        : `${resources.length} files`;
+        : `${resolved.length} files`;
     setSaveToFilesDialog({
       open: true,
       folderPath: defaultFolder,
       fileName: defaultName,
       description: first.metadata?.description || '',
       saving: false,
-      error: null,
-      resources,
+      error: missingParentsError,
+      resources: resolved,
     });
   };
 
@@ -1348,10 +1676,18 @@ export default function DataExplorer() {
     []
   );
 
+  const resolveManifestHead = useCallback(async (): Promise<SimpleHit | null> => {
+    if (!activeName) return null;
+    const hits = await searchSimpleByIdPrefixOnly(MANIFEST_ID_PREFIX, true);
+    const scoped = hits.filter((hit) => hit.name === activeName);
+    return pickMostRecent(scoped);
+  }, [activeName]);
+
   const fetchManifestDoc = useCallback(async (): Promise<ManifestDoc | null> => {
     if (!activeName) return null;
     const fetchAndMaybeDecrypt = async (
       service: Service,
+      identifier: string,
       decryptMode: 'direct' | null,
       fallbackToPlain = false
     ) => {
@@ -1359,7 +1695,7 @@ export default function DataExplorer() {
         action: 'FETCH_QDN_RESOURCE',
         name: activeName,
         service,
-        identifier: MANIFEST_IDENTIFIER,
+        identifier,
         encoding: 'base64',
       });
       const data64 = normalizeData64(res);
@@ -1384,20 +1720,79 @@ export default function DataExplorer() {
         throw error;
       }
     };
+    const head = await resolveManifestHead();
+    if (head) {
+      const decryptMode = head.service.toUpperCase().includes('PRIVATE') ? 'direct' : null;
+      try {
+        const doc = await fetchAndMaybeDecrypt(
+          head.service as Service,
+          head.identifier,
+          decryptMode,
+          true
+        );
+        if (doc) {
+          setManifestHead(head);
+          return doc;
+        }
+      } catch {
+        // continue to legacy fetch
+      }
+    }
+    setManifestHead(null);
     try {
-      return await fetchAndMaybeDecrypt(MANIFEST_SERVICE as Service, 'direct', true);
+      const doc = await fetchAndMaybeDecrypt(
+        MANIFEST_SERVICE as Service,
+        MANIFEST_IDENTIFIER,
+        'direct',
+        true
+      );
+      if (doc) {
+        setManifestHead({
+          name: activeName,
+          service: MANIFEST_SERVICE as Service,
+          identifier: MANIFEST_IDENTIFIER,
+          created: doc.generatedAt,
+          size: 0,
+        });
+      }
+      return doc;
     } catch {
       try {
-        return await fetchAndMaybeDecrypt(ensurePrivateService('DOCUMENT_PRIVATE'), 'direct', true);
+        const doc = await fetchAndMaybeDecrypt(
+          ensurePrivateService('DOCUMENT_PRIVATE'),
+          MANIFEST_IDENTIFIER,
+          'direct',
+          true
+        );
+        if (doc) {
+          setManifestHead({
+            name: activeName,
+            service: ensurePrivateService('DOCUMENT_PRIVATE'),
+            identifier: MANIFEST_IDENTIFIER,
+            created: doc.generatedAt,
+            size: 0,
+          });
+        }
+        return doc;
       } catch {
         try {
-          return await fetchAndMaybeDecrypt('DOCUMENT' as Service, null);
+          const doc = await fetchAndMaybeDecrypt('DOCUMENT' as Service, MANIFEST_IDENTIFIER, null);
+          if (doc) {
+            setManifestHead({
+              name: activeName,
+              service: 'DOCUMENT',
+              identifier: MANIFEST_IDENTIFIER,
+              created: doc.generatedAt,
+              size: 0,
+            });
+          }
+          return doc;
         } catch {
           return null;
         }
       }
     }
-  }, [activeName]);
+  }, [activeName, resolveManifestHead]);
 
   const refreshManifestDoc = useCallback(async () => {
     if (!activeName) {
@@ -1426,7 +1821,9 @@ export default function DataExplorer() {
   const clearQueuedChanges = useCallback(async () => {
     if (!hasQueuedChanges) return;
     setPendingPublishRequests([]);
+    setPendingDeferredPublishRequests([]);
     setManifestDirty(false);
+    setManifestPendingOverrides(false);
     setManifestError(null);
     setSystemSaveStatus('Cleared queued changes.');
     await refreshManifestDoc();
@@ -1435,8 +1832,14 @@ export default function DataExplorer() {
   useEffect(() => {
     if (!activeName) {
       applyManifestState(null, false, 'idle');
+      setManifestHead(null);
+      setManifestPendingOverrides(false);
+      setPendingDeferredPublishRequests([]);
       return;
     }
+    setManifestHead(null);
+    setManifestPendingOverrides(false);
+    setPendingDeferredPublishRequests([]);
     let cancelled = false;
     setManifestLoadState('loading');
     (async () => {
@@ -1512,10 +1915,47 @@ export default function DataExplorer() {
     void refreshResources();
   }, [activeName, refreshResources]);
 
-  const manifestResourceRows = useMemo(
-    () => hydrateManifestResources(manifestDoc).filter((res) => !isTombstoneResource(res)),
-    [manifestDoc]
-  );
+  const manifestResourceRows = useMemo(() => {
+    const entries = hydrateManifestResources(manifestDoc);
+    const existingIds = new Set(entries.map((res) => res.identifier));
+    const latestManifestResource = pickMostRecent(
+      rows.filter((resource) => resource.identifier?.startsWith(MANIFEST_ID_PREFIX))
+    );
+    const manifestIdentifier = manifestHead?.identifier || latestManifestResource?.identifier || '';
+    if (manifestIdentifier && !existingIds.has(manifestIdentifier)) {
+      const manifestRow =
+        rows.find((resource) => resource.identifier === manifestIdentifier) ||
+        latestManifestResource;
+      if (manifestRow) {
+        entries.unshift(manifestRow);
+        existingIds.add(manifestRow.identifier);
+      } else if (manifestDoc || manifestHead) {
+        entries.unshift({
+          identifier: manifestIdentifier,
+          service: (manifestHead?.service || MANIFEST_SERVICE) as Service,
+          name: manifestHead?.name || activeName || '',
+          created:
+            manifestHead?.updated ||
+            manifestHead?.created ||
+            manifestDoc?.generatedAt ||
+            Date.now(),
+          metadata: {
+            tags: ['qassets-manifest'],
+            title: 'Q-Assets Manifest',
+            description: 'Cached manifest snapshot.',
+          },
+          status: {
+            status: 'Published',
+            id: 'PUBLISHED',
+            title: 'Published',
+            description: 'Cached manifest snapshot.',
+          },
+        });
+        existingIds.add(manifestIdentifier);
+      }
+    }
+    return entries.filter((res) => !isTombstoneResource(res));
+  }, [manifestDoc, rows, activeName, manifestHead]);
   const manifestResourceIdentifiers = useMemo(() => {
     const set = new Set<string>();
     manifestResourceRows.forEach((resource) => {
@@ -1528,6 +1968,43 @@ export default function DataExplorer() {
     [manifestResourceIdentifiers]
   );
 
+  const pendingDeletesSet = useMemo(() => new Set(pendingDeletes), [pendingDeletes]);
+
+  const [extraServiceResources, setExtraServiceResources] = useState<Record<string, QdnResource>>(
+    {}
+  );
+
+  useEffect(() => {
+    setExtraServiceResources((prev) => {
+      const next: Record<string, QdnResource> = { ...prev };
+      rows.forEach((resource) => {
+        if (isTombstoneResource(resource) || pendingDeletesSet.has(resource.identifier)) {
+          delete next[resource.identifier];
+          return;
+        }
+        if (!manifestResourceIdentifiers.has(resource.identifier)) {
+          next[resource.identifier] = resource;
+        }
+      });
+      Object.keys(next).forEach((identifier) => {
+        if (manifestResourceIdentifiers.has(identifier) || pendingDeletesSet.has(identifier)) {
+          delete next[identifier];
+        }
+      });
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(next);
+      if (prevKeys.length === nextKeys.length && nextKeys.every((id) => prev[id] === next[id])) {
+        return prev;
+      }
+      return next;
+    });
+  }, [rows, manifestResourceIdentifiers, pendingDeletesSet]);
+
+  useEffect(() => {
+    if (publishMode === 'immediate') return;
+    setManifestDirty(Object.keys(extraServiceResources).length > 0);
+  }, [extraServiceResources, publishMode]);
+
   const combinedResources = useMemo(() => {
     const removalSet = new Set(pendingDeletes);
     const map = new Map<string, QdnResource>();
@@ -1539,10 +2016,14 @@ export default function DataExplorer() {
       if (isTombstoneResource(res) || removalSet.has(res.identifier)) return;
       map.set(res.identifier, res);
     });
+    Object.values(extraServiceResources).forEach((res) => {
+      if (isTombstoneResource(res) || removalSet.has(res.identifier)) return;
+      map.set(res.identifier, res);
+    });
     return Array.from(map.values()).sort(
       (a, b) => (b.created ?? 0) - (a.created ?? 0) || a.identifier.localeCompare(b.identifier)
     );
-  }, [manifestResourceRows, rows, pendingDeletes]);
+  }, [manifestResourceRows, rows, pendingDeletes, extraServiceResources]);
 
   const manifestLastSynced = manifestDoc?.lastSynced ?? 0;
   const minRowCreated = useMemo(
@@ -1885,6 +2366,11 @@ export default function DataExplorer() {
     : bulkSelectedResources.length > 1
       ? `Delete ${bulkSelectedResources.length} Resources`
       : 'Delete service data';
+  const canSaveSelectionToFiles = useMemo(
+    () => selectedResourceIds.some((id) => !allStructuredEntryMap.has(id)),
+    [selectedResourceIds, allStructuredEntryMap]
+  );
+  const canRemoveSelectionFromFiles = selectedStructuredEntries.length > 0;
 
   const manifestServiceBuckets = useMemo(() => {
     if (!manifestDoc) return [];
@@ -2148,6 +2634,14 @@ export default function DataExplorer() {
       setManifestDirty(false);
       return;
     }
+    if (
+      manifestPendingOverrides ||
+      pendingPublishRequests.length > 0 ||
+      pendingDeferredPublishRequests.length > 0
+    ) {
+      setManifestDirty(true);
+      return;
+    }
     if (!manifestDoc) {
       setManifestDirty(true);
       return;
@@ -2180,7 +2674,17 @@ export default function DataExplorer() {
         prevStructure !== currentStructure ||
         prevFolders !== currentFolders
     );
-  }, [manifestDoc, manifestSummary, activeName, detectedTypes, structuredSnapshot, folderSnapshot]);
+  }, [
+    manifestDoc,
+    manifestSummary,
+    activeName,
+    detectedTypes,
+    structuredSnapshot,
+    folderSnapshot,
+    manifestPendingOverrides,
+    pendingPublishRequests.length,
+    pendingDeferredPublishRequests.length,
+  ]);
 
   const selectedResource = useMemo(
     () => filteredResources.find((res) => res.identifier === selectedResourceId) || null,
@@ -2210,17 +2714,29 @@ export default function DataExplorer() {
     [knownFolderPaths]
   );
 
-  const handleSaveToFilesSubmit = async () => {
-    const targets =
+  const handleSaveToFilesSubmit = async (mode: 'publish' | 'link') => {
+    const rawTargets =
       saveToFilesDialog.resources.length > 0
         ? saveToFilesDialog.resources
         : selectedResource
           ? [selectedResource]
           : [];
+    const { resolved: targets, missingParents } = normalizeSaveToFilesTargets(
+      rawTargets,
+      combinedResourceMap
+    );
     if (!activeName || !targets.length) {
       setSaveToFilesDialog((prev) => ({
         ...prev,
         error: 'Select at least one resource and Qortal name first.',
+      }));
+      return;
+    }
+    if (missingParents.length) {
+      setSaveToFilesDialog((prev) => ({
+        ...prev,
+        error:
+          'Some selected chunks are missing their parent manifest. Load remaining resources or select the manifest resource.',
       }));
       return;
     }
@@ -2233,27 +2749,91 @@ export default function DataExplorer() {
       }));
       return;
     }
+    const structuredTargets = targets.filter(
+      (resource) => !allStructuredEntryMap.has(resource.identifier)
+    );
+    if (!structuredTargets.length) {
+      setSaveToFilesDialog((prev) => ({
+        ...prev,
+        error: 'Selected resources are already in Files.',
+      }));
+      return;
+    }
     const trimmedName = saveToFilesDialog.fileName.trim();
-    if (targets.length === 1 && !trimmedName) {
+    if (structuredTargets.length === 1 && !trimmedName) {
       setSaveToFilesDialog((prev) => ({ ...prev, error: 'Enter a file name to save.' }));
       return;
     }
     setSaveToFilesDialog((prev) => ({ ...prev, saving: true, error: null }));
     try {
-      const publishRequests: BatchPublishResource[] = [];
-      for (const resource of targets) {
+      const targetInfos = structuredTargets.map((resource) => {
         const entryMeta = allStructuredEntryMap.get(resource.identifier) || null;
         const targetName =
-          targets.length === 1
+          structuredTargets.length === 1
             ? trimmedName
             : entryMeta?.fileName || resource.metadata?.title || resource.identifier;
+        const targetPath = normalizedFolder || entryMeta?.folderSegments.join('/') || '';
+        return { resource, targetName, targetPath };
+      });
+      if (mode === 'link') {
+        const manifestAdditions = targetInfos.map(({ resource, targetName, targetPath }) => ({
+          identifier: resource.identifier,
+          path: targetPath,
+          fileName: targetName,
+          service: resource.service,
+        }));
+        if (publishMode === 'immediate') {
+          await handlePublishManifest({ addStructuredEntries: manifestAdditions });
+        } else {
+          setManifestDoc((prev) => {
+            const base = prev ?? buildManifestPayload();
+            const existing = new Set((base.structuredFiles || []).map((entry) => entry.identifier));
+            const nextStructured = [...(base.structuredFiles || [])];
+            manifestAdditions.forEach((entry) => {
+              if (existing.has(entry.identifier)) return;
+              nextStructured.push({
+                identifier: entry.identifier,
+                path: entry.path,
+                fileName: entry.fileName,
+                service: entry.service,
+              });
+              existing.add(entry.identifier);
+            });
+            const nextTotals = base.totals
+              ? { ...base.totals, structuredFiles: nextStructured.length }
+              : base.totals;
+            return { ...base, structuredFiles: nextStructured, totals: nextTotals };
+          });
+          setManifestPendingOverrides(true);
+        }
+        setSaveToFilesDialog({
+          open: false,
+          folderPath: '',
+          fileName: '',
+          description: '',
+          saving: false,
+          error: null,
+          resources: [],
+        });
+        return;
+      }
+      const publishRequests: QueueablePublishResource[] = [];
+      const manifestAdditions: Array<{
+        identifier: string;
+        path: string;
+        fileName: string;
+        service: string;
+      }> = [];
+      for (const { resource, targetName, targetPath } of targetInfos) {
         const encryptionInfo = getEncryptionInfo(resource);
         const treatAsEncrypted = encryptionInfo.mode !== null || encryptionInfo.isPrivate;
-        const rawBase64 = await (treatAsEncrypted
-          ? fetchPrivateBase64(resource)
-          : fetchResourceBase64(resource));
-        if (!rawBase64) throw new Error('Unable to fetch resource data for saving.');
-        const targetPath = normalizedFolder || entryMeta?.folderSegments.join('/') || '';
+        let rawBase64: string | undefined;
+        if (publishMode === 'immediate') {
+          rawBase64 = await (treatAsEncrypted
+            ? fetchPrivateBase64(resource)
+            : fetchResourceBase64(resource));
+          if (!rawBase64) throw new Error('Unable to fetch resource data for saving.');
+        }
         const normalizedService = resolveServiceForEncryptionMode(
           resource.service,
           encryptionInfo.mode
@@ -2262,7 +2842,23 @@ export default function DataExplorer() {
           normalizedService as Service,
           activeName || resource.name
         );
+        manifestAdditions.push({
+          identifier,
+          path: targetPath,
+          fileName: targetName,
+          service: normalizedService,
+        });
         const existingMetadata = { ...(resource.metadata || {}) };
+        const chunkedFsMeta = (resource.metadata as any)?.qassetsFs;
+        const chunkedPrivateMeta =
+          treatAsEncrypted && chunkedFsMeta?.chunked
+            ? {
+                chunked: true,
+                chunkManifestId: chunkedFsMeta.chunkManifestId || resource.identifier,
+                chunkCount: chunkedFsMeta.chunkCount,
+                chunkSize: chunkedFsMeta.chunkSize,
+              }
+            : null;
         const existingTags = Array.isArray((existingMetadata as any).tags)
           ? ((existingMetadata as any).tags as string[])
           : [];
@@ -2286,6 +2882,17 @@ export default function DataExplorer() {
           ...(treatAsEncrypted ? sanitizedMetadata : existingMetadata),
           tags,
         };
+        const baseDescription = treatAsEncrypted
+          ? 'Encrypted resource published via Q-Assets Data Explorer.'
+          : saveToFilesDialog.description || '';
+        const encodedMetadata =
+          treatAsEncrypted && targetPath !== undefined
+            ? encodePrivateStructuredMetadata({
+                path: targetPath || undefined,
+                fileName: targetName,
+              })
+            : null;
+        const description = withPrivateStructuredDescription(baseDescription, encodedMetadata);
         if (includeFullFsMetadata) {
           metadata.qassetsFs = {
             path: targetPath,
@@ -2301,17 +2908,19 @@ export default function DataExplorer() {
           };
           metadata.title = (existingMetadata as any)?.title || targetName;
         } else {
+          if (chunkedPrivateMeta) {
+            metadata.qassetsFs = chunkedPrivateMeta;
+          }
           metadata.title = (metadata as any).title || 'Encrypted resource';
         }
-        const description = treatAsEncrypted
-          ? 'Encrypted resource published via Q-Assets Data Explorer.'
-          : saveToFilesDialog.description || '';
+        metadata.description = description;
 
         publishRequests.push({
           name: activeName,
           service: normalizedService,
           identifier,
           base64: rawBase64,
+          sourceResource: resource,
           title: metadata.title,
           description,
           tags,
@@ -2319,6 +2928,13 @@ export default function DataExplorer() {
           // disableEncrypt: treatAsEncrypted,
           privateMode: encryptionInfo.mode ?? undefined,
         });
+      }
+      await queueOrPublishResources(publishRequests);
+      if (publishMode === 'immediate') {
+        await refreshResources();
+        await handlePublishManifest({ addStructuredEntries: manifestAdditions });
+      } else {
+        setManifestDirty(true);
       }
       setSaveToFilesDialog({
         open: false,
@@ -2329,8 +2945,6 @@ export default function DataExplorer() {
         error: null,
         resources: [],
       });
-      await publishResources(publishRequests);
-      await refreshResources();
     } catch (e: any) {
       setSaveToFilesDialog((prev) => ({
         ...prev,
@@ -2397,13 +3011,55 @@ export default function DataExplorer() {
   };
   const closePublishMenu = () => setPublishAnchor(null);
 
-  const handleToggleSelection = (resourceId: string) => {
+  const getVisibleSelectionIds = useCallback(() => {
+    if (activeSection === 'files') {
+      return sortedFolderFiles.map((entry) => entry.resource.identifier);
+    }
+    if (activeSection === 'shares') {
+      return filteredShareResources.map((res) => res.identifier);
+    }
+    if (activeSection === 'services' && activeService) {
+      return activeResources.map((res) => res.identifier);
+    }
+    return [] as string[];
+  }, [activeSection, activeService, sortedFolderFiles, filteredShareResources, activeResources]);
+
+  const getSelectionRange = useCallback(
+    (targetId: string) => {
+      const visible = getVisibleSelectionIds();
+      const anchor = selectionAnchorRef.current;
+      if (!anchor) return [targetId];
+      const startIndex = visible.indexOf(anchor);
+      const endIndex = visible.indexOf(targetId);
+      if (startIndex === -1 || endIndex === -1) return [targetId];
+      const [minIndex, maxIndex] =
+        startIndex < endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
+      return visible.slice(minIndex, maxIndex + 1);
+    },
+    [getVisibleSelectionIds]
+  );
+
+  const handleToggleSelection = (resourceId: string, options?: { shift?: boolean }) => {
+    setSelectedResourceId(resourceId);
+    if (options?.shift && selectionAnchorRef.current) {
+      const range = getSelectionRange(resourceId);
+      setSelectedResourceIds((prev) => {
+        const set = new Set(prev);
+        range.forEach((id) => set.add(id));
+        return Array.from(set);
+      });
+      return;
+    }
     setSelectedResourceIds((prev) =>
       prev.includes(resourceId) ? prev.filter((id) => id !== resourceId) : prev.concat(resourceId)
     );
+    selectionAnchorRef.current = resourceId;
   };
 
-  const handleClearSelection = () => setSelectedResourceIds([]);
+  const handleClearSelection = () => {
+    setSelectedResourceIds([]);
+    selectionAnchorRef.current = null;
+  };
 
   const handleServiceNavigate = (serviceKey: string | null) => {
     setActiveSection('services');
@@ -2581,23 +3237,41 @@ export default function DataExplorer() {
       for (let i = 0; i < files.length; i += 1) {
         const file = files[i];
         const title = form.title || file.name;
-        const description = form.description || `Published via Q-Assets Data Explorer`;
-        const includeFsMetadata = form.structured && encryptionMode === 'none';
+        const includeFsMetadata = form.structured;
+        const isPrivatePublish = encryptionMode !== 'none';
+        const privateStructured = includeFsMetadata
+          ? {
+              path: normalizedFolder || undefined,
+              fileName: file.name || undefined,
+            }
+          : null;
+        const encodedStructuredMetadata =
+          isPrivatePublish && privateStructured
+            ? encodePrivateStructuredMetadata(privateStructured)
+            : null;
+        const baseDescription = form.description || `Published via Q-Assets Data Explorer`;
+        const description = withPrivateStructuredDescription(
+          baseDescription,
+          encodedStructuredMetadata
+        );
         let tags: string[] = [];
-        if (includeFsMetadata) {
+        if (includeFsMetadata && !isPrivatePublish) {
           tags.push('qassets-fs');
           if (normalizedFolder) tags.push(`fs-path:${normalizedFolder}`);
           tags.push(`fs-name:${file.name}`);
         }
         let metadata: Record<string, any> = {};
-        if (includeFsMetadata) {
+        if (includeFsMetadata && !isPrivatePublish) {
           metadata.qassetsFs = {
             path: normalizedFolder,
             fileName: file.name,
             version: 1,
           };
           metadata.title = file.name;
+        } else if (isPrivatePublish) {
+          metadata.title = metadata.title || 'Encrypted resource';
         }
+        metadata.description = description;
 
         let identifier: string;
         if (baseId) {
@@ -3109,19 +3783,40 @@ export default function DataExplorer() {
     const nextFileName = fileName.trim() || entry.fileName;
     setManifestDialog((prev) => ({ ...prev, saving: true, error: null }));
     try {
-      const base64 = await resolveResourceBase64(entry.resource);
-      const tags = ['qassets-fs'];
-      if (normalizedPath) tags.push(`fs-path:${normalizedPath}`);
-      tags.push(`fs-name:${nextFileName}`);
-      if (entry.isPrivate) tags.push('private');
+      const base64 =
+        publishMode === 'immediate' ? await resolveResourceBase64(entry.resource) : undefined;
+      const isPrivate = entry.isPrivate;
+      const tags: string[] = [];
+      if (!isPrivate) {
+        tags.push('qassets-fs');
+        if (normalizedPath) tags.push(`fs-path:${normalizedPath}`);
+        tags.push(`fs-name:${nextFileName}`);
+      }
+      if (isPrivate && !tags.includes('private')) {
+        tags.push('private');
+      }
       const metadata = {
         ...entry.resource.metadata,
-        qassetsFs: {
+      };
+      const baseDescription = entry.resource.metadata?.description;
+      const encodedMetadata = isPrivate
+        ? encodePrivateStructuredMetadata({
+            path: normalizedPath || undefined,
+            fileName: nextFileName || undefined,
+          })
+        : null;
+      const description = withPrivateStructuredDescription(baseDescription, encodedMetadata);
+      if (!isPrivate && normalizedPath) {
+        metadata.qassetsFs = {
           path: normalizedPath,
           fileName: nextFileName,
           version: 1,
-        },
-      };
+        };
+      }
+      if (isPrivate) {
+        metadata.title = metadata.title || 'Encrypted resource';
+      }
+      metadata.description = description;
       await republishWithMetadata({ resource: entry.resource, base64, metadata, tags });
       await refreshResources();
       const manifestOverrides: ManifestOverrides = {
@@ -3150,6 +3845,12 @@ export default function DataExplorer() {
   type ManifestOverrides = {
     folders?: Array<{ path: string; name?: string }>;
     structured?: Record<string, { path?: string; fileName?: string }>;
+    addStructuredEntries?: Array<{
+      identifier: string;
+      path: string;
+      fileName: string;
+      service: string;
+    }>;
     removeResourceIdentifiers?: string[];
     removeStructuredIdentifiers?: string[];
   };
@@ -3182,6 +3883,19 @@ export default function DataExplorer() {
             service: entry.resource.service,
           };
         });
+      if (overrides?.addStructuredEntries?.length) {
+        const existing = new Set(manifestStructuredPayload.map((entry) => entry.identifier));
+        overrides.addStructuredEntries.forEach((entry) => {
+          if (!entry.identifier || existing.has(entry.identifier)) return;
+          manifestStructuredPayload.push({
+            identifier: entry.identifier,
+            path: entry.path,
+            fileName: entry.fileName,
+            service: entry.service,
+          });
+          existing.add(entry.identifier);
+        });
+      }
       const folderMap = new Map<string, string>();
       folderSnapshot.forEach((folder) => {
         const normalized = normalizePathSegments(folder.path).join('/');
@@ -3251,6 +3965,7 @@ export default function DataExplorer() {
         ]);
         setManifestRefreshBlockedUntil(Date.now() + MANIFEST_REFRESH_COOLDOWN);
         applyManifestState(manifestPayload, false, 'success');
+        setManifestPendingOverrides(false);
       } catch (e: any) {
         setManifestError(e?.message || 'Manifest publish failed');
       } finally {
@@ -3610,6 +4325,63 @@ export default function DataExplorer() {
     handleClearSelection();
   };
 
+  const handleBulkSaveToFiles = () => {
+    const targets = selectedResourceIds.length
+      ? selectedResourceIds
+      : selectedResource
+        ? [selectedResource.identifier]
+        : [];
+    if (!targets.length) {
+      alert('Select at least one resource.');
+      return;
+    }
+    const resources = targets
+      .filter((id) => !allStructuredEntryMap.has(id))
+      .map((id) => combinedResources.find((res) => res.identifier === id) || null)
+      .filter((res): res is QdnResource => Boolean(res));
+    if (!resources.length) {
+      alert('Selected resources are already in Files.');
+      return;
+    }
+    openSaveDialogForResources(resources);
+    handleClearSelection();
+  };
+
+  const handleBulkRemoveFromFiles = async () => {
+    if (!selectedStructuredEntries.length) {
+      alert('Select at least one file in Files.');
+      return;
+    }
+    const entryCount = selectedStructuredEntries.length;
+    setFilesActionLoading('remove');
+    setSystemSaveStatus(null);
+    try {
+      for (const entry of selectedStructuredEntries) {
+        let base64: string | undefined;
+        if (publishMode === 'immediate') {
+          const loaded = await ensureResourceContent(entry.resource, {
+            skipCache: true,
+          });
+          base64 = loaded.base64;
+        }
+        const { metadata, tags } = stripStructuredMetadata(entry.resource);
+        await republishWithMetadata({
+          resource: entry.resource,
+          base64,
+          metadata,
+          tags,
+        });
+      }
+      await refreshResources();
+      setSystemSaveStatus(`Removed ${entryCount} file${entryCount === 1 ? '' : 's'} from Files.`);
+      handleClearSelection();
+    } catch (e: any) {
+      setSystemSaveStatus(e?.message || 'Failed to remove from Files.');
+    } finally {
+      setFilesActionLoading(null);
+    }
+  };
+
   const [contextMenu, setContextMenu] = useState<{
     anchorEl: HTMLElement | null;
     resource: QdnResource | null;
@@ -3618,13 +4390,36 @@ export default function DataExplorer() {
   const handleContextMenuOpen = (event: React.MouseEvent<HTMLElement>, resource: QdnResource) => {
     event.preventDefault();
     setSelectedResourceId(resource.identifier);
+    selectionAnchorRef.current = resource.identifier;
     setContextMenu({ anchorEl: event.currentTarget, resource });
   };
 
   const handleContextMenuClose = () => setContextMenu({ anchorEl: null, resource: null });
+  const contextEntry = contextMenu.resource
+    ? allStructuredEntryMap.get(contextMenu.resource.identifier) || null
+    : null;
 
   const handleContextPreview = () => {
     if (contextMenu.resource) handlePreviewResource(contextMenu.resource);
+    handleContextMenuClose();
+  };
+
+  const handleContextSaveToFiles = () => {
+    if (!contextMenu.resource) return handleContextMenuClose();
+    openSaveDialogForResources([contextMenu.resource]);
+    handleContextMenuClose();
+  };
+
+  const handleContextSaveToSystem = () => {
+    if (!contextMenu.resource) return handleContextMenuClose();
+    const entry = allStructuredEntryMap.get(contextMenu.resource.identifier) || null;
+    void saveResourceToSystem(contextMenu.resource, entry);
+    handleContextMenuClose();
+  };
+
+  const handleContextShare = () => {
+    if (!contextMenu.resource) return handleContextMenuClose();
+    openShareDialogForResources([contextMenu.resource]);
     handleContextMenuClose();
   };
 
@@ -3642,6 +4437,13 @@ export default function DataExplorer() {
     handleContextMenuClose();
   };
 
+  const handleContextRemoveFromFiles = () => {
+    if (!contextMenu.resource) return handleContextMenuClose();
+    const entry = allStructuredEntryMap.get(contextMenu.resource.identifier);
+    if (entry) void handleRemoveFromFiles(entry);
+    handleContextMenuClose();
+  };
+
   const handleContextDelete = () => {
     if (!contextMenu.resource) return handleContextMenuClose();
     const entry = allStructuredEntryMap.get(contextMenu.resource.identifier);
@@ -3650,17 +4452,22 @@ export default function DataExplorer() {
     handleContextMenuClose();
   };
 
-  const handleRemoveFromFiles = async () => {
-    if (!selectedStructuredEntry) return;
+  const handleRemoveFromFiles = async (entryArg?: StructuredEntry | null) => {
+    const entry = entryArg || selectedStructuredEntry;
+    if (!entry) return;
     setFilesActionLoading('remove');
     setSystemSaveStatus(null);
     try {
-      const { base64 } = await ensureResourceContent(selectedStructuredEntry.resource, {
-        skipCache: true,
-      });
-      const { metadata, tags } = stripStructuredMetadata(selectedStructuredEntry.resource);
+      let base64: string | undefined;
+      if (publishMode === 'immediate') {
+        const loaded = await ensureResourceContent(entry.resource, {
+          skipCache: true,
+        });
+        base64 = loaded.base64;
+      }
+      const { metadata, tags } = stripStructuredMetadata(entry.resource);
       await republishWithMetadata({
-        resource: selectedStructuredEntry.resource,
+        resource: entry.resource,
         base64,
         metadata,
         tags,
@@ -4099,6 +4906,7 @@ export default function DataExplorer() {
             ? pagedShareResources.map((res) => res.identifier)
             : [];
     setSelectedResourceIds(ids);
+    selectionAnchorRef.current = ids.length ? ids[ids.length - 1] : null;
   }, [activeSection, activeService, sortedFolderFiles, pagedActiveResources, pagedShareResources]);
 
   return (
@@ -4211,7 +5019,7 @@ export default function DataExplorer() {
                         size="small"
                         variant="contained"
                         onClick={() => void handlePublishManifest()}
-                        disabled={!manifestDirty || manifestPublishing || !activeName}
+                        disabled={!hasQueuedChanges || manifestPublishing || !activeName}
                         sx={{ flex: 3 }}
                       >
                         {manifestPublishing ? 'Publishing…' : 'Publish queued changes'}
@@ -4452,6 +5260,22 @@ export default function DataExplorer() {
                       <Button
                         size="small"
                         variant="outlined"
+                        onClick={handleBulkSaveToFiles}
+                        disabled={!canSaveSelectionToFiles}
+                      >
+                        Save to files
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={handleBulkRemoveFromFiles}
+                        disabled={!canRemoveSelectionFromFiles || filesActionLoading === 'remove'}
+                      >
+                        {filesActionLoading === 'remove' ? 'Removing…' : 'Remove from files'}
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
                         onClick={handleBulkMove}
                         disabled={!movableEntries.length}
                         sx={{ color: moveColor, borderColor: moveColor }}
@@ -4519,7 +5343,14 @@ export default function DataExplorer() {
                       <Paper
                         key={resource.identifier}
                         variant="outlined"
-                        onClick={() => setSelectedResourceId(resource.identifier)}
+                        onClick={(event) => {
+                          if (event.shiftKey) {
+                            handleToggleSelection(resource.identifier, { shift: true });
+                            return;
+                          }
+                          setSelectedResourceId(resource.identifier);
+                          selectionAnchorRef.current = resource.identifier;
+                        }}
                         onDoubleClick={(event) => {
                           event.stopPropagation();
                           handlePreviewResource(resource);
@@ -4539,7 +5370,11 @@ export default function DataExplorer() {
                           checked={isChecked}
                           onChange={(event) => {
                             event.stopPropagation();
-                            handleToggleSelection(resource.identifier);
+                            const shift =
+                              event.nativeEvent instanceof MouseEvent
+                                ? event.nativeEvent.shiftKey
+                                : false;
+                            handleToggleSelection(resource.identifier, { shift });
                           }}
                           sx={{ position: 'absolute', top: 4, right: 4 }}
                         />
@@ -4654,6 +5489,22 @@ export default function DataExplorer() {
                       <Button
                         size="small"
                         variant="outlined"
+                        onClick={handleBulkSaveToFiles}
+                        disabled={!canSaveSelectionToFiles}
+                      >
+                        Save to files
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={handleBulkRemoveFromFiles}
+                        disabled={!canRemoveSelectionFromFiles || filesActionLoading === 'remove'}
+                      >
+                        {filesActionLoading === 'remove' ? 'Removing…' : 'Remove from files'}
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
                         onClick={handleBulkMove}
                         disabled={!movableEntries.length}
                         sx={{ color: moveColor, borderColor: moveColor }}
@@ -4716,7 +5567,14 @@ export default function DataExplorer() {
                       <Paper
                         key={resource.identifier}
                         variant="outlined"
-                        onClick={() => setSelectedResourceId(resource.identifier)}
+                        onClick={(event) => {
+                          if (event.shiftKey) {
+                            handleToggleSelection(resource.identifier, { shift: true });
+                            return;
+                          }
+                          setSelectedResourceId(resource.identifier);
+                          selectionAnchorRef.current = resource.identifier;
+                        }}
                         onDoubleClick={(event) => {
                           event.stopPropagation();
                           handlePreviewResource(resource);
@@ -4736,7 +5594,11 @@ export default function DataExplorer() {
                           checked={isChecked}
                           onChange={(event) => {
                             event.stopPropagation();
-                            handleToggleSelection(resource.identifier);
+                            const shift =
+                              event.nativeEvent instanceof MouseEvent
+                                ? event.nativeEvent.shiftKey
+                                : false;
+                            handleToggleSelection(resource.identifier, { shift });
                           }}
                           sx={{ position: 'absolute', top: 4, right: 4 }}
                         />
@@ -4841,6 +5703,14 @@ export default function DataExplorer() {
                         disabled={!selectedResourceIds.length}
                       >
                         Save to system
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={handleBulkRemoveFromFiles}
+                        disabled={!canRemoveSelectionFromFiles || filesActionLoading === 'remove'}
+                      >
+                        {filesActionLoading === 'remove' ? 'Removing…' : 'Remove from files'}
                       </Button>
                       <Button
                         size="small"
@@ -5018,7 +5888,14 @@ export default function DataExplorer() {
                         <Paper
                           key={resource.identifier}
                           variant="outlined"
-                          onClick={() => setSelectedResourceId(resource.identifier)}
+                          onClick={(event) => {
+                            if (event.shiftKey) {
+                              handleToggleSelection(resource.identifier, { shift: true });
+                              return;
+                            }
+                            setSelectedResourceId(resource.identifier);
+                            selectionAnchorRef.current = resource.identifier;
+                          }}
                           onDoubleClick={(event) => {
                             event.stopPropagation();
                             handlePreviewResource(resource);
@@ -5038,7 +5915,11 @@ export default function DataExplorer() {
                             checked={isChecked}
                             onChange={(event) => {
                               event.stopPropagation();
-                              handleToggleSelection(resource.identifier);
+                              const shift =
+                                event.nativeEvent instanceof MouseEvent
+                                  ? event.nativeEvent.shiftKey
+                                  : false;
+                              handleToggleSelection(resource.identifier, { shift });
                             }}
                             sx={{ position: 'absolute', top: 4, right: 4 }}
                           />
@@ -5289,8 +6170,18 @@ export default function DataExplorer() {
         onClose={handleContextMenuClose}
       >
         <MenuItem onClick={handleContextPreview}>Preview</MenuItem>
-        <MenuItem onClick={handleContextMove}>Move</MenuItem>
-        <MenuItem onClick={handleContextRename}>Rename</MenuItem>
+        <MenuItem onClick={handleContextSaveToSystem}>Save to system</MenuItem>
+        {!contextEntry && <MenuItem onClick={handleContextSaveToFiles}>Save to files</MenuItem>}
+        {contextEntry && (
+          <MenuItem onClick={handleContextRemoveFromFiles}>Remove from files</MenuItem>
+        )}
+        <MenuItem onClick={handleContextShare}>Share</MenuItem>
+        <MenuItem onClick={handleContextMove} disabled={!contextEntry}>
+          Move
+        </MenuItem>
+        <MenuItem onClick={handleContextRename} disabled={!contextEntry}>
+          Rename
+        </MenuItem>
         <MenuItem onClick={handleContextDelete}>Delete</MenuItem>
       </Menu>
 
@@ -5639,7 +6530,7 @@ export default function DataExplorer() {
         <DialogContent dividers>
           <Stack spacing={2}>
             <Typography variant="body2" color="text.secondary">
-              Publish this resource into your Q-Assets file system for quick access.
+              Add this resource to your Q-Assets file system.
             </Typography>
             <TextField
               label="Folder path"
@@ -5668,6 +6559,10 @@ export default function DataExplorer() {
                 setSaveToFilesDialog((prev) => ({ ...prev, description: event.target.value }))
               }
             />
+            <Typography variant="caption" color="text.secondary">
+              Link to files adds a manifest entry without republishing. Save to files republishes
+              the resource with file metadata.
+            </Typography>
             {saveToFilesDialog.saving && <LinearProgress />}
             {saveToFilesDialog.error && <Alert severity="warning">{saveToFilesDialog.error}</Alert>}
           </Stack>
@@ -5677,11 +6572,18 @@ export default function DataExplorer() {
             Cancel
           </Button>
           <Button
-            onClick={handleSaveToFilesSubmit}
+            onClick={() => handleSaveToFilesSubmit('link')}
+            variant="outlined"
+            disabled={saveToFilesDialog.saving}
+          >
+            Link to files
+          </Button>
+          <Button
+            onClick={() => handleSaveToFilesSubmit('publish')}
             variant="contained"
             disabled={saveToFilesDialog.saving}
           >
-            {saveToFilesDialog.saving ? 'Saving…' : 'Save'}
+            {saveToFilesDialog.saving ? 'Saving…' : 'Save to files'}
           </Button>
         </DialogActions>
       </Dialog>

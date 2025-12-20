@@ -276,19 +276,12 @@ const sanitizeResource = (resource: BatchPublishResource): PublishableResource =
   };
 };
 
-const shouldUseDirectPublish = (
+const isPrivatePublish = (
   resource: BatchPublishResource,
   sanitized: PublishableResource
 ): boolean => {
-  console.log(
-    'we hit shouldUseDirectPublish function',
-    resource.service,
-    'sanitized',
-    resource.service
-  );
   if (resource.privateMode === 'direct') return true;
   if (isPrivateService(resource.service) || isPrivateService(sanitized.service)) return true;
-  if (resource.privateMode === 'group') return false;
   if (sanitized.disableEncrypt && sanitized.service && isPrivateService(sanitized.service)) {
     return true;
   }
@@ -317,31 +310,43 @@ export async function publishQdnResources(resources: BatchPublishResource[]): Pr
       sanitized: sanitizeResource(res),
     }));
 
-  const directResources: PublishableResource[] = [];
-  const regularResources: PublishableResource[] = [];
+  const executor = getPublishExecutor();
+  const allResources = publishable.map(({ sanitized }) => sanitized);
+  try {
+    await executor(allResources);
+    return;
+  } catch (err) {
+    console.error('[useQdnBatchPublisher] executor publish failed', {
+      error: err,
+      resources: allResources.map(summarizeResourceForLog),
+    });
+    console.warn('usePublish publishMultipleResources failed, falling back to direct publish', err);
+  }
 
+  const privateResources: PublishableResource[] = [];
+  const publicResources: PublishableResource[] = [];
   publishable.forEach(({ original, sanitized }) => {
-    if (shouldUseDirectPublish(original, sanitized)) directResources.push(sanitized);
-    else regularResources.push(sanitized);
+    if (isPrivatePublish(original, sanitized)) privateResources.push(sanitized);
+    else publicResources.push(sanitized);
   });
 
-  if (directResources.length >= 4) {
+  if (privateResources.length >= 4) {
     try {
       await qortalRequest({
         action: 'PUBLISH_MULTIPLE_QDN_RESOURCES',
-        resources: directResources,
+        resources: privateResources,
       });
     } catch (error) {
-      console.error('[useQdnBatchPublisher] direct publish failed', {
+      console.error('[useQdnBatchPublisher] private fallback publish failed', {
         error,
-        resources: directResources.map(summarizeResourceForLog),
+        resources: privateResources.map(summarizeResourceForLog),
       });
       throw error;
     }
-  } else {
+  } else if (privateResources.length) {
     try {
       await Promise.all(
-        directResources.map(
+        privateResources.map(
           async (res) =>
             await qortalRequest({
               action: 'PUBLISH_QDN_RESOURCE',
@@ -359,39 +364,26 @@ export async function publishQdnResources(resources: BatchPublishResource[]): Pr
         )
       );
     } catch (error) {
-      console.error('[useQdnBatchPublisher] direct publish failed', {
+      console.error('[useQdnBatchPublisher] private fallback publish failed', {
         error,
-        resources: directResources.map(summarizeResourceForLog),
+        resources: privateResources.map(summarizeResourceForLog),
       });
       throw error;
     }
   }
 
-  const executor = getPublishExecutor();
-  if (regularResources.length) {
+  if (publicResources.length) {
     try {
-      await executor(regularResources);
-    } catch (err) {
-      console.error('[useQdnBatchPublisher] executor publish failed', {
-        error: err,
-        resources: regularResources.map(summarizeResourceForLog),
+      await qortalRequest({
+        action: 'PUBLISH_MULTIPLE_QDN_RESOURCES',
+        resources: publicResources,
       });
-      console.warn(
-        'usePublish publishMultipleResources failed, falling back to direct publish',
-        err
-      );
-      try {
-        await qortalRequest({
-          action: 'PUBLISH_MULTIPLE_QDN_RESOURCES',
-          resources: regularResources,
-        });
-      } catch (fallbackErr) {
-        console.error('[useQdnBatchPublisher] fallback publish failed', {
-          error: fallbackErr,
-          resources: regularResources.map(summarizeResourceForLog),
-        });
-        throw fallbackErr;
-      }
+    } catch (fallbackErr) {
+      console.error('[useQdnBatchPublisher] fallback publish failed', {
+        error: fallbackErr,
+        resources: publicResources.map(summarizeResourceForLog),
+      });
+      throw fallbackErr;
     }
   }
 }
