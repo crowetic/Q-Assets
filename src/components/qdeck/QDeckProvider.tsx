@@ -13,7 +13,6 @@ import {
   appendPaymentLine,
   QUserIdentity,
   addCardToIndex,
-  loadCardsIndex,
   loadCardDoc,
   findBoardVisibilityHeads,
   resolveBoardForRead,
@@ -25,6 +24,7 @@ import {
   buildCardsIndexPublishPayload,
   buildBoardPublishPayload,
   repairCardsIndex as repairCardsIndexDoc,
+  loadNewestCardsIndex,
 } from '../../utils/qdeckApi';
 import { useAuth } from 'qapp-core';
 import { deleteBoard as apiDeleteBoard } from '../../utils/qdeckApi'; // path as needed
@@ -91,6 +91,7 @@ type QDeckCtx = {
   cardVariants: Record<string, QDeckCard[]>;
   archivedCardIds: Set<string>;
   comments: Record<string, CardCommentThread>;
+  changeLog: BoardChangeLog;
   isCardCollapsed: (cardId: string, card?: QDeckCard) => boolean;
   setCardCollapsed: (cardId: string, collapsed: boolean) => void;
 
@@ -118,6 +119,8 @@ type QDeckCtx = {
   ) => Promise<void>;
 
   loadCommentsForCard: (cardId: string) => Promise<void>;
+  collectBoardChangeReport: () => Promise<BoardChangeReport>;
+  resetBoardChangeLog: () => void;
 
   publishMode: PublishMode;
   setPublishMode: (mode: PublishMode) => void;
@@ -151,6 +154,58 @@ const createEmptyCardsIndexDoc = (boardId: string): CardsIndexDoc => ({
   seq: 0,
 });
 
+const getCardTimestamp = (card: QDeckCard) =>
+  Math.max(card.updatedAt ?? 0, card.createdAt ?? 0, card.seq ?? 0);
+
+const pickNewestVariant = (variants: QDeckCard[]) => {
+  if (!variants.length) return undefined;
+  return variants.reduce((best, next) => {
+    const bestTs = getCardTimestamp(best);
+    const nextTs = getCardTimestamp(next);
+    if (nextTs !== bestTs) return nextTs > bestTs ? next : best;
+    if ((next.seq ?? 0) !== (best.seq ?? 0)) return (next.seq ?? 0) > (best.seq ?? 0) ? next : best;
+    return (next.createdAt ?? 0) > (best.createdAt ?? 0) ? next : best;
+  });
+};
+
+type BoardChangeType =
+  | 'created'
+  | 'moved'
+  | 'completed'
+  | 'reopened'
+  | 'updated'
+  | 'archived'
+  | 'unarchived';
+
+type BoardChangeEntry = {
+  type: BoardChangeType;
+  cardId: string;
+  title?: string;
+  ts: number;
+  fromListId?: string;
+  toListId?: string;
+  details?: string;
+};
+
+type BoardChangeLog = {
+  openedAt: number;
+  entries: BoardChangeEntry[];
+};
+
+type CommentChange = {
+  cardId: string;
+  cardTitle?: string;
+  author: string;
+  createdAt: number;
+  bodyHtml: string;
+};
+
+type BoardChangeReport = {
+  openedAt: number;
+  entries: BoardChangeEntry[];
+  comments: CommentChange[];
+};
+
 //MAIN PROVIDER EXPORT --------------------------------------------------------------------------------------
 
 export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -161,6 +216,10 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [cardVariants, setCardVariants] = useState<Record<string, QDeckCard[]>>({});
   const [archivedCardIds, setArchivedCardIds] = useState<Set<string>>(new Set());
   const [comments, setComments] = useState<Record<string, CardCommentThread>>({});
+  const [changeLog, setChangeLog] = useState<BoardChangeLog>({
+    openedAt: Date.now(),
+    entries: [],
+  });
   const cardsIndexCacheRef = useRef<Record<string, CardsIndexDoc | null>>({});
   const { publish: publishResources } = useQdnBatchPublisher();
   const { alert } = useAlert();
@@ -296,6 +355,26 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [board?.boardId]);
 
+  const changeLogBoardIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const currentBoardId = board?.boardId ?? null;
+    if (changeLogBoardIdRef.current !== currentBoardId) {
+      changeLogBoardIdRef.current = currentBoardId;
+      setChangeLog({ openedAt: Date.now(), entries: [] });
+    }
+  }, [board?.boardId]);
+
+  const resetBoardChangeLog = useCallback(() => {
+    setChangeLog({ openedAt: Date.now(), entries: [] });
+  }, []);
+
+  const recordChange = useCallback((entry: BoardChangeEntry) => {
+    setChangeLog((prev) => ({
+      ...prev,
+      entries: [...prev.entries, entry],
+    }));
+  }, []);
+
   const setCardCollapsed = useCallback((cardId: string, value: boolean) => {
     setCollapsedCardPrefs((prev) => {
       if (prev[cardId] === value) return prev;
@@ -305,10 +384,11 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const isCardCollapsed = useCallback(
     (cardId: string, card?: QDeckCard) => {
-    const isDone = Boolean(card?.isDone);
-    const inDoneList = !!doneListId && card?.statusListId === doneListId;
-    const listIsDefaultCollapsed = !!card?.statusListId && defaultCollapsedListIds.has(card.statusListId);
-    if (isDone || inDoneList || listIsDefaultCollapsed) return true;
+      const isDone = Boolean(card?.isDone);
+      const inDoneList = !!doneListId && card?.statusListId === doneListId;
+      const listIsDefaultCollapsed =
+        !!card?.statusListId && defaultCollapsedListIds.has(card.statusListId);
+      if (isDone || inDoneList || listIsDefaultCollapsed) return true;
       const override = collapsedCardPrefs[cardId];
       if (override !== undefined) return override;
       return false;
@@ -349,11 +429,14 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return;
       }
 
-      // 1) Try index (read under board issuer!)
+      // 1) Try newest cards index across issuers
       let refs: Array<{ name: string; cardId: string }> | null = null;
       let idx: CardsIndexDoc | null = null;
       try {
-        idx = await loadCardsIndex(b.createdBy, b);
+        idx =
+          (await loadNewestCardsIndex(b, {
+            issuerHints: [b.createdBy, identity.name].filter(Boolean) as string[],
+          })) ?? null;
         if (idx?.entries?.length) {
           refs = idx.entries.slice();
         } else if (idx?.cardIds?.length) {
@@ -361,7 +444,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           refs = idx.cardIds.map((cid) => ({ name: b.createdBy, cardId: cid }));
         }
       } catch (e) {
-        console.warn('[Q-Deck] loadCardsIndex failed; will try discovery', e);
+        console.warn('[Q-Deck] loadNewestCardsIndex failed; will try discovery', e);
       }
 
       // 2) Fallback discovery across *all* issuers
@@ -436,8 +519,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
         }
         if (!chosen) {
-          // default: creator version, else first
-          chosen = list.find((c) => c.createdBy === b.createdBy) || list[0];
+          // default: newest across all publishers
+          chosen = pickNewestVariant(list);
         }
         if (chosen) byId[cardId] = chosen;
       }
@@ -446,7 +529,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setCardVariants(variants);
       setArchivedCardIds(archivedSet);
     },
-    [identity.address, cardLimiter]
+    [identity.address, identity.name, cardLimiter]
   );
 
   const repairCardsIndex = useCallback(async () => {
@@ -631,6 +714,13 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       };
 
       setCards((prev) => ({ ...prev, [c.cardId]: normalizeCardCollapse(c) }));
+      recordChange({
+        type: 'created',
+        cardId: c.cardId,
+        title: c.title,
+        ts: now,
+        toListId: c.statusListId,
+      });
       const publisher = auth.name ? auth.name : identity.name;
       const currentIndexDoc =
         cardsIndexCacheRef.current[board.boardId] ?? createEmptyCardsIndexDoc(board.boardId);
@@ -651,6 +741,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       auth.name,
       queueOrPublishResources,
       normalizeCardCollapse,
+      recordChange,
     ]
   );
 
@@ -668,6 +759,16 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         seq: c.seq + 1,
       };
       setCards((prev) => ({ ...prev, [cardId]: normalizeCardCollapse(next) }));
+      if (c.statusListId !== toListId) {
+        recordChange({
+          type: 'moved',
+          cardId,
+          title: c.title,
+          ts: next.updatedAt,
+          fromListId: c.statusListId,
+          toListId,
+        });
+      }
       const publisher = auth.name ? auth.name : identity.name;
       const payload = await buildCardPublishPayload(publisher, board, next);
       const currentIndexDoc =
@@ -680,7 +781,15 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const indexPayload = await buildCardsIndexPublishPayload(publisher, board, indexDoc);
       await queueOrPublishResources(board.boardId, [payload, indexPayload]);
     },
-    [board, cards, auth.name, identity.name, queueOrPublishResources, normalizeCardCollapse]
+    [
+      board,
+      cards,
+      auth.name,
+      identity.name,
+      queueOrPublishResources,
+      normalizeCardCollapse,
+      recordChange,
+    ]
   );
 
   const increaseCardSeq = (seq: number) => {
@@ -701,6 +810,48 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (current && card.seq <= current.seq) throw new Error('Stale write (seq too low)');
       // card.seq + 1;
       card.seq = increaseCardSeq(card.seq);
+      if (current) {
+        const changedFields: string[] = [];
+        if (current.title !== card.title) changedFields.push('title');
+        if (current.descriptionHtml !== card.descriptionHtml) changedFields.push('details');
+        if (current.quickDescription !== card.quickDescription) changedFields.push('summary');
+        if (current.primaryImageUrl !== card.primaryImageUrl) changedFields.push('primary image');
+        if ((current.primaryImage?.identifier || '') !== (card.primaryImage?.identifier || '')) {
+          changedFields.push('primary image');
+        }
+        if (current.estimatedCompletionTimeMinutes !== card.estimatedCompletionTimeMinutes) {
+          changedFields.push('ETA');
+        }
+        if ((current.tags || []).join(',') !== (card.tags || []).join(',')) {
+          changedFields.push('tags');
+        }
+        if ((current.assignees || []).join(',') !== (card.assignees || []).join(',')) {
+          changedFields.push('assignees');
+        }
+        if (current.priority !== card.priority) changedFields.push('priority');
+        if (current.statusListId !== card.statusListId) {
+          changedFields.push('status');
+        }
+        if (current.isDone !== card.isDone) {
+          recordChange({
+            type: card.isDone ? 'completed' : 'reopened',
+            cardId: card.cardId,
+            title: card.title,
+            ts: card.updatedAt ?? Date.now(),
+            fromListId: current.statusListId,
+            toListId: card.statusListId,
+          });
+        }
+        if (changedFields.length) {
+          recordChange({
+            type: 'updated',
+            cardId: card.cardId,
+            title: card.title,
+            ts: card.updatedAt ?? Date.now(),
+            details: Array.from(new Set(changedFields)).join(', '),
+          });
+        }
+      }
       setCards((prev) => ({ ...prev, [card.cardId]: normalizeCardCollapse(card) }));
       const publisher = auth.name ? auth.name : identity.name;
       const payload = await buildCardPublishPayload(publisher, board, card);
@@ -714,7 +865,15 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const indexPayload = await buildCardsIndexPublishPayload(publisher, board, indexDoc);
       await queueOrPublishResources(board.boardId, [payload, indexPayload]);
     },
-    [board, cards, auth.name, identity.name, queueOrPublishResources, normalizeCardCollapse]
+    [
+      board,
+      cards,
+      auth.name,
+      identity.name,
+      queueOrPublishResources,
+      normalizeCardCollapse,
+      recordChange,
+    ]
   );
 
   const archiveCard = useCallback<QDeckCtx['archiveCard']>(
@@ -733,6 +892,12 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updatedAt: Date.now(),
         seq: c.seq + 1,
       };
+      recordChange({
+        type: archived ? 'archived' : 'unarchived',
+        cardId,
+        title: c.title,
+        ts: nextCard.updatedAt,
+      });
 
       const currentIndex =
         cardsIndexCacheRef.current[board.boardId] ?? createEmptyCardsIndexDoc(board.boardId);
@@ -771,13 +936,12 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const preferred = board.preferredVariants?.[cardId];
           const chosen =
             (preferred && variants.find((c) => c.createdBy === preferred)) ||
-            variants.find((c) => c.createdBy === board.createdBy) ||
-            variants[0];
+            pickNewestVariant(variants);
           if (chosen) setCards((prev) => ({ ...prev, [cardId]: chosen }));
         }
       }
     },
-    [board, cardVariants, auth.name, identity.name, cards, queueOrPublishResources]
+    [board, cardVariants, auth.name, identity.name, cards, queueOrPublishResources, recordChange]
   );
 
   const setPreferredVariant = useCallback<QDeckCtx['setPreferredVariant']>(
@@ -800,9 +964,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const variants = cardVariants[cardId];
       if (variants?.length) {
         const chosen =
-          variants.find((c) => c.createdBy === publisher) ||
-          variants.find((c) => c.createdBy === board.createdBy) ||
-          variants[0];
+          variants.find((c) => c.createdBy === publisher) || pickNewestVariant(variants);
         if (chosen) setCards((prev) => ({ ...prev, [cardId]: chosen }));
       }
     },
@@ -928,6 +1090,97 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     [board]
   );
 
+  const collectBoardChangeReport = useCallback<QDeckCtx['collectBoardChangeReport']>(async () => {
+    if (!board) return { openedAt: Date.now(), entries: [], comments: [] };
+    const openedAt = changeLog.openedAt;
+    const entries = [...changeLog.entries];
+
+    const touchedCardIds = new Set(entries.map((e) => `${e.type}::${e.cardId}`));
+    const seenCards = new Set(entries.map((e) => e.cardId));
+    const newestCards: QDeckCard[] = [];
+    for (const variants of Object.values(cardVariants)) {
+      const newest = pickNewestVariant(variants);
+      if (newest) newestCards.push(newest);
+    }
+    for (const c of Object.values(cards)) {
+      if (!newestCards.some((x) => x.cardId === c.cardId)) {
+        newestCards.push(c);
+      }
+    }
+
+    for (const card of newestCards) {
+      if ((card.updatedAt ?? 0) <= openedAt) continue;
+      if (touchedCardIds.has(`updated::${card.cardId}`)) continue;
+      if (touchedCardIds.has(`completed::${card.cardId}`)) continue;
+      if (touchedCardIds.has(`reopened::${card.cardId}`)) continue;
+      if (touchedCardIds.has(`moved::${card.cardId}`)) continue;
+      if (touchedCardIds.has(`created::${card.cardId}`)) continue;
+      if (seenCards.has(card.cardId)) continue;
+      entries.push({
+        type: 'updated',
+        cardId: card.cardId,
+        title: card.title,
+        ts: card.updatedAt ?? Date.now(),
+        details: 'updated',
+      });
+    }
+
+    const commentLimit = pLimit(6);
+    const commentCardIds = new Set<string>();
+    Object.keys(cardVariants).forEach((id) => commentCardIds.add(id));
+    Object.keys(cards).forEach((id) => commentCardIds.add(id));
+    archivedCardIds.forEach((id) => commentCardIds.add(id));
+
+    const comments: CommentChange[] = [];
+    const seenComments = new Set<string>();
+    await Promise.all(
+      Array.from(commentCardIds).map((cardId) =>
+        commentLimit(async () => {
+          try {
+            const refs = await discoverComments(board, cardId);
+            const threads = (
+              await Promise.all(
+                refs.map(async (r) => {
+                  try {
+                    return await loadCommentsDoc(r.name, board, cardId);
+                  } catch {
+                    return null;
+                  }
+                })
+              )
+            ).filter(Boolean) as CardCommentThread[];
+            const title =
+              cards[cardId]?.title ||
+              pickNewestVariant(cardVariants[cardId] || [])?.title ||
+              undefined;
+            for (const thread of threads) {
+              for (const c of thread.comments ?? []) {
+                if ((c.createdAt ?? 0) <= openedAt) continue;
+                const key =
+                  c.commentId || `${c.author}::${c.createdAt}::${(c.bodyHtml || '').length}`;
+                if (seenComments.has(key)) continue;
+                seenComments.add(key);
+                comments.push({
+                  cardId,
+                  cardTitle: title,
+                  author: c.author,
+                  createdAt: c.createdAt,
+                  bodyHtml: c.bodyHtml || '',
+                });
+              }
+            }
+          } catch {
+            /* ignore */
+          }
+        })
+      )
+    );
+
+    comments.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+
+    return { openedAt, entries, comments };
+  }, [archivedCardIds, board, cardVariants, cards, changeLog.entries, changeLog.openedAt]);
+
   const recordPayment = useCallback<QDeckCtx['recordPayment']>(
     async (line) => {
       if (!board) throw new Error('No board loaded');
@@ -967,6 +1220,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       cardVariants,
       archivedCardIds,
       comments,
+      changeLog,
       isCardCollapsed,
       setCardCollapsed,
       loadBoardById,
@@ -979,6 +1233,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setPreferredVariant,
       addComment,
       loadCommentsForCard,
+      collectBoardChangeReport,
+      resetBoardChangeLog,
       publishMode,
       setPublishMode,
       pendingPublishCount,
@@ -997,6 +1253,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       cardVariants,
       archivedCardIds,
       comments,
+      changeLog,
       isCardCollapsed,
       setCardCollapsed,
       loadBoardById,
@@ -1009,6 +1266,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setPreferredVariant,
       addComment,
       loadCommentsForCard,
+      collectBoardChangeReport,
+      resetBoardChangeLog,
       publishMode,
       setPublishMode,
       pendingPublishCount,

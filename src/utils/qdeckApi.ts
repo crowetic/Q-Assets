@@ -99,6 +99,63 @@ export async function loadCardsIndex(
   );
 }
 
+type CardsIndexCandidate = {
+  name: string;
+  doc: CardsIndexDoc;
+};
+
+const pickNewestCardsIndex = (a: CardsIndexCandidate, b: CardsIndexCandidate) => {
+  const aSeq = a.doc.seq ?? 0;
+  const bSeq = b.doc.seq ?? 0;
+  if (aSeq !== bSeq) return aSeq > bSeq ? a : b;
+  const aUpdated = a.doc.updatedAt ?? 0;
+  const bUpdated = b.doc.updatedAt ?? 0;
+  if (aUpdated !== bUpdated) return aUpdated > bUpdated ? a : b;
+  return a;
+};
+
+export async function loadNewestCardsIndex(
+  board: QDeckBoard,
+  opts?: { issuerHints?: string[] }
+): Promise<CardsIndexDoc | null> {
+  const identifier = QDeckId.cardsIndex(board.boardId);
+  const isPrivate = board.visibility === 'private';
+  const hits = await searchSimpleByFullId(identifier, isPrivate).catch(() => []);
+  const names = new Set<string>();
+  for (const hint of opts?.issuerHints ?? []) {
+    const trimmed = (hint || '').trim();
+    if (trimmed) names.add(trimmed);
+  }
+  for (const hit of hits) {
+    if (hit?.name) names.add(hit.name);
+  }
+  if (names.size === 0) return null;
+
+  const limit = pLimit(6);
+  const candidates = (
+    await Promise.all(
+      Array.from(names).map((name) =>
+        limit(async () => {
+          try {
+            const doc = await loadCardsIndex(name, board);
+            if (!doc || doc.boardId !== board.boardId) return null;
+            return { name, doc };
+          } catch {
+            return null;
+          }
+        })
+      )
+    )
+  ).filter(Boolean) as CardsIndexCandidate[];
+
+  if (!candidates.length) return null;
+  let newest = candidates[0];
+  for (let i = 1; i < candidates.length; i += 1) {
+    newest = pickNewestCardsIndex(newest, candidates[i]);
+  }
+  return newest.doc;
+}
+
 export async function saveCardsIndex(issuerName: string, board: QDeckBoard, doc: CardsIndexDoc) {
   const identifier = QDeckId.cardsIndex(doc.boardId);
   const payloadBase64 = stripDataUrlPrefix(await objectToBase64(doc));

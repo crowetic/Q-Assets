@@ -29,12 +29,12 @@ import AddIcon from '@mui/icons-material/Add';
 import { QDeckBoard } from '../../types/qdeck';
 import {
   loadBoardsIndex,
-  loadCardsIndex,
   loadCardDoc,
   resolveBoardForRead,
   saveBoardDoc,
   updateCardArchiveState,
   repairCardsIndex,
+  loadNewestCardsIndex,
 } from '../../utils/qdeckApi';
 import { useAuth } from 'qapp-core';
 import pLimit from 'p-limit';
@@ -205,7 +205,10 @@ export default function QDeckPermissionsPanel() {
     try {
       const resolved = await resolveBoardForRead(myName, entry.boardId, entry.visibility as any);
       if (!resolved) throw new Error('Failed to load board doc');
-      const idx = await loadCardsIndex(resolved.createdBy, resolved);
+      const idx =
+        (await loadNewestCardsIndex(resolved, {
+          issuerHints: [resolved.createdBy, myName].filter(Boolean) as string[],
+        })) ?? null;
       const refs =
         idx?.entries && idx.entries.length
           ? idx.entries

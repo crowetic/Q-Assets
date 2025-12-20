@@ -47,9 +47,7 @@ export const encodePrivateStructuredMetadata = (payload: {
 export const extractPrivateStructuredDescription = (description?: string) => {
   if (!description) return { base: '', encoded: null };
   const trimmed = description.trim();
-  const match = trimmed.match(
-    new RegExp(`${PRIVATE_STRUCTURED_METADATA_PREFIX}([A-Za-z0-9+/=]+)`)
-  );
+  const match = trimmed.match(new RegExp(`${PRIVATE_STRUCTURED_METADATA_PREFIX}([A-Za-z0-9+/=]+)`));
   if (!match) return { base: trimmed, encoded: null };
   const encoded = `${PRIVATE_STRUCTURED_METADATA_PREFIX}${match[1]}`;
   const base = trimmed.replace(encoded, '').trim();

@@ -37,7 +37,7 @@ import {
   List as MList,
   ListItem,
   ListItemIcon,
-  // ListItemText,
+  ListItemText,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -72,6 +72,7 @@ import { uniqueId6 } from '../../utils/ids';
 import {
   qAssetsRevenueAddress,
   tempQAssetEscrowAccountAddress,
+  QDeckId,
 } from '../../constants/qdeckIdentifiers';
 import { Refresh } from '@mui/icons-material';
 // import { canUserEditBoard } from '../../utils/qdeckAccess';
@@ -80,6 +81,7 @@ import SettingsBackupRestoreIcon from '@mui/icons-material/SettingsBackupRestore
 import SecurityIcon from '@mui/icons-material/Security';
 import { useAlert } from '../alerts';
 import { useNavigate } from 'react-router-dom';
+import { publishScopedNotification } from '../../utils/notificationPublisher';
 
 type NewCardDraft = {
   title: string;
@@ -224,6 +226,7 @@ type BoardViewProps = {
 
 export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
   const {
+    identity,
     board,
     cards,
     cardVariants,
@@ -243,6 +246,8 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
     clearPublishQueue,
     isRepairingIndex,
     repairCardsIndex,
+    collectBoardChangeReport,
+    resetBoardChangeLog,
   } = useQDeck();
   const navigate = useNavigate();
   const { alert } = useAlert();
@@ -312,6 +317,30 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
   const [cloneOpen, setCloneOpen] = useState(false);
   const [cloneTitle, setCloneTitle] = useState('');
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [notifyOpen, setNotifyOpen] = useState(false);
+  const [notifyLoading, setNotifyLoading] = useState(false);
+  const [notifyPreview, setNotifyPreview] = useState<{
+    title: string;
+    html: string;
+    openedAt: number;
+    entries: Array<{
+      type: string;
+      cardId: string;
+      title?: string;
+      ts: number;
+      fromListId?: string;
+      toListId?: string;
+      details?: string;
+    }>;
+    comments: Array<{
+      cardId: string;
+      cardTitle?: string;
+      author: string;
+      createdAt: number;
+      bodyHtml: string;
+    }>;
+    boardLink: string;
+  } | null>(null);
 
   // Manage Lists – drafts keyed by listId
   const [listTitleDrafts, setListTitleDrafts] = useState<Record<string, string>>({});
@@ -396,13 +425,10 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
     [handleListTitleDraftChange]
   );
 
-  const handleOpenListMenu = useCallback(
-    (event: MouseEvent<HTMLElement>, listId: string) => {
-      event.stopPropagation();
-      setListMenuState({ anchor: event.currentTarget, listId });
-    },
-    []
-  );
+  const handleOpenListMenu = useCallback((event: MouseEvent<HTMLElement>, listId: string) => {
+    event.stopPropagation();
+    setListMenuState({ anchor: event.currentTarget, listId });
+  }, []);
   const handleCloseListMenu = useCallback(() => setListMenuState(null), []);
 
   const selectedList = useMemo(
@@ -495,6 +521,205 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
       setListTitleDrafts(seed);
     }
   }, [manageListsOpen, board, lists]);
+
+  const boardLink = useMemo(() => {
+    if (!board) return '';
+    return `qortal://APP/Q-Assets/qdeck/${encodeURIComponent(issuerName)}/${board.boardId}`;
+  }, [board, issuerName]);
+
+  const listTitleById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const l of lists) {
+      map.set(l.listId, l.title);
+    }
+    return map;
+  }, [lists]);
+
+  const formatChangeEntry = useCallback(
+    (entry: {
+      type: string;
+      title?: string;
+      fromListId?: string;
+      toListId?: string;
+      details?: string;
+    }) => {
+      const title = entry.title || 'Untitled card';
+      const fromList = entry.fromListId
+        ? listTitleById.get(entry.fromListId) || entry.fromListId
+        : undefined;
+      const toList = entry.toListId
+        ? listTitleById.get(entry.toListId) || entry.toListId
+        : undefined;
+      switch (entry.type) {
+        case 'created':
+          return `Created "${title}"${toList ? ` in ${toList}` : ''}`;
+        case 'moved':
+          return `Moved "${title}"${fromList ? ` from ${fromList}` : ''}${toList ? ` to ${toList}` : ''}`;
+        case 'completed':
+          return `Completed "${title}"`;
+        case 'reopened':
+          return `Reopened "${title}"`;
+        case 'archived':
+          return `Archived "${title}"`;
+        case 'unarchived':
+          return `Unarchived "${title}"`;
+        case 'updated':
+        default:
+          return `Updated "${title}"${entry.details ? ` (${entry.details})` : ''}`;
+      }
+    },
+    [listTitleById]
+  );
+
+  const buildNotifyHtml = useCallback(
+    (report: {
+      openedAt: number;
+      entries: Array<{
+        type: string;
+        title?: string;
+        ts: number;
+        fromListId?: string;
+        toListId?: string;
+        details?: string;
+      }>;
+      comments: Array<{
+        cardTitle?: string;
+        author: string;
+        createdAt: number;
+        bodyHtml: string;
+      }>;
+    }) => {
+      const stamp = new Date(report.openedAt).toLocaleString();
+      const entryItems = report.entries
+        .slice()
+        .sort((a, b) => a.ts - b.ts)
+        .map((entry) => `<li>${formatChangeEntry(entry)}</li>`);
+      const commentItems = report.comments
+        .slice()
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .map((c) => {
+          const title = c.cardTitle ? ` on "${c.cardTitle}"` : '';
+          return `<li><strong>${c.author}</strong>${title}<div>${c.bodyHtml}</div></li>`;
+        });
+
+      const sections: string[] = [];
+      sections.push(`<p>Changes since ${stamp}.</p>`);
+      if (entryItems.length) {
+        sections.push(`<h4>Board changes</h4><ul>${entryItems.join('')}</ul>`);
+      }
+      if (commentItems.length) {
+        sections.push(`<h4>Comments</h4><ul>${commentItems.join('')}</ul>`);
+      }
+      if (boardLink) {
+        sections.push(`<p><a href="${boardLink}">Open board</a></p>`);
+      }
+      return sections.join('');
+    },
+    [boardLink, formatChangeEntry]
+  );
+
+  const handleOpenNotify = useCallback(async () => {
+    if (!board) return;
+    if (!identity?.name || !identity?.address) {
+      await alert('Authenticate with a QDN name before notifying editors.', 'Notify editors', {
+        severity: 'warning',
+      });
+      return;
+    }
+    if (!editorGroupIds.length) {
+      await alert('No editor groups are configured for this board.', 'Notify editors', {
+        severity: 'info',
+      });
+      return;
+    }
+    setNotifyLoading(true);
+    try {
+      const report = await collectBoardChangeReport();
+      const title = `Q-Deck updates: ${board.title}`;
+      const html = buildNotifyHtml(report);
+      setNotifyPreview({
+        title,
+        html,
+        openedAt: report.openedAt,
+        entries: report.entries,
+        comments: report.comments,
+        boardLink,
+      });
+      setNotifyOpen(true);
+    } catch (e: any) {
+      await alert(e?.message || 'Failed to build notify preview.', 'Notify editors', {
+        severity: 'error',
+      });
+    } finally {
+      setNotifyLoading(false);
+    }
+  }, [
+    board,
+    identity?.name,
+    identity?.address,
+    editorGroupIds.length,
+    collectBoardChangeReport,
+    buildNotifyHtml,
+    boardLink,
+    alert,
+  ]);
+
+  const handleSendNotify = useCallback(async () => {
+    if (!board || !notifyPreview) return;
+    if (!identity?.name || !identity?.address) return;
+    if (!editorGroupIds.length) return;
+    setNotifyLoading(true);
+    try {
+      const identifier =
+        board.visibility === 'public'
+          ? QDeckId.boardPublic(board.boardId)
+          : QDeckId.boardPrivate(
+              board.boardId,
+              board.privateMeta?.mode ?? 'group',
+              board.privateMeta?.isAdmins,
+              board.privateMeta?.groupId
+            );
+      const links = boardLink
+        ? [
+            {
+              label: 'Open board',
+              href: boardLink,
+            },
+          ]
+        : undefined;
+      for (const groupId of editorGroupIds) {
+        await publishScopedNotification({
+          scope: { kind: 'group', groupId, privacy: board.visibility },
+          title: notifyPreview.title,
+          html: notifyPreview.html,
+          publisher: { name: identity.name, address: identity.address, role: 'editor' },
+          qdnResource: { publisher: board.createdBy, identifier },
+          sendMail: true,
+          links,
+        });
+      }
+      resetBoardChangeLog();
+      setNotifyOpen(false);
+      await alert('Notifications sent to editor groups.', 'Notify editors', {
+        severity: 'success',
+      });
+    } catch (e: any) {
+      await alert(e?.message || 'Failed to send notifications.', 'Notify editors', {
+        severity: 'error',
+      });
+    } finally {
+      setNotifyLoading(false);
+    }
+  }, [
+    board,
+    notifyPreview,
+    identity?.name,
+    identity?.address,
+    editorGroupIds,
+    boardLink,
+    alert,
+    resetBoardChangeLog,
+  ]);
 
   const saveManageListTitles = useCallback(async () => {
     if (!board) return;
@@ -879,6 +1104,15 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
         >
           Refresh
         </Button>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => void handleOpenNotify()}
+          disabled={notifyLoading || !editorGroupIds.length}
+          sx={{ width: { xs: '100%', sm: 'auto' } }}
+        >
+          Notify editors
+        </Button>
 
         <Menu
           anchorEl={viewMenuAnchor}
@@ -991,10 +1225,10 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
             .map((list) => {
               const listCardIds = cardsByList[list.listId] ?? [];
               return (
-            <Paper
-              key={list.listId}
-              elevation={2}
-              sx={{
+                <Paper
+                  key={list.listId}
+                  elevation={2}
+                  sx={{
                     // 100% width on phones; multi-column only at md+
                     flex: { xs: '1 1 100%', md: '0 1 19%' },
                     // maxWidth: { xs: '100%', md: '28rem' },
@@ -1154,11 +1388,7 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
         <MenuItem onClick={handleRenameListFromMenu}>Rename list</MenuItem>
         <MenuItem disabled>
           Default display:{' '}
-          <Typography
-            component="span"
-            sx={{ fontWeight: 600, ml: 0.35 }}
-            color="text.primary"
-          >
+          <Typography component="span" sx={{ fontWeight: 600, ml: 0.35 }} color="text.primary">
             {selectedList?.defaultCollapsed ? 'Minimized' : 'Expanded'}
           </Typography>
         </MenuItem>
@@ -1345,6 +1575,100 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
             startIcon={<DeleteForeverIcon />}
           >
             Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ===== Notify Editors Dialog ===== */}
+      <Dialog
+        open={notifyOpen}
+        onClose={notifyLoading ? undefined : () => setNotifyOpen(false)}
+        fullWidth
+        maxWidth="md"
+        fullScreen={isXs}
+      >
+        <DialogTitle>Notify board editors</DialogTitle>
+        <DialogContent dividers>
+          {!notifyPreview ? (
+            <Typography variant="body2" color="text.secondary">
+              No preview available.
+            </Typography>
+          ) : (
+            <Stack spacing={2}>
+              <Typography variant="body2" color="text.secondary">
+                Changes since {new Date(notifyPreview.openedAt).toLocaleString()}.
+              </Typography>
+              {notifyPreview.boardLink && (
+                <Typography variant="body2">
+                  Board link: <code>{notifyPreview.boardLink}</code>
+                </Typography>
+              )}
+              <Box>
+                <Typography variant="subtitle2" fontWeight={700}>
+                  Board changes ({notifyPreview.entries.length})
+                </Typography>
+                {notifyPreview.entries.length ? (
+                  <MList dense>
+                    {notifyPreview.entries
+                      .slice()
+                      .sort((a, b) => a.ts - b.ts)
+                      .map((entry, idx) => (
+                        <ListItem key={`${entry.cardId}-${idx}`} alignItems="flex-start">
+                          <ListItemText
+                            primary={formatChangeEntry(entry)}
+                            secondary={new Date(entry.ts).toLocaleString()}
+                          />
+                        </ListItem>
+                      ))}
+                  </MList>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    No tracked card changes.
+                  </Typography>
+                )}
+              </Box>
+              <Box>
+                <Typography variant="subtitle2" fontWeight={700}>
+                  Comments ({notifyPreview.comments.length})
+                </Typography>
+                {notifyPreview.comments.length ? (
+                  <MList dense>
+                    {notifyPreview.comments.map((c) => (
+                      <ListItem
+                        key={`${c.cardId}-${c.createdAt}-${c.author}`}
+                        alignItems="flex-start"
+                      >
+                        <ListItemText
+                          primary={`${c.author}${c.cardTitle ? ` on ${c.cardTitle}` : ''}`}
+                          secondary={
+                            <>
+                              <div dangerouslySetInnerHTML={{ __html: c.bodyHtml || '' }} />
+                              <div>{new Date(c.createdAt).toLocaleString()}</div>
+                            </>
+                          }
+                        />
+                      </ListItem>
+                    ))}
+                  </MList>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    No new comments.
+                  </Typography>
+                )}
+              </Box>
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setNotifyOpen(false)} disabled={notifyLoading}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => void handleSendNotify()}
+            disabled={notifyLoading || !notifyPreview}
+          >
+            Send notifications
           </Button>
         </DialogActions>
       </Dialog>
