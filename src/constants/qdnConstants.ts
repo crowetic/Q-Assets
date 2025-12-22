@@ -4,7 +4,7 @@ import { uniqueId6 } from '../utils/ids';
 
 export const Q_ASSETS_OWNER_ADDRESS = 'QWZDZBKafP19Hin4HivuV6WXgWaBaWUMrN';
 export const Q_ASSET_APP_PUBLISHER: string = 'Q-Assets';
-export const Q_ASSET_APP_VERSION: number = 0.81;
+export const Q_ASSET_APP_VERSION: number = 0.82;
 export const isBeta: boolean = true;
 
 export const Q_ASSETS_VERSION: string = isBeta
