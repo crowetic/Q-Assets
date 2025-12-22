@@ -115,8 +115,7 @@ export default function PortfolioWallet({
   }, [holdings, assetsIndex, authAddress]);
 
   const qortRow = walletRows.find((row) => row.assetId === 0);
-  const assetsHeldLabel =
-    walletRows.length === 1 ? '1 asset' : `${walletRows.length} assets`;
+  const assetsHeldLabel = walletRows.length === 1 ? '1 asset' : `${walletRows.length} assets`;
   const isLoading = Boolean(loading);
 
   const handleSendConfirm = async (recipient: string, amount: number) => {
@@ -132,7 +131,13 @@ export default function PortfolioWallet({
       if (!authAddress || !authPublicKey) {
         throw new Error('Missing auth credentials.');
       }
-      await transferAsset(authAddress, authPublicKey, resolvedRecipient, sendDialog.assetId, amount);
+      await transferAsset(
+        authAddress,
+        authPublicKey,
+        resolvedRecipient,
+        sendDialog.assetId,
+        amount
+      );
     }
   };
 
@@ -431,7 +436,10 @@ export default function PortfolioWallet({
                               startIcon={<SendIcon fontSize="small" />}
                               onClick={() => setSendDialog({ open: true, assetId: row.assetId })}
                               disabled={!canSendAsset}
-                              sx={{ bgcolor: accent.accent, '&:hover': { bgcolor: accent.accentHover } }}
+                              sx={{
+                                bgcolor: accent.accent,
+                                '&:hover': { bgcolor: accent.accentHover },
+                              }}
                             >
                               {`Send ${row.name}`}
                             </Button>
@@ -441,7 +449,10 @@ export default function PortfolioWallet({
                                 variant="contained"
                                 startIcon={<SwapHoriz fontSize="small" />}
                                 onClick={() => navigate(`/trade/${row.assetId}`)}
-                                sx={{ bgcolor: accent.accent, '&:hover': { bgcolor: accent.accentHover } }}
+                                sx={{
+                                  bgcolor: accent.accent,
+                                  '&:hover': { bgcolor: accent.accentHover },
+                                }}
                               >
                                 {`Trade ${row.name}`}
                               </Button>
@@ -469,7 +480,9 @@ export default function PortfolioWallet({
                                 <IconButton
                                   size="small"
                                   sx={{ color: accent.accent }}
-                                  onClick={() => setSendDialog({ open: true, assetId: row.assetId })}
+                                  onClick={() =>
+                                    setSendDialog({ open: true, assetId: row.assetId })
+                                  }
                                   disabled={!canSendAsset}
                                 >
                                   <SendIcon fontSize="small" />
@@ -491,7 +504,10 @@ export default function PortfolioWallet({
                             )}
                             <Tooltip title="View details">
                               <span>
-                                <IconButton size="small" onClick={() => navigate(`/assets/${row.assetId}`)}>
+                                <IconButton
+                                  size="small"
+                                  onClick={() => navigate(`/assets/${row.assetId}`)}
+                                >
                                   <Launch fontSize="small" />
                                 </IconButton>
                               </span>
