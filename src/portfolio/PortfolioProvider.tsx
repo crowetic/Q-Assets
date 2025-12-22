@@ -11,7 +11,11 @@ import type { Wallet, PortfolioState, HoldingAggregate, AssetMini } from './port
 import { getAssetBalances } from '../utils/qortalAssetRequests'; // you already have these
 import pLimit from 'p-limit';
 import { useAuth } from 'qapp-core';
-import { ensureAssetsIndexLoaded, readAssetsIndexSync } from '../bootstrap/assetsBootstrap';
+import {
+  ensureAssetsIndexLoaded,
+  ensureAssetMini,
+  readAssetsIndexSync,
+} from '../bootstrap/assetsBootstrap';
 
 type Action =
   | { type: 'INIT_START' }
@@ -19,6 +23,7 @@ type Action =
   | { type: 'INIT_FAIL'; error: string }
   | { type: 'SET_WALLETS'; wallets: Wallet[] }
   | { type: 'SET_HOLDINGS'; holdings: Record<number, HoldingAggregate> }
+  | { type: 'MERGE_ASSETS_INDEX'; assets: Record<number, AssetMini> }
   | { type: 'SET_ERROR'; error: string | null }
   | { type: 'SET_LOADING'; loading: boolean };
 
@@ -42,6 +47,8 @@ function reducer(state: PortfolioState, action: Action): PortfolioState {
       return { ...state, wallets: action.wallets };
     case 'SET_HOLDINGS':
       return { ...state, holdings: action.holdings };
+    case 'MERGE_ASSETS_INDEX':
+      return { ...state, assetsIndex: { ...state.assetsIndex, ...action.assets } };
     case 'SET_ERROR':
       return { ...state, error: action.error };
     case 'SET_LOADING':
@@ -217,26 +224,34 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     dispatch({ type: 'SET_ERROR', error: null });
 
     try {
-      const assetIds = Object.keys(state.assetsIndex).map(Number);
-      const limit = pLimit(4);
-      const chunkSize = 400;
-      const chunks: number[][] = [];
-      for (let i = 0; i < assetIds.length; i += chunkSize)
-        chunks.push(assetIds.slice(i, i + chunkSize));
+      let balances: any[] = [];
+      try {
+        balances = await getAssetBalances({
+          addresses,
+          excludeZero: true,
+        });
+      } catch {
+        const assetIds = Object.keys(state.assetsIndex).map(Number);
+        const limit = pLimit(4);
+        const chunkSize = 400;
+        const chunks: number[][] = [];
+        for (let i = 0; i < assetIds.length; i += chunkSize)
+          chunks.push(assetIds.slice(i, i + chunkSize));
 
-      const resultsArrays = await Promise.all(
-        chunks.map((chunk) =>
-          limit(() =>
-            getAssetBalances({
-              addresses, // <-- now includes auth address, deduped
-              assetIds: chunk,
-              excludeZero: true,
-            })
+        const resultsArrays = await Promise.all(
+          chunks.map((chunk) =>
+            limit(() =>
+              getAssetBalances({
+                addresses, // <-- now includes auth address, deduped
+                assetIds: chunk,
+                excludeZero: true,
+              })
+            )
           )
-        )
-      );
+        );
 
-      const balances = ([] as any[]).concat(...resultsArrays);
+        balances = ([] as any[]).concat(...resultsArrays);
+      }
 
       const holdings: Record<number, HoldingAggregate> = {};
       for (const b of balances) {
@@ -249,6 +264,29 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
 
       dispatch({ type: 'SET_HOLDINGS', holdings });
+
+      const missingIds = Object.keys(holdings)
+        .map(Number)
+        .filter((id) => !state.assetsIndex[id]);
+      if (missingIds.length) {
+        const limit = pLimit(4);
+        const fetched = await Promise.all(
+          missingIds.map((id) =>
+            limit(async () => {
+              const info = await ensureAssetMini(id).catch(() => null);
+              return info ? { id, info } : null;
+            })
+          )
+        );
+        const merge: Record<number, AssetMini> = {};
+        for (const row of fetched) {
+          if (!row) continue;
+          merge[row.id] = row.info;
+        }
+        if (Object.keys(merge).length) {
+          dispatch({ type: 'MERGE_ASSETS_INDEX', assets: merge });
+        }
+      }
     } catch (e: any) {
       dispatch({ type: 'SET_ERROR', error: String(e?.message || e) });
     } finally {
