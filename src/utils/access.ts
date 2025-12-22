@@ -31,6 +31,11 @@ export type WikiMenuItem = { id: string; title: string; tags?: string[] };
 /* --------------------------- Small address cache ------------------------ */
 const CACHE_TTL_MS = 60_000;
 let _addrCache: { memberAddrs: Set<string>; adminAddrs: Set<string>; at: number } | null = null;
+const NAMES_CACHE_TTL_MS = 120_000;
+const _namesCache = new Map<string, { at: number; data: Array<{ name: string; role: Role }> }>();
+
+const namesCacheKey = (groupId?: number) =>
+  typeof groupId === 'number' ? `group:${groupId}` : 'default';
 
 const normAddr = (s?: string) => (s || '').trim();
 
@@ -173,6 +178,13 @@ async function getAllNamesForAddress(address: string): Promise<string[]> {
 export async function listManagementGroupNames(
   groupId?: number
 ): Promise<Array<{ name: string; role: Role }>> {
+  const now = Date.now();
+  const cacheKey = namesCacheKey(groupId);
+  const cached = _namesCache.get(cacheKey);
+  if (cached && now - cached.at < NAMES_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
   try {
     // declare outside and assign in branches
     let memberAddrs: Set<string>;
@@ -209,7 +221,9 @@ export async function listManagementGroupNames(
         }
       }
     }
-    return Array.from(map.values());
+    const out = Array.from(map.values());
+    if (out.length) _namesCache.set(cacheKey, { at: now, data: out });
+    return out;
   } catch (e) {
     console.error('listManagementGroupNames error:', e);
     return [];
@@ -319,7 +333,47 @@ export async function publishWikiSection(
   });
 }
 
-const discoverLimit = pLimit(4);
+type SearchRow = {
+  name?: string;
+  identifier?: string;
+  created?: number;
+  updated?: number;
+};
+
+const normalizeSearchRows = (res: unknown): SearchRow[] => {
+  const rows = Array.isArray(res) ? res : res ? [res] : [];
+  return rows.filter(Boolean) as SearchRow[];
+};
+
+async function searchResourcesByIdentifier(
+  identifier: string,
+  opts?: { prefixOnly?: boolean }
+): Promise<SearchRow[]> {
+  const payload: any = {
+    action: 'SEARCH_QDN_RESOURCES',
+    service: 'DOCUMENT',
+    identifier,
+  };
+  if (opts?.prefixOnly) payload.prefixOnly = true;
+
+  try {
+    const res = await qortalRequest(payload);
+    return normalizeSearchRows(res);
+  } catch {
+    if (!opts?.prefixOnly) return [];
+  }
+
+  try {
+    const res = await qortalRequest({
+      action: 'SEARCH_QDN_RESOURCES',
+      service: 'DOCUMENT',
+      identifier,
+    });
+    return normalizeSearchRows(res);
+  } catch {
+    return [];
+  }
+}
 
 /** Given an identifier and a list of publishers {name, role},
  * return ONLY those names that actually have hits for that identifier,
@@ -329,44 +383,31 @@ async function discoverCandidatesStrict(
   identifier: string,
   publishers: Array<{ name: string; role: Role }>
 ): Promise<Candidate[]> {
-  const results = await Promise.all(
-    publishers.map((p) =>
-      discoverLimit(async () => {
-        try {
-          const res = await qortalRequest({
-            action: 'SEARCH_QDN_RESOURCES',
-            service: 'DOCUMENT',
-            name: p.name, // EXACT name; hyphens preserved
-            identifier, // EXACT identifier
-          });
+  const roleByName = new Map<string, { name: string; role: Role }>();
+  for (const p of publishers) {
+    roleByName.set(p.name.toLowerCase(), p);
+  }
 
-          const rows = Array.isArray(res) ? res : res ? [res] : [];
-          if (!rows.length) return null;
+  const rows = await searchResourcesByIdentifier(identifier, { prefixOnly: true });
+  if (!rows.length) return [];
 
-          // Pick newest row for THIS name + identifier only
-          const best = rows
-            .filter((r: any) => r?.identifier === identifier && r?.name === p.name)
-            .sort(
-              (a: any, b: any) =>
-                (Number(b.updated ?? b.created ?? 0) || 0) -
-                (Number(a.updated ?? a.created ?? 0) || 0)
-            )[0];
+  const bestByName = new Map<string, Candidate>();
+  for (const r of rows) {
+    const rowId = typeof r?.identifier === 'string' ? r.identifier : '';
+    if (rowId !== identifier) continue;
+    const rowName = typeof r?.name === 'string' ? r.name.trim() : '';
+    if (!rowName) continue;
+    const key = rowName.toLowerCase();
+    const mapped = roleByName.get(key);
+    if (!mapped) continue;
+    const ts = Number(r.updated ?? r.created ?? 0) || 0;
+    const prev = bestByName.get(key);
+    if (!prev || ts > prev.ts) {
+      bestByName.set(key, { name: mapped.name, role: mapped.role, ts });
+    }
+  }
 
-          if (!best) return null;
-
-          return {
-            name: p.name,
-            role: p.role,
-            ts: Number(best.updated ?? best.created ?? 0) || 0,
-          } as Candidate;
-        } catch {
-          return null;
-        }
-      })
-    )
-  );
-
-  const hits = results.filter(Boolean) as Candidate[];
+  const hits = Array.from(bestByName.values());
   const admins = hits.filter((h) => h.role === 'admin').sort((a, b) => b.ts - a.ts);
   const members = hits.filter((h) => h.role === 'member').sort((a, b) => b.ts - a.ts);
   return admins.concat(members);
@@ -374,11 +415,13 @@ async function discoverCandidatesStrict(
 
 /* ---------------------- Sections (admin > member) ----------------------- */
 type Candidate = { name: string; role: Role; ts: number };
-const parallel = pLimit(4);
 
-export async function loadSectionFromGroup(sectionId: string) {
+export async function loadSectionFromGroup(
+  sectionId: string,
+  namesOverride?: Array<{ name: string; role: Role }>
+) {
   // you said this now returns [{ name, role }]
-  const names = await listManagementGroupNames();
+  const names = namesOverride ?? (await listManagementGroupNames());
   if (!names.length) return null;
   // console.log('allNames',names)
 
@@ -410,10 +453,19 @@ export async function loadAllWikiSections(
   meta: { id: string; title: string; tags?: string[] }[] = WIKI_SECTIONS
 ): Promise<LoadedSection[]> {
   const lim = pLimit(4);
+  const names = await listManagementGroupNames();
+  if (!names.length) {
+    return meta.map((m) => ({
+      id: m.id,
+      title: m.title,
+      tags: m.tags,
+      html: null,
+    })) as LoadedSection[];
+  }
   return Promise.all(
     meta.map((m) =>
       lim(async () => {
-        const remote = await loadSectionFromGroup(m.id).catch(() => null);
+        const remote = await loadSectionFromGroup(m.id, names).catch(() => null);
         return {
           id: m.id,
           title: m.title,
@@ -474,43 +526,8 @@ export async function loadWikiMenu(): Promise<{
   const names = await listManagementGroupNames(); // [{name, role}]
   if (!names.length) return null;
 
-  const findings = await Promise.all(
-    names.map((m) =>
-      parallel(async () => {
-        try {
-          const res = await qortalRequest({
-            action: 'SEARCH_QDN_RESOURCES',
-            service: 'DOCUMENT',
-            name: m.name,
-            identifier: WIKI_MENU_IDENTIFIER,
-          });
-
-          const rows = Array.isArray(res) ? res : res ? [res] : [];
-          if (!rows.length) return null;
-
-          const best = rows
-            .filter((r: any) => r.identifier === WIKI_MENU_IDENTIFIER)
-            .sort(
-              (a: any, b: any) =>
-                (Number(b.updated ?? b.created ?? 0) || 0) -
-                (Number(a.updated ?? a.created ?? 0) || 0)
-            )[0];
-
-          if (!best) return null;
-          return { name: m.name, role: m.role, ts: Number(best.updated ?? best.created ?? 0) || 0 };
-        } catch {
-          return null;
-        }
-      })
-    )
-  );
-
-  const candidates = findings.filter(Boolean) as Array<{ name: string; role: Role; ts: number }>;
-  if (!candidates.length) return null;
-
-  const newestAdmin = candidates.filter((c) => c.role === 'admin').sort((a, b) => b.ts - a.ts)[0];
-  const newestMember = candidates.filter((c) => c.role === 'member').sort((a, b) => b.ts - a.ts)[0];
-  const pick = newestAdmin ?? newestMember;
+  const candidates = await discoverCandidatesStrict(WIKI_MENU_IDENTIFIER, names);
+  const pick = candidates[0];
   if (!pick) return null;
 
   const data64 = await fetchQdnBase64(pick.name, WIKI_MENU_IDENTIFIER);
@@ -553,47 +570,7 @@ export async function saveWikiMenu(items: WikiMenuItem[], publisherName: string)
 export async function findGroupPublishersWithResource(identifier: string): Promise<Candidate[]> {
   const publishers = await listManagementGroupNames(); // [{name, role}]
   if (!publishers.length) return [];
-
-  const results = await Promise.all(
-    publishers.map((p) =>
-      discoverLimit(async () => {
-        try {
-          const res = await qortalRequest({
-            action: 'SEARCH_QDN_RESOURCES',
-            service: 'DOCUMENT',
-            name: p.name, // EXACT name; hyphen-safe
-            identifier, // EXACT identifier
-          });
-
-          const rows = Array.isArray(res) ? res : res ? [res] : [];
-          if (!rows.length) return null;
-
-          const best = rows
-            .filter((r: any) => r?.identifier === identifier && r?.name === p.name)
-            .sort(
-              (a: any, b: any) =>
-                (Number(b.updated ?? b.created ?? 0) || 0) -
-                (Number(a.updated ?? a.created ?? 0) || 0)
-            )[0];
-
-          if (!best) return null;
-
-          return {
-            name: p.name,
-            role: p.role,
-            ts: Number(best.updated ?? best.created ?? 0) || 0,
-          } as Candidate;
-        } catch {
-          return null;
-        }
-      })
-    )
-  );
-
-  const hits = results.filter(Boolean) as Candidate[];
-  const admins = hits.filter((h) => h.role === 'admin').sort((a, b) => b.ts - a.ts);
-  const members = hits.filter((h) => h.role === 'member').sort((a, b) => b.ts - a.ts);
-  return admins.concat(members);
+  return discoverCandidatesStrict(identifier, publishers);
 }
 
 export async function isNameAdminOfGroupId(name: string, groupId: number): Promise<boolean> {

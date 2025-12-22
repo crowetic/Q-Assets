@@ -410,6 +410,7 @@ export default function Information() {
   type OverrideRule = { mode: 'latest' } | { mode: 'preferred'; preferred: { publisher: string } };
 
   const [menu, setMenu] = useState<WikiMenuItem[]>([]);
+  const [menuReady, setMenuReady] = useState(false);
   const [variants, setVariants] = useState<Record<string, RemoteRow[]>>({});
   const [overrides, setOverrides] = useState<Record<string, OverrideRule>>({});
 
@@ -447,6 +448,8 @@ export default function Information() {
         }
       } catch (e) {
         console.error('Info load menu error:', e);
+      } finally {
+        if (!cancel) setMenuReady(true);
       }
     })();
     return () => {
@@ -510,6 +513,8 @@ export default function Information() {
           }
         }
 
+        if (!menuReady) return;
+
         const restMeta = meta.filter((m) => m.id && m.id !== prioritizedId);
         if (!restMeta.length) return;
 
@@ -541,7 +546,7 @@ export default function Information() {
     return () => {
       cancel = true;
     };
-  }, [menu, DEFAULT_SECTIONS, openMenuDlg, asMeta, track, currentId]);
+  }, [menu, DEFAULT_SECTIONS, openMenuDlg, asMeta, track, currentId, menuReady]);
 
   const wikiLoading = isLoadingPrefix('wiki:');
 
