@@ -509,7 +509,6 @@ export default function PortfolioPage() {
     if (ok) setNewAddr('');
   };
 
-
   return (
     <Box
       sx={{

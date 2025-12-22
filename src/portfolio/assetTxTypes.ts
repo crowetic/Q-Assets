@@ -375,8 +375,7 @@ const buildAssetSpecificDetail = (
         nnum(get(tx, 'haveAssetId')) ?? nnum(get(tx, 'initiatingOrder')?.haveAssetId) ?? 0;
       const wantAssetId =
         nnum(get(tx, 'wantAssetId')) ?? nnum(get(tx, 'initiatingOrder')?.wantAssetId) ?? 0;
-      const amountHave =
-        human(nnum(get(tx, 'amount')) ?? nnum(get(tx, 'initiatingOrder')?.amount));
+      const amountHave = human(nnum(get(tx, 'amount')) ?? nnum(get(tx, 'initiatingOrder')?.amount));
       const amountAssetId = nnum(get(tx, 'amountAssetId'));
       return {
         type: 'CREATE_ASSET_ORDER',

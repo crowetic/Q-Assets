@@ -288,7 +288,6 @@ export const MenuRow = memo(function MenuRow({
   // keep local draft in sync if parent changes (e.g., load)
   useEffect(() => {
     setTagsInput((item.tags || []).join(', '));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [Array.isArray(item.tags) ? item.tags.join('|') : '']);
 
   const commitTags = useCallback(() => {
