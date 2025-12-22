@@ -40,6 +40,7 @@ type ListedBoard = AnyBoard & {
   statusMessage?: string;
   createdAt?: number;
   updatedAt?: number;
+  identifier?: string;
   listCount?: number;
   issuerName: string;
   owners?: string[];
@@ -136,6 +137,7 @@ export default function QDeckAllBoards() {
         name: head.name,
         issuerName: head.name,
         shortId,
+        identifier: head.identifier,
         title: kind === 'public' ? shortId : '(Private board)',
         createdAt: head.created,
         updatedAt: head.updated,
@@ -299,7 +301,8 @@ export default function QDeckAllBoards() {
       </Typography>
 
       {filtered.map((b) => {
-        const to = `/qdeck/${encodeURIComponent(b.name)}/${b.shortId}`;
+        const targetId = b.identifier ?? b.shortId;
+        const to = `/qdeck/${encodeURIComponent(b.name)}/${encodeURIComponent(targetId)}`;
         const canDelete = myName === b.name;
         const bg = (t: any) => pastelBgFromId(b.shortId, t.palette.mode);
         const border = (t: any) => `1px solid ${pastelBorderFromId(b.shortId, t.palette.mode)}`;

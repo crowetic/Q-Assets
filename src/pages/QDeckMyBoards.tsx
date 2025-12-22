@@ -50,6 +50,7 @@ type OwnedBoardDetail = {
   statusMessage?: string;
   updatedAt?: number;
   createdAt?: number;
+  identifier?: string;
   listCount?: number;
   service?: AnyBoard['service'];
   visibility?: AnyBoard['visibility'];
@@ -173,6 +174,7 @@ export default function MyBoards() {
         ...prev,
         [shortId]: {
           ...(prev[shortId] ?? {}),
+          identifier: head.identifier,
           status: isPrivate ? 'decrypting' : 'loading',
           statusMessage: isPrivate ? 'Decrypting private board…' : 'Fetching board metadata…',
         },
@@ -204,6 +206,7 @@ export default function MyBoards() {
           [shortId]: {
             status: 'loaded',
             statusMessage: 'Board ready.',
+            identifier: head.identifier,
             updatedAt: doc.updatedAt,
             createdAt: doc.createdAt,
             listCount: Array.isArray(doc.lists) ? doc.lists.length : prev[shortId]?.listCount,
@@ -224,6 +227,7 @@ export default function MyBoards() {
           [shortId]: {
             ...(prev[shortId] ?? {}),
             status: 'error',
+            identifier: head.identifier,
             statusMessage:
               typeof error?.message === 'string' ? error.message : 'Unable to load board metadata.',
           },
@@ -556,8 +560,9 @@ export default function MyBoards() {
         )}
 
         {(doc?.boards ?? []).map((b) => {
-          const to = `/qdeck/${encodeURIComponent(publisher)}/${b.boardId}`;
           const detail = boardDetails[b.boardId];
+          const targetId = detail?.identifier ?? b.boardId;
+          const to = `/qdeck/${encodeURIComponent(publisher)}/${encodeURIComponent(targetId)}`;
           const visibility = detail?.visibility ?? b.visibility ?? 'public';
           const isPrivate = visibility === 'private';
           const statusColor =

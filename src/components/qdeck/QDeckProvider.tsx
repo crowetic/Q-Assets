@@ -42,6 +42,7 @@ import { useAlert } from '../alerts';
 import { useQdnBatchPublisher } from '../../utils/useQdnBatchPublisher';
 import type { BatchPublishResource } from '../../utils/useQdnBatchPublisher';
 import { useActiveAccountName } from '../../hooks/useActiveAccountName';
+import { getLocalCardsIndex, setLocalCardsIndex } from '../../utils/qdeckCardsIndexCache';
 // import QDeckPermissionsPanel from './QDeckPermissionsPanel';
 
 // ---- Types ----
@@ -233,6 +234,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [repairingIndex, setRepairingIndex] = useState(false);
   const setCachedCardsIndexDoc = useCallback((boardId: string, doc: CardsIndexDoc) => {
     cardsIndexCacheRef.current[boardId] = doc;
+    setLocalCardsIndex(boardId, doc);
   }, []);
 
   useEffect(() => {
@@ -431,43 +433,156 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return;
       }
 
+      const prefetchedDocs = new Map<string, QDeckCard>();
+      const refKey = (name: string, cardId: string) => `${name}::${cardId}`;
+      const refsFromIndex = (doc: CardsIndexDoc): Array<{ name: string; cardId: string }> => {
+        if (Array.isArray(doc.entries) && doc.entries.length) {
+          return doc.entries.filter((e) => e?.name && e?.cardId).map((e) => ({
+            name: e.name,
+            cardId: e.cardId,
+          }));
+        }
+        if (Array.isArray(doc.cardIds) && doc.cardIds.length) {
+          const issuer = b.createdBy || identity.name;
+          if (!issuer) return [];
+          return doc.cardIds.map((cid) => ({ name: issuer, cardId: cid }));
+        }
+        return [];
+      };
+      const applyLoadedCards = (
+        usable: QDeckCard[],
+        idxDoc: CardsIndexDoc | null,
+        opts?: { cache?: boolean }
+      ) => {
+        const archivedSet = new Set(idxDoc?.archivedIds ?? []);
+        const cacheDoc = idxDoc ?? createEmptyCardsIndexDoc(b.boardId);
+        if (opts?.cache !== false) {
+          setCachedCardsIndexDoc(b.boardId, cacheDoc);
+        }
+        const variants: Record<string, QDeckCard[]> = {};
+        const byId: Record<string, QDeckCard> = {};
+
+        for (const c of usable) {
+          variants[c.cardId] = variants[c.cardId] || [];
+          variants[c.cardId].push(c);
+        }
+
+        // Pick display variant per card
+        const usePreferred = b.featureFlags?.cardVariants;
+        const preferredMap = b.preferredVariants || {};
+        for (const [cardId, list] of Object.entries(variants)) {
+          if (archivedSet.has(cardId)) continue;
+          let chosen: QDeckCard | undefined;
+          if (usePreferred) {
+            const preferredPublisher = preferredMap[cardId];
+            if (preferredPublisher) {
+              chosen = list.find((c) => c.createdBy === preferredPublisher);
+            }
+          }
+          if (!chosen) {
+            // default: newest across all publishers
+            chosen = pickNewestVariant(list);
+          }
+          if (chosen) byId[cardId] = chosen;
+        }
+
+        setCards(byId);
+        setCardVariants(variants);
+        setArchivedCardIds(archivedSet);
+      };
+      const loadDocsForRefs = async (refs: Array<{ name: string; cardId: string }>) => {
+        const loaded = await Promise.all(
+          refs.map((r) =>
+            cardLimiter(async () => {
+              const key = refKey(r.name, r.cardId);
+              const cached = prefetchedDocs.get(key);
+              if (cached) return cached;
+              try {
+                const doc = await loadCardDoc(r.name, b, r.cardId);
+                if (!doc || (doc as any)._type === 'QDECK_TOMBSTONE') return null;
+                const cast = doc as QDeckCard;
+                prefetchedDocs.set(key, cast);
+                return cast;
+              } catch {
+                return null;
+              }
+            })
+          )
+        );
+        return loaded.filter(Boolean) as QDeckCard[];
+      };
+
+      const cachedIndex = getLocalCardsIndex(b.boardId);
+      if (cachedIndex) {
+        cardsIndexCacheRef.current[b.boardId] = cachedIndex;
+      }
+      const cachedRefs = cachedIndex ? refsFromIndex(cachedIndex) : [];
+      const newestIndexPromise = loadNewestCardsIndex(b, {
+        issuerHints: [b.createdBy, identity.name].filter(Boolean) as string[],
+      }).catch((e) => {
+        console.warn('[Q-Deck] loadNewestCardsIndex failed; will try discovery', e);
+        return null;
+      });
+
+      let showedCached = false;
+      if (cachedRefs.length) {
+        const cachedDocs = await loadDocsForRefs(cachedRefs);
+        if (cachedDocs.length) {
+          applyLoadedCards(cachedDocs, cachedIndex, { cache: false });
+          showedCached = true;
+        }
+      }
+
       // 1) Try newest cards index across issuers
       let refs: Array<{ name: string; cardId: string }> | null = null;
       let idx: CardsIndexDoc | null = null;
-      try {
-        idx =
-          (await loadNewestCardsIndex(b, {
-            issuerHints: [b.createdBy, identity.name].filter(Boolean) as string[],
-          })) ?? null;
-        if (idx?.entries?.length) {
-          refs = idx.entries.slice();
-        } else if (idx?.cardIds?.length) {
-          // legacy: assume board issuer published these
-          refs = idx.cardIds.map((cid) => ({ name: b.createdBy, cardId: cid }));
-        }
-      } catch (e) {
-        console.warn('[Q-Deck] loadNewestCardsIndex failed; will try discovery', e);
+      idx = (await newestIndexPromise) ?? null;
+      if (idx?.entries?.length) {
+        refs = idx.entries.slice();
+      } else if (idx?.cardIds?.length) {
+        // legacy: assume board issuer published these
+        refs = idx.cardIds.map((cid) => ({ name: b.createdBy, cardId: cid }));
       }
 
       // 2) Fallback discovery across *all* issuers
       if (!refs || refs.length === 0) {
         try {
           const all = await discoverCardRefsBySearch(b);
-          // Filter by board policy + author header coherence
-          const allowed: Array<{ name: string; cardId: string }> = [];
-          for (const r of all) {
-            try {
-              const card = await loadCardDoc(r.name, b, r.cardId);
-              if (!card || (card as any)._type === 'QDECK_TOMBSTONE') continue;
-              if (!cardAuthHeaderMatchesPublisher(card as QDeckCard, r.name)) continue;
-              const ok = await canPublisherPublishToBoard(b, { name: r.name });
-              if (!ok) continue;
-              allowed.push(r);
-            } catch {
-              // ignore bad/undecryptable
-            }
+          const publisherOkCache = new Map<string, Promise<boolean>>();
+          const canPublisher = (name: string) => {
+            const key = name.toLowerCase();
+            const existing = publisherOkCache.get(key);
+            if (existing) return existing;
+            const next = canPublisherPublishToBoard(b, { name }).catch(() => false);
+            publisherOkCache.set(key, next);
+            return next;
+          };
+
+          const checked = await Promise.all(
+            all.map((r) =>
+              cardLimiter(async () => {
+                try {
+                  const card = await loadCardDoc(r.name, b, r.cardId);
+                  if (!card || (card as any)._type === 'QDECK_TOMBSTONE') return null;
+                  if (!cardAuthHeaderMatchesPublisher(card as QDeckCard, r.name)) return null;
+                  const ok = await canPublisher(r.name);
+                  if (!ok) return null;
+                  return { ref: r, doc: card as QDeckCard };
+                } catch {
+                  return null;
+                }
+              })
+            )
+          );
+
+          const allowed = checked.filter(Boolean) as Array<{
+            ref: { name: string; cardId: string };
+            doc: QDeckCard;
+          }>;
+          for (const { ref, doc } of allowed) {
+            prefetchedDocs.set(refKey(ref.name, ref.cardId), doc);
           }
-          refs = allowed;
+          refs = allowed.map((item) => item.ref);
         } catch (e) {
           console.warn('[Q-Deck] discovery failed', e);
           refs = [];
@@ -475,6 +590,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       if (!refs || refs.length === 0) {
+        if (showedCached) return;
         setCards({});
         setCardVariants({});
         setArchivedCardIds(new Set());
@@ -482,54 +598,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       // 3) Fetch each card with its *publisher* name
-      const loaded = await Promise.all(
-        refs.map((r) =>
-          cardLimiter(async () => {
-            try {
-              const doc = await loadCardDoc(r.name, b, r.cardId);
-              if (!doc || (doc as any)._type === 'QDECK_TOMBSTONE') return null;
-              return doc as QDeckCard;
-            } catch {
-              return null;
-            }
-          })
-        )
-      );
-
-      const usable = loaded.filter(Boolean) as QDeckCard[];
-      const archivedSet = new Set(idx?.archivedIds ?? []);
-      const cacheDoc = idx ?? createEmptyCardsIndexDoc(b.boardId);
-      setCachedCardsIndexDoc(b.boardId, cacheDoc);
-      const variants: Record<string, QDeckCard[]> = {};
-      const byId: Record<string, QDeckCard> = {};
-
-      for (const c of usable) {
-        variants[c.cardId] = variants[c.cardId] || [];
-        variants[c.cardId].push(c);
-      }
-
-      // Pick display variant per card
-      const usePreferred = b.featureFlags?.cardVariants;
-      const preferredMap = b.preferredVariants || {};
-      for (const [cardId, list] of Object.entries(variants)) {
-        if (archivedSet.has(cardId)) continue;
-        let chosen: QDeckCard | undefined;
-        if (usePreferred) {
-          const preferredPublisher = preferredMap[cardId];
-          if (preferredPublisher) {
-            chosen = list.find((c) => c.createdBy === preferredPublisher);
-          }
-        }
-        if (!chosen) {
-          // default: newest across all publishers
-          chosen = pickNewestVariant(list);
-        }
-        if (chosen) byId[cardId] = chosen;
-      }
-
-      setCards(byId);
-      setCardVariants(variants);
-      setArchivedCardIds(archivedSet);
+      const usable = await loadDocsForRefs(refs);
+      applyLoadedCards(usable, idx);
     },
     [identity.address, identity.name, cardLimiter]
   );
