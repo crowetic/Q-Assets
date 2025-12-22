@@ -525,6 +525,7 @@ export default function PortfolioPage() {
         assetsIndex={assetsIndex}
         holdings={holdings}
         avatarMap={avatarMap}
+        loading={loading}
       />
 
       {/* ===== BELOW: Tracked wallets manager (left) + Holdings (right) ===== */}

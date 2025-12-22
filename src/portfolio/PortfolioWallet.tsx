@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   Chip,
+  CircularProgress,
   Divider,
   IconButton,
   Paper,
@@ -46,6 +47,7 @@ type PortfolioWalletProps = {
   assetsIndex: Record<number, AssetMini>;
   holdings: Record<number, HoldingAggregate>;
   avatarMap: Record<number, string | null>;
+  loading?: boolean;
 };
 
 function copyToClipboard(text: string) {
@@ -74,6 +76,7 @@ export default function PortfolioWallet({
   assetsIndex,
   holdings,
   avatarMap,
+  loading,
 }: PortfolioWalletProps) {
   const theme = useTheme();
   const isXs = useMediaQuery(theme.breakpoints.down('sm'));
@@ -114,6 +117,7 @@ export default function PortfolioWallet({
   const qortRow = walletRows.find((row) => row.assetId === 0);
   const assetsHeldLabel =
     walletRows.length === 1 ? '1 asset' : `${walletRows.length} assets`;
+  const isLoading = Boolean(loading);
 
   const handleSendConfirm = async (recipient: string, amount: number) => {
     const resolvedRecipient = await resolveRecipientStrict(recipient);
@@ -183,6 +187,7 @@ export default function PortfolioWallet({
           </Stack>
           {authAddress ? (
             <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+              {isLoading && <CircularProgress size={16} />}
               <Chip label={assetsHeldLabel} color="primary" variant="outlined" size="small" />
               {qortRow && (
                 <Chip
@@ -251,7 +256,14 @@ export default function PortfolioWallet({
           )}
         </Paper>
 
-        {!authAddress ? null : walletRows.length === 0 ? (
+        {!authAddress ? null : isLoading ? (
+          <Stack direction="row" spacing={1} alignItems="center">
+            <CircularProgress size={16} />
+            <Typography variant="body2" color="text.secondary">
+              Loading balances…
+            </Typography>
+          </Stack>
+        ) : walletRows.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
             This account holds no assets.
           </Typography>

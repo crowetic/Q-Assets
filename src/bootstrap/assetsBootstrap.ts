@@ -14,6 +14,7 @@ interface CacheShape {
 
 const LS_KEY = ASSETS_KEY;
 const SCHEMA_VERSION = Q_ASSET_APP_VERSION;
+const MIN_INDEX_ASSET_COUNT = 10;
 
 // Reasonable default TTL - tweak as you like.
 const DEFAULT_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -30,6 +31,10 @@ function readCache(): CacheShape | null {
     if (!parsed || typeof parsed !== 'object') return null;
     if (parsed.v !== SCHEMA_VERSION) return null;
     if (!parsed.index || typeof parsed.index !== 'object') return null;
+    if (Object.keys(parsed.index).length < MIN_INDEX_ASSET_COUNT) {
+      localStorage.removeItem(LS_KEY);
+      return null;
+    }
     return parsed;
   } catch {
     return null;

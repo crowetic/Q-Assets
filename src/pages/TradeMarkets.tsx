@@ -59,9 +59,10 @@ export default function TradeMarkets() {
     (async () => {
       try {
         setLoading(true);
+        const MIN_INDEX_ASSET_COUNT = 10;
         // try sync for instant paint
         const syncIdx = readAssetsIndexSync();
-        if (syncIdx && !cancelled) {
+        if (syncIdx && Object.keys(syncIdx).length >= MIN_INDEX_ASSET_COUNT && !cancelled) {
           setRows(
             Object.values(syncIdx)
               .filter((a) => a.assetId > 2 && !a.isUnspendable) // skip 0–2 and unspendable
@@ -69,7 +70,10 @@ export default function TradeMarkets() {
           );
         }
 
-        const idx = await ensureAssetsIndexLoaded();
+        let idx = await ensureAssetsIndexLoaded();
+        if (Object.keys(idx).length < MIN_INDEX_ASSET_COUNT) {
+          idx = (await ensureAssetsIndexLoaded({ force: true }).catch(() => idx)) ?? idx;
+        }
         if (cancelled) return;
         const baseRows: Row[] = Object.values(idx)
           .filter((a) => a.assetId > 2 && !a.isUnspendable)
