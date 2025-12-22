@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Box,
   Button,
@@ -11,6 +11,10 @@ import {
   FormControlLabel,
   Checkbox,
   Tooltip,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import { useAuth } from 'qapp-core';
 import type { Service } from 'qapp-core';
@@ -27,6 +31,7 @@ import { resolveGroupPublishService } from '../../utils/groupEncryption';
 import { useQdnBatchPublisher } from '../../utils/useQdnBatchPublisher';
 import PublishQueueStatus from '../common/PublishQueueStatus';
 // import { addPrivateMagic } from '../../constants/qdeckIdentifiers';
+import { useActiveAccountName } from '../../hooks/useActiveAccountName';
 
 export default function NewsPublisher({
   assetId,
@@ -42,28 +47,40 @@ export default function NewsPublisher({
   onPublished?: () => void;
 }) {
   const { name: userName, address, authenticateUser } = useAuth();
+  const { activeName, availableNames, namesLoading } = useActiveAccountName();
+  const [useGlobalName, setUseGlobalName] = useState(true);
+  const [overrideName, setOverrideName] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [html, setHtml] = useState('');
   const [notifyAppSubs, setNotifyAppSubs] = useState(false);
   const [notifyGroupSubs, setNotifyGroupSubs] = useState(true);
   const [publishing, setPublishing] = useState(false);
   const theme = useTheme();
+  const globalName = activeName ?? userName ?? null;
+  const publisherName = useGlobalName ? globalName : overrideName;
   const normalizedGroupId =
     typeof primaryGroupId === 'number' && Number.isFinite(primaryGroupId)
       ? Number(primaryGroupId)
       : null;
   const { publish } = useQdnBatchPublisher();
 
+  useEffect(() => {
+    if (useGlobalName) return;
+    if (overrideName && availableNames.includes(overrideName)) return;
+    const fallback = activeName ?? availableNames[0] ?? null;
+    if (fallback) setOverrideName(fallback);
+  }, [useGlobalName, overrideName, activeName, availableNames]);
+
   const canPublish = async (groupId?: number | null) => {
-    if (!userName) authenticateUser();
+    if (!publisherName) authenticateUser();
     if (isIssuer) return true;
     if (!groupId) return false;
-    return isNameAdminOfGroupId(userName as string, groupId);
+    return isNameAdminOfGroupId(publisherName as string, groupId);
   };
 
   const { alert } = useAlert();
   const handlePublish = async () => {
-    if (!userName) {
+    if (!publisherName) {
       await alert('You need a Qortal name to publish.');
       return;
     }
@@ -125,7 +142,7 @@ export default function NewsPublisher({
     try {
       await publish([
         {
-          name: userName as string,
+          name: publisherName as string,
           service,
           identifier: newsItemId,
           base64,
@@ -153,8 +170,8 @@ export default function NewsPublisher({
             scope: { kind: 'global' },
             title: newsTitle,
             html: payload,
-            publisher: { name: userName, address, role: 'admin' },
-            qdnResource: { publisher: userName, identifier: newsItemId },
+            publisher: { name: publisherName, address, role: 'admin' },
+            qdnResource: { publisher: publisherName, identifier: newsItemId },
             sendMail: true,
             links,
           });
@@ -164,8 +181,8 @@ export default function NewsPublisher({
             scope: { kind: 'group', groupId: effectiveGroupId },
             title: assetName ? `${assetName} group notice` : `Asset #${assetId} group notice`,
             html: payload,
-            publisher: { name: userName, address, role: 'admin' },
-            qdnResource: { publisher: userName, identifier: newsItemId },
+            publisher: { name: publisherName, address, role: 'admin' },
+            qdnResource: { publisher: publisherName, identifier: newsItemId },
             sendMail: true,
             links,
           });
@@ -202,6 +219,49 @@ export default function NewsPublisher({
           <Typography variant="caption" color="text.secondary">
             Issuer or primary group admins can publish News.
           </Typography>
+          <Box sx={{ mt: 1.5, display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={useGlobalName}
+                  onChange={(e) => setUseGlobalName(e.target.checked)}
+                  disabled={namesLoading}
+                />
+              }
+              label="Use global active name"
+            />
+            {useGlobalName ? (
+              <Typography variant="body2" color={publisherName ? 'text.secondary' : 'error'}>
+                {publisherName ? `Publishing as: ${publisherName}` : 'No active name selected'}
+              </Typography>
+            ) : (
+              <FormControl size="small" sx={{ minWidth: 220 }}>
+                <InputLabel id="asset-news-name">Publish as</InputLabel>
+                <Select
+                  labelId="asset-news-name"
+                  label="Publish as"
+                  value={overrideName || ''}
+                  onChange={(e) => {
+                    const next = e.target.value ? String(e.target.value) : '';
+                    setOverrideName(next || null);
+                  }}
+                  disabled={namesLoading || availableNames.length === 0}
+                  displayEmpty
+                >
+                  {availableNames.length === 0 && (
+                    <MenuItem value="" disabled>
+                      {namesLoading ? 'Loading names...' : 'No names available'}
+                    </MenuItem>
+                  )}
+                  {availableNames.map((name) => (
+                    <MenuItem key={name} value={name}>
+                      {name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            )}
+          </Box>
           <div style={{ marginTop: 16 }}>
             <TiptapEditor value={html} onChange={setHtml} />
           </div>
@@ -211,7 +271,7 @@ export default function NewsPublisher({
                 <Checkbox
                   checked={notifyAppSubs}
                   onChange={(e) => setNotifyAppSubs(e.target.checked)}
-                  disabled={!userName}
+                  disabled={!publisherName}
                 />
               }
               label={
@@ -225,7 +285,7 @@ export default function NewsPublisher({
                 <Checkbox
                   checked={notifyGroupSubs}
                   onChange={(e) => setNotifyGroupSubs(e.target.checked)}
-                  disabled={!userName || !normalizedGroupId}
+                  disabled={!publisherName || !normalizedGroupId}
                 />
               }
               label={
@@ -241,7 +301,11 @@ export default function NewsPublisher({
           <Button onClick={() => setOpen(false)} disabled={publishing}>
             Cancel
           </Button>
-          <Button variant="contained" onClick={handlePublish} disabled={publishing}>
+          <Button
+            variant="contained"
+            onClick={handlePublish}
+            disabled={publishing || !publisherName}
+          >
             {publishing ? 'Publishing…' : 'Publish'}
           </Button>
         </DialogActions>

@@ -70,7 +70,7 @@ export default function QDeckPermissionsPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cardsState, setCardsState] = useState<Record<string, BoardCardsState>>({});
-  const limit = useMemo(() => pLimit(6), []);
+  const limit = useMemo(() => pLimit(4), []);
   const [myGroups, setMyGroups] = useState<GroupSummary[]>([]);
   const [repairingBoards, setRepairingBoards] = useState<Record<string, boolean>>({});
   const [repairedBoardId, setRepairedBoardId] = useState<string | null>(null);

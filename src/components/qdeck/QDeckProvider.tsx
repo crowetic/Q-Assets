@@ -41,6 +41,7 @@ import pLimit from 'p-limit';
 import { useAlert } from '../alerts';
 import { useQdnBatchPublisher } from '../../utils/useQdnBatchPublisher';
 import type { BatchPublishResource } from '../../utils/useQdnBatchPublisher';
+import { useActiveAccountName } from '../../hooks/useActiveAccountName';
 // import QDeckPermissionsPanel from './QDeckPermissionsPanel';
 
 // ---- Types ----
@@ -115,7 +116,7 @@ type QDeckCtx = {
     cardId: string,
     commentHtml: string,
     parentId?: string,
-    opts?: { isAdminsThread?: boolean }
+    opts?: { isAdminsThread?: boolean; publisherName?: string }
   ) => Promise<void>;
 
   loadCommentsForCard: (cardId: string) => Promise<void>;
@@ -210,6 +211,7 @@ type BoardChangeReport = {
 
 export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const auth = useAuth();
+  const { activeName } = useActiveAccountName();
 
   const [board, setBoard] = useState<QDeckBoard | null>(null);
   const [cards, setCards] = useState<Record<string, QDeckCard>>({});
@@ -408,14 +410,14 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   );
 
   const identity: QUserIdentity = {
-    name: auth?.name as string,
+    name: (activeName || auth?.name) as string,
     address: auth?.address as string,
     publicKey: auth?.publicKey as string,
   };
 
   const lastLoadKey = useRef<string>('');
   const { track } = useFetchTracker();
-  const cardLimiter = useMemo(() => pLimit(6), []);
+  const cardLimiter = useMemo(() => pLimit(4), []);
 
   const loadCardsForBoard = React.useCallback(
     async (_issuerIgnored: string, b: QDeckBoard) => {
@@ -638,7 +640,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const persistBoard = useCallback<QDeckCtx['persistBoard']>(
     async (nextBoard) => {
-      const publisher = auth.name ?? identity.name ?? nextBoard.createdBy;
+      const publisher = identity.name ?? auth.name ?? nextBoard.createdBy;
       const boardPayload = await buildBoardPublishPayload(publisher, nextBoard);
       await queueOrPublishResources(nextBoard.boardId, [boardPayload]);
       setBoard(nextBoard);
@@ -721,7 +723,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         ts: now,
         toListId: c.statusListId,
       });
-      const publisher = auth.name ? auth.name : identity.name;
+      const publisher = identity.name || auth.name;
       const currentIndexDoc =
         cardsIndexCacheRef.current[board.boardId] ?? createEmptyCardsIndexDoc(board.boardId);
       const indexDoc = await addCardToIndex(publisher, board, c.cardId, undefined, {
@@ -769,7 +771,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           toListId,
         });
       }
-      const publisher = auth.name ? auth.name : identity.name;
+      const publisher = identity.name || auth.name;
       const payload = await buildCardPublishPayload(publisher, board, next);
       const currentIndexDoc =
         cardsIndexCacheRef.current[board.boardId] ?? createEmptyCardsIndexDoc(board.boardId);
@@ -853,7 +855,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       }
       setCards((prev) => ({ ...prev, [card.cardId]: normalizeCardCollapse(card) }));
-      const publisher = auth.name ? auth.name : identity.name;
+      const publisher = identity.name || auth.name;
       const payload = await buildCardPublishPayload(publisher, board, card);
       const currentIndexDoc =
         cardsIndexCacheRef.current[board.boardId] ?? createEmptyCardsIndexDoc(board.boardId);
@@ -882,7 +884,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (!auth.name || !identity.name) throw new Error('Authentication Failed');
       const c = cards[cardId];
       if (!c) return;
-      const publisher = auth.name ? auth.name : identity.name;
+      const publisher = identity.name || auth.name;
 
       const nextCard: QDeckCard = {
         ...c,
@@ -957,7 +959,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updatedAt: Date.now(),
         seq: board.seq + 1,
       };
-      publisher = auth.name ?? board.createdBy;
+      publisher = identity.name ?? auth.name ?? board.createdBy;
       const boardPayload = await buildBoardPublishPayload(publisher, nextBoard);
       await queueOrPublishResources(nextBoard.boardId, [boardPayload]);
       setBoard(nextBoard);
@@ -968,15 +970,16 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (chosen) setCards((prev) => ({ ...prev, [cardId]: chosen }));
       }
     },
-    [board, cardVariants, auth.name, queueOrPublishResources]
+    [board, cardVariants, auth.name, identity.name, queueOrPublishResources]
   );
 
   const addComment = useCallback<QDeckCtx['addComment']>(
-    async (cardId, commentHtml, parentId) => {
+    async (cardId, commentHtml, parentId, opts) => {
       if (!board) throw new Error('No board loaded');
-      if (!auth.name || !identity.name) throw new Error('Authentication Failed');
+      const publisher = opts?.publisherName || identity.name || auth.name;
+      if (!publisher) throw new Error('Authentication Failed');
       const now = Date.now();
-      const author = identity.name || identity.address || 'unknown';
+      const author = publisher || identity.address || 'unknown';
       const thread: CardCommentThread = comments[cardId] ?? {
         _type: 'QDECK_COMMENTS',
         version: 1,
@@ -1001,9 +1004,9 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         seq: thread.seq + 1,
       };
       setComments((prev) => ({ ...prev, [cardId]: next }));
-      await saveCommentsDoc(auth.name ? auth.name : identity.name, board, cardId, next);
+      await saveCommentsDoc(publisher, board, cardId, next);
     },
-    [board, comments, identity.name, identity.address]
+    [board, comments, identity.name, identity.address, auth.name]
   );
 
   // helper: merge N per-issuer threads into one view
@@ -1125,7 +1128,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       });
     }
 
-    const commentLimit = pLimit(6);
+    const commentLimit = pLimit(4);
     const commentCardIds = new Set<string>();
     Object.keys(cardVariants).forEach((id) => commentCardIds.add(id));
     Object.keys(cards).forEach((id) => commentCardIds.add(id));
@@ -1185,16 +1188,17 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     async (line) => {
       if (!board) throw new Error('No board loaded');
       if (!auth.name || !identity.name) throw new Error('Authentication Failed');
-      await appendPaymentLine(auth.name ? auth.name : identity.name, board, line);
+      await appendPaymentLine(identity.name || auth.name, board, line);
     },
-    [board, identity.name]
+    [board, identity.name, auth.name]
   );
 
   const deleteBoardImpl = useCallback<QDeckCtx['deleteBoard']>(
     async (opts) => {
       if (!board) throw new Error('No board loaded');
       if (!auth.name || !identity.name) throw new Error('Authentication Failed');
-      if (board.createdBy != auth.name || board.createdBy != identity.name)
+      const publisher = identity.name || auth.name;
+      if (!publisher || board.createdBy !== publisher)
         throw new Error(
           'non-publisher delete feature not implemented, you must be the board creator to delete for now.'
         );
@@ -1209,7 +1213,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setArchivedCardIds(new Set());
       setComments({});
     },
-    [board, cards]
+    [board, cards, auth.name, identity.name]
   );
 
   const value = useMemo<QDeckCtx>(

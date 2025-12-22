@@ -186,7 +186,7 @@ export async function listManagementGroupNames(
     }
 
     const addrs = Array.from(memberAddrs);
-    const limit = pLimit(8);
+    const limit = pLimit(4);
 
     const perAddr = await Promise.all(
       addrs.map((addr) =>
@@ -319,7 +319,7 @@ export async function publishWikiSection(
   });
 }
 
-const discoverLimit = pLimit(6);
+const discoverLimit = pLimit(4);
 
 /** Given an identifier and a list of publishers {name, role},
  * return ONLY those names that actually have hits for that identifier,
@@ -374,7 +374,7 @@ async function discoverCandidatesStrict(
 
 /* ---------------------- Sections (admin > member) ----------------------- */
 type Candidate = { name: string; role: Role; ts: number };
-const parallel = pLimit(6);
+const parallel = pLimit(4);
 
 export async function loadSectionFromGroup(sectionId: string) {
   // you said this now returns [{ name, role }]
@@ -409,7 +409,7 @@ export async function loadSectionFromGroup(sectionId: string) {
 export async function loadAllWikiSections(
   meta: { id: string; title: string; tags?: string[] }[] = WIKI_SECTIONS
 ): Promise<LoadedSection[]> {
-  const lim = pLimit(3);
+  const lim = pLimit(4);
   return Promise.all(
     meta.map((m) =>
       lim(async () => {

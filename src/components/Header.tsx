@@ -1,10 +1,23 @@
 // src/components/Header.tsx
 import { Link, useLocation } from 'react-router-dom';
-import { Box, Button, useTheme, useMediaQuery, Typography } from '@mui/material';
+import {
+  Box,
+  Button,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Select,
+  Tooltip,
+  useTheme,
+  useMediaQuery,
+  Typography,
+} from '@mui/material';
 import logoUrl from '../Q-Assets-Logo.png';
 import { Q_ASSETS_VERSION } from '../constants/qdnConstants';
 import { NotificationBell } from '../notifications/NotificationBell';
 import { AuthTracker } from './AuthTracker';
+import { useActiveAccountName } from '../hooks/useActiveAccountName';
+import { useAuth } from 'qapp-core';
 
 const Header = () => {
   const theme = useTheme();
@@ -174,6 +187,7 @@ const Header = () => {
           </Button>
         );
       })}
+      <ActiveNameSelector />
       <AuthTracker />
       <NotificationBell />
       <Typography
@@ -271,6 +285,59 @@ const Header = () => {
         </Box>
       )}
     </Box>
+  );
+};
+
+const ActiveNameSelector = () => {
+  const { address } = useAuth();
+  const { activeName, setActiveName, availableNames, namesLoading, namesError } =
+    useActiveAccountName({ autoAuth: false });
+
+  if (!address) return null;
+
+  const names =
+    activeName && !availableNames.includes(activeName)
+      ? [activeName, ...availableNames]
+      : availableNames;
+
+  const disabled = namesLoading || names.length === 0;
+  const renderValue = (value: unknown) => {
+    const str = String(value || '');
+    if (str) return str;
+    if (namesLoading) return 'Loading names...';
+    if (!names.length) return 'No names';
+    return 'Select name';
+  };
+
+  return (
+    <Tooltip title={namesError || 'Active name used for publishing'}>
+      <FormControl size="small" sx={{ minWidth: 170 }}>
+        <InputLabel id="active-name-select">Active name</InputLabel>
+        <Select
+          labelId="active-name-select"
+          label="Active name"
+          value={activeName || ''}
+          onChange={(e) => {
+            const next = e.target.value ? String(e.target.value) : '';
+            setActiveName(next || null);
+          }}
+          disabled={disabled}
+          displayEmpty
+          renderValue={renderValue}
+        >
+          {names.length === 0 && (
+            <MenuItem value="" disabled>
+              {namesLoading ? 'Loading names...' : 'No names found'}
+            </MenuItem>
+          )}
+          {names.map((name) => (
+            <MenuItem key={name} value={name}>
+              {name}
+            </MenuItem>
+          ))}
+        </Select>
+      </FormControl>
+    </Tooltip>
   );
 };
 

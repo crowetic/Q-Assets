@@ -26,17 +26,21 @@ import TiptapEditor from '../TipTapEditor';
 import PublishQueueStatus from '../common/PublishQueueStatus';
 import { prepareHtmlForPublish } from '../../utils/publicationPublisher';
 import { invalidateAnnouncementCache, dispatchNewsRefreshEvent } from '../../utils/news';
+import { approveAnnouncement } from '../../utils/announcementApprovals';
 import { objectToBase64 } from '../../utils/data';
+import { stripHtml } from '../../utils/newsHelpers';
 import { sendNotification } from '../../notifications/notificationService';
 import { NOTIF_GROUP_ID } from '../../notifications/notifyIndex';
 import { qaAnnouncementPrefix } from '../../constants/qdnConstants';
 import { uniqueId6 } from '../../utils/ids';
 import { getAccountGroups, type GroupSummary } from '../../utils/qortalApi';
+import { publisherHasPermission } from '../../utils/managementManifest';
 import type { NotifScope } from '../../types/notifications';
 import type { NotificationRecipient } from '../../utils/notificationRecipients';
 import { prepareQmailRecipients } from '../../utils/qmailRecipientCache';
 import { enqueueQdnPublishJob } from '../../state/publishQueue';
 import { PublishJobError } from '../../utils/qdnProgressivePublisher';
+import { useActiveAccountName } from '../../hooks/useActiveAccountName';
 
 type Props = {
   open: boolean;
@@ -57,12 +61,24 @@ export default function AnnouncementDialog({
   const [err, setErr] = useState<string | null>(null);
   const theme = useTheme();
   const isXs = useMediaQuery(theme.breakpoints.down('sm'));
-  const { name: userName, address, authenticateUser } = useAuth();
+  const { address, authenticateUser } = useAuth();
   const [notifyMail, setNotifyMail] = useState(false);
   const [notifyChat, setNotifyChat] = useState(false);
   const [groupOptions, setGroupOptions] = useState<GroupSummary[]>([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [notificationGroupId, setNotificationGroupId] = useState<number | ''>('');
+  const { activeName, availableNames, namesLoading, namesError } = useActiveAccountName();
+  const [useGlobalName, setUseGlobalName] = useState(true);
+  const [overrideName, setOverrideName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (useGlobalName) return;
+    if (overrideName && availableNames.includes(overrideName)) return;
+    const fallback = activeName ?? availableNames[0] ?? null;
+    if (fallback) setOverrideName(fallback);
+  }, [useGlobalName, overrideName, activeName, availableNames]);
+
+  const publisherName = useGlobalName ? activeName : overrideName;
 
   useEffect(() => {
     if (!address) {
@@ -94,9 +110,14 @@ export default function AnnouncementDialog({
       setErr('Title and content required.');
       return;
     }
-    if (!userName) {
+    if (!publisherName) {
       authenticateUser();
-      setErr('You must be logged in with a Qortal name to publish.');
+      setErr('Select a Qortal name to publish.');
+      return;
+    }
+    if (!address) {
+      authenticateUser();
+      setErr('You must be logged in to publish.');
       return;
     }
     let identifier = '';
@@ -119,7 +140,7 @@ export default function AnnouncementDialog({
         label: 'Announcement publish',
         resources: [
           {
-            name: userName,
+            name: publisherName,
             service: 'DOCUMENT',
             identifier,
             base64: announcementBase64,
@@ -128,6 +149,28 @@ export default function AnnouncementDialog({
       });
       if (!queued) throw new Error('Unable to queue announcement publish.');
       await queued.completion;
+
+      try {
+        const canApprove = await publisherHasPermission(publisherName, 'announcements.approve');
+        if (canApprove) {
+          const text = stripHtml(prepared);
+          await approveAnnouncement(
+            {
+              identifier,
+              publisherName,
+              service: 'DOCUMENT',
+              createdAt: annPayload.createdAt,
+              title,
+              excerpt: text.slice(0, 220) + (text.length > 220 ? '...' : ''),
+              fullHtml: prepared,
+            },
+            publisherName
+          );
+        }
+      } catch {
+        // Approval doc is optional; do not block publishing.
+      }
+
       invalidateAnnouncementCache();
       dispatchNewsRefreshEvent();
 
@@ -151,14 +194,14 @@ export default function AnnouncementDialog({
         const links = [
           {
             label: 'View resource',
-            href: `qortal://DOCUMENT/${userName}/${identifier}`,
+            href: `qortal://DOCUMENT/${publisherName}/${identifier}`,
           },
           {
             label: 'Open Q-Assets',
             href: APP_HOME_LINK,
           },
         ];
-        const publisher = { name: userName, address, role: 'admin' as const };
+        const publisher = { name: publisherName, address, role: 'admin' as const };
         const notifyTasks: Array<() => Promise<unknown>> = [];
 
         let globalRecipients: NotificationRecipient[] = [];
@@ -181,7 +224,7 @@ export default function AnnouncementDialog({
             title,
             bodyHtml: prepared,
             publisher,
-            qdnResource: { publisher: userName, identifier },
+            qdnResource: { publisher: publisherName, identifier },
             links,
             deliveries: {
               internal: { enabled: true, chatPingGroupId: notifyChat ? NOTIF_GROUP_ID : undefined },
@@ -205,7 +248,7 @@ export default function AnnouncementDialog({
               title,
               bodyHtml: prepared,
               publisher,
-              qdnResource: { publisher: userName, identifier },
+              qdnResource: { publisher: publisherName, identifier },
               links,
               deliveries: {
                 internal: { enabled: true },
@@ -271,6 +314,50 @@ export default function AnnouncementDialog({
       <DialogTitle>New Q-Assets Announcement</DialogTitle>
       <DialogContent dividers>
         <Box sx={{ display: 'grid', gap: 2 }}>
+          <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={useGlobalName}
+                  onChange={(e) => setUseGlobalName(e.target.checked)}
+                  disabled={namesLoading}
+                />
+              }
+              label="Use global active name"
+            />
+            {useGlobalName ? (
+              <Typography variant="body2" color={publisherName ? 'text.secondary' : 'error'}>
+                {publisherName ? `Publishing as: ${publisherName}` : 'No active name selected'}
+              </Typography>
+            ) : (
+              <FormControl size="small" sx={{ minWidth: 240 }}>
+                <InputLabel id="announcement-publish-name">Publish as</InputLabel>
+                <Select
+                  labelId="announcement-publish-name"
+                  label="Publish as"
+                  value={overrideName || ''}
+                  onChange={(e) => {
+                    const next = e.target.value ? String(e.target.value) : '';
+                    setOverrideName(next || null);
+                  }}
+                  disabled={namesLoading || availableNames.length === 0}
+                  displayEmpty
+                >
+                  {availableNames.length === 0 && (
+                    <MenuItem value="" disabled>
+                      {namesLoading ? 'Loading names...' : 'No names available'}
+                    </MenuItem>
+                  )}
+                  {availableNames.map((name) => (
+                    <MenuItem key={name} value={name}>
+                      {name}
+                    </MenuItem>
+                  ))}
+                </Select>
+                {namesError && <FormHelperText error>{namesError}</FormHelperText>}
+              </FormControl>
+            )}
+          </Box>
           <TextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
           <Box>
             <Typography variant="caption" color="text.secondary">
@@ -286,7 +373,7 @@ export default function AnnouncementDialog({
                 <Checkbox
                   checked={notifyMail}
                   onChange={(e) => setNotifyMail(e.target.checked)}
-                  disabled={!userName}
+                  disabled={!publisherName}
                 />
               }
               label={
@@ -300,7 +387,7 @@ export default function AnnouncementDialog({
                 <Checkbox
                   checked={notifyChat}
                   onChange={(e) => setNotifyChat(e.target.checked)}
-                  disabled={!userName}
+                  disabled={!publisherName}
                 />
               }
               label={
@@ -359,7 +446,7 @@ export default function AnnouncementDialog({
         <Button onClick={onClose} disabled={busy}>
           Cancel
         </Button>
-        <Button onClick={handlePublish} disabled={busy} variant="contained">
+        <Button onClick={handlePublish} disabled={busy || !publisherName} variant="contained">
           {busy ? 'Publishing…' : 'Publish'}
         </Button>
       </DialogActions>

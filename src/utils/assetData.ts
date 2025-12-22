@@ -2,7 +2,7 @@ import pLimit from 'p-limit';
 import { getPrimaryAccountName } from './qortalApi';
 
 // max 6 concurrent lookups (adjust if you want more aggressive/faster)
-const limit = pLimit(6);
+const limit = pLimit(4);
 
 export type HolderRow = {
   address: string;

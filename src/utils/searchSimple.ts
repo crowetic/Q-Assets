@@ -4,7 +4,7 @@ import { getGroupResourceServices } from './groupEncryption';
 
 export interface SimpleHit {
   name: string;
-  service: string;
+  service: Service;
   identifier: string;
   size: number;
   created: number;
@@ -120,9 +120,7 @@ export async function searchSimpleNameIdPrefix(
       fetchSearchSimple(
         `/arbitrary/resources/searchsimple?service=${encodeURIComponent(
           svc
-        )}&identifier=${encodeURIComponent(
-          identifierPrefix
-        )}&name=${encodeURIComponent(
+        )}&identifier=${encodeURIComponent(identifierPrefix)}&name=${encodeURIComponent(
           name
         )}&caseInsensitive=true&prefix=true&limit=0`
       )

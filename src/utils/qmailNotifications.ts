@@ -24,7 +24,7 @@ function buildIdentifier(recipientName: string, address: string) {
   return `${QMAIL_IDENTIFIER_PREFIX}${safeName}_${suffix}_mail_${rand}`;
 }
 
-const DEFAULT_BATCH = 10;
+const DEFAULT_BATCH = 50;
 const DEFAULT_THROTTLE_DELAY = 60_000;
 
 export async function sendQmailNotifications(params: SendQmailParams) {

@@ -327,7 +327,7 @@ const AssetExplorer = () => {
     }
 
     let cancelled = false;
-    const limit = pLimit(6);
+    const limit = pLimit(4);
     (async () => {
       if (view === 'private') setPrivacyLoading(true);
       const results = await Promise.all(
@@ -484,7 +484,7 @@ const AssetExplorer = () => {
     if (displayAssets.length === 0) return;
 
     const ctrl = new AbortController();
-    const limit = pLimit(6);
+    const limit = pLimit(4);
     let aborted = false;
 
     const withTimeout = <T,>(p: Promise<T>, ms = 8000) =>

@@ -1,11 +1,11 @@
 // src/utils/commentsDiscovery.ts
-/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import pLimit from 'p-limit';
 import { DEV_GROUP_ID, MINTER_GROUP_ID } from '../constants/qdnConstants';
 import { getGroupAddressSetsById } from '../utils/access';
 import { getAllAccountNames, getPrimaryAccountName } from '../utils/qortalApi';
 
-const limit = pLimit(6);
+const limit = pLimit(4);
 
 // Robust: get all names for an address (you already have similar in wikiAccess.ts)
 async function getAllNamesForAddress(address: string): Promise<string[]> {
@@ -101,7 +101,7 @@ export async function discoverEligibleCommentPublishers(opts: {
     ...dev.memberAddrs,
   ]);
 
-  const limit = pLimit(8);
+  const limit = pLimit(4);
   const perAddr = await Promise.all(
     Array.from(unionAddrs).map((addr) =>
       limit(async () => {
@@ -211,7 +211,6 @@ export async function searchAllByIdentifierPrefix(
   let offset = 0;
 
   for (let page = 0; page < maxPages; page++) {
-    // eslint-disable-next-line no-await-in-loop
     const res = await qortalRequest({
       action: 'SEARCH_QDN_RESOURCES',
       service: 'DOCUMENT',
@@ -284,7 +283,6 @@ export async function searchByIdentifierPrefixFFSPublishers(
   for (const p of pubs) {
     let offset = 0;
     for (let page = 0; page < maxPages; page++) {
-      // eslint-disable-next-line no-await-in-loop
       const res = await qortalRequest({
         action: 'SEARCH_QDN_RESOURCES',
         service: 'DOCUMENT',

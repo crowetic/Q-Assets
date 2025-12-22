@@ -11,6 +11,12 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Select,
+  FormControlLabel,
+  Checkbox,
   useTheme,
   useMediaQuery,
 } from '@mui/material';
@@ -20,6 +26,7 @@ import TiptapEditor from '../TipTapEditor';
 import { ThreadNodeView, ReplyPreview } from '../comments/CommentsSection';
 import { Spacer } from 'qapp-core';
 import { ThreadNode } from '../../utils/thread';
+import { useActiveAccountName } from '../../hooks/useActiveAccountName';
 
 type Props = {
   cardId: string;
@@ -46,10 +53,22 @@ export default function QDeckCommentsSection({ cardId, canComment }: Props) {
   const theme = useTheme();
   const isXs = useMediaQuery(theme.breakpoints.down('sm'));
   const { comments, loadCommentsForCard, addComment } = useQDeck();
+  const { activeName, availableNames, namesLoading } = useActiveAccountName();
+  const [useGlobalName, setUseGlobalName] = React.useState(true);
+  const [overrideName, setOverrideName] = React.useState<string | null>(null);
 
   const [open, setOpen] = React.useState(false);
   const [replyTo, setReplyTo] = React.useState<UINode | null>(null);
   const [html, setHtml] = React.useState('');
+
+  React.useEffect(() => {
+    if (useGlobalName) return;
+    if (overrideName && availableNames.includes(overrideName)) return;
+    const fallback = activeName ?? availableNames[0] ?? null;
+    if (fallback) setOverrideName(fallback);
+  }, [useGlobalName, overrideName, activeName, availableNames]);
+
+  const publisherName = useGlobalName ? activeName : overrideName;
 
   function buildThreadForestFromCardComments(
     items: Array<{
@@ -140,8 +159,8 @@ export default function QDeckCommentsSection({ cardId, canComment }: Props) {
   };
 
   const publish = async () => {
-    if (!html.trim() || !canComment) return;
-    await addComment(cardId, html, replyTo?.id);
+    if (!publisherName || !html.trim() || !canComment) return;
+    await addComment(cardId, html, replyTo?.id, { publisherName });
     setOpen(false);
     setReplyTo(null);
     setHtml('');
@@ -236,6 +255,49 @@ export default function QDeckCommentsSection({ cardId, canComment }: Props) {
             dividers
             sx={{ overflow: 'hidden', flex: 1, display: 'flex', flexDirection: 'column', gap: 1.5 }}
           >
+            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={useGlobalName}
+                    onChange={(e) => setUseGlobalName(e.target.checked)}
+                    disabled={namesLoading}
+                  />
+                }
+                label="Use global active name"
+              />
+              {useGlobalName ? (
+                <Typography variant="body2" color={publisherName ? 'text.secondary' : 'error'}>
+                  {publisherName ? `Publishing as: ${publisherName}` : 'No active name selected'}
+                </Typography>
+              ) : (
+                <FormControl size="small" sx={{ minWidth: 220 }}>
+                  <InputLabel id="qdeck-comment-name">Publish as</InputLabel>
+                  <Select
+                    labelId="qdeck-comment-name"
+                    label="Publish as"
+                    value={overrideName || ''}
+                    onChange={(e) => {
+                      const next = e.target.value ? String(e.target.value) : '';
+                      setOverrideName(next || null);
+                    }}
+                    disabled={namesLoading || availableNames.length === 0}
+                    displayEmpty
+                  >
+                    {availableNames.length === 0 && (
+                      <MenuItem value="" disabled>
+                        {namesLoading ? 'Loading names...' : 'No names available'}
+                      </MenuItem>
+                    )}
+                    {availableNames.map((name) => (
+                      <MenuItem key={name} value={name}>
+                        {name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              )}
+            </Box>
             {replyTo && (
               <ReplyPreview
                 reply={
@@ -257,7 +319,11 @@ export default function QDeckCommentsSection({ cardId, canComment }: Props) {
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="contained" onClick={publish} disabled={!canComment || !html.trim()}>
+            <Button
+              variant="contained"
+              onClick={publish}
+              disabled={!publisherName || !canComment || !html.trim()}
+            >
               {replyTo ? 'Reply' : 'Publish'}
             </Button>
           </DialogActions>

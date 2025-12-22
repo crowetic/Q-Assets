@@ -197,7 +197,7 @@ export type RecipientResolution = {
   }>;
 };
 
-const limit = pLimit(6);
+const limit = pLimit(4);
 
 // --- Qortal helpers ---------------------------------------------------------
 

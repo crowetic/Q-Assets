@@ -1,13 +1,7 @@
-type QortalRequestAction =
-  | 'ENCRYPT_DATA'
-  | 'ENCRYPT_QORTAL_GROUP_DATA'
-  | 'DECRYPT_DATA'
-  | 'DECRYPT_QORTAL_GROUP_DATA'
-  | 'PUBLISH_QDN_RESOURCE'
-  | 'PLAY_ENCRYPTED_MEDIA';
+import { Service } from 'qapp-core';
 
 type QdnLocation = {
-  service: string;
+  service: Service;
   name: string;
   identifier: string;
 };
@@ -23,14 +17,12 @@ type PublishStreamKeysParams = {
   groupId?: number;
   publicKeys?: string[];
   isAdmins?: boolean;
-  refreshCache?: boolean;
 };
 
-type PublishStreamResourceParams = {
+type PublishEncryptedStreamResourceParams = {
   location: QdnLocation;
-  file: File | Blob;
+  file: File;
   filename: string;
-  mimeType?: string;
   key: string;
   iv: string;
 };
@@ -58,33 +50,6 @@ type PlayStreamResult = {
   streamUrl: string;
   serverPort: number;
 };
-
-function qortalRequest<T = unknown>(
-  action: QortalRequestAction,
-  payload: Record<string, unknown>
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const channel = new MessageChannel();
-    channel.port1.onmessage = (event) => {
-      const { result, error } = event.data || {};
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(result as T);
-    };
-
-    window.parent.postMessage(
-      {
-        action,
-        requestedHandler: 'UI',
-        ...payload,
-      },
-      '*',
-      [channel.port2]
-    );
-  });
-}
 
 function uint8ToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -118,7 +83,7 @@ export function createStreamEncryption(): StreamKeys {
 }
 
 export async function publishStreamKeys(params: PublishStreamKeysParams) {
-  const { location, streamKeys, groupId, publicKeys, isAdmins, refreshCache } = params;
+  const { location, streamKeys, groupId, publicKeys, isAdmins } = params;
 
   const payload = {
     key: streamKeys.key,
@@ -129,14 +94,15 @@ export async function publishStreamKeys(params: PublishStreamKeysParams) {
 
   let encryptedData: string;
   if (groupId != null) {
-    encryptedData = await qortalRequest<string>('ENCRYPT_QORTAL_GROUP_DATA', {
+    encryptedData = await qortalRequest({
+      action: 'ENCRYPT_QORTAL_GROUP_DATA',
       base64: data64,
       groupId,
       isAdmins,
-      refreshCache,
     });
   } else if (publicKeys && publicKeys.length > 0) {
-    encryptedData = await qortalRequest<string>('ENCRYPT_DATA', {
+    encryptedData = await qortalRequest({
+      action: 'ENCRYPT_DATA',
       base64: data64,
       publicKeys,
     });
@@ -144,7 +110,8 @@ export async function publishStreamKeys(params: PublishStreamKeysParams) {
     throw new Error('Provide groupId or publicKeys to encrypt stream keys.');
   }
 
-  return qortalRequest('PUBLISH_QDN_RESOURCE', {
+  return qortalRequest({
+    action: 'PUBLISH_QDN_RESOURCE',
     service: location.service,
     name: location.name,
     identifier: location.identifier,
@@ -152,25 +119,25 @@ export async function publishStreamKeys(params: PublishStreamKeysParams) {
   });
 }
 
-export async function publishStreamableResource(params: PublishStreamResourceParams) {
-  const { location, file, filename, mimeType, key, iv } = params;
-  return qortalRequest('PUBLISH_QDN_RESOURCE', {
+export async function publishStreamableResource(params: PublishEncryptedStreamResourceParams) {
+  const { location, file, filename, iv, key } = params;
+  return qortalRequest({
+    action: 'PUBLISH_QDN_RESOURCE',
     service: location.service,
     name: location.name,
     identifier: location.identifier,
     filename,
     file,
-    mimeType,
     encryption: {
       encryptionType: 'streamed-v1',
-      key,
       iv,
+      key,
     },
   });
 }
 
 export async function fetchStreamKeys(params: FetchStreamKeysParams): Promise<StreamKeys> {
-  const { location, groupId, isAdmins, refreshCache, publicKey } = params;
+  const { location, groupId, isAdmins } = params;
   const url = `/arbitrary/${location.service}/${location.name}/${location.identifier}?encoding=base64&rebuild=true`;
   const res = await fetch(url);
   if (!res.ok) {
@@ -180,16 +147,16 @@ export async function fetchStreamKeys(params: FetchStreamKeysParams): Promise<St
 
   let decryptedBase64: string;
   if (groupId != null) {
-    decryptedBase64 = await qortalRequest<string>('DECRYPT_QORTAL_GROUP_DATA', {
+    decryptedBase64 = await qortalRequest({
+      action: 'DECRYPT_QORTAL_GROUP_DATA',
       base64: encryptedData,
       groupId,
       isAdmins,
-      refreshCache,
     });
   } else {
-    decryptedBase64 = await qortalRequest<string>('DECRYPT_DATA', {
+    decryptedBase64 = await qortalRequest({
+      action: 'DECRYPT_DATA',
       encryptedData,
-      publicKey,
     });
   }
 
@@ -207,12 +174,11 @@ export async function fetchStreamKeys(params: FetchStreamKeysParams): Promise<St
 }
 
 export async function playStream(params: PlayStreamParams): Promise<PlayStreamResult> {
-  return qortalRequest<PlayStreamResult>('PLAY_ENCRYPTED_MEDIA', {
+  return qortalRequest({
+    action: 'PLAY_ENCRYPTED_MEDIA',
     mediaId: params.mediaId,
     key: params.key,
     iv: params.iv,
     location: params.location,
-    totalSize: params.totalSize,
-    mimeType: params.mimeType,
   });
 }

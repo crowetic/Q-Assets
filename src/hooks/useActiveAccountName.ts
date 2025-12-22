@@ -3,10 +3,11 @@ import { useAuth } from 'qapp-core';
 import { useAccountNames } from './useAccountNames';
 
 const LS_KEY = 'qassets:activeName';
+const ACTIVE_NAME_EVENT = 'qassets:active-name-change';
 
-export function useActiveAccountName() {
+export function useActiveAccountName(options?: { autoAuth?: boolean }) {
   const { name: authName } = useAuth();
-  const { entries, primaryName, loading: namesLoading, error, reload } = useAccountNames();
+  const { entries, primaryName, loading: namesLoading, error, reload } = useAccountNames(options);
   const [activeName, setActiveName] = useState<string | null>(null);
 
   // initialize from cache/auth/primary
@@ -45,7 +46,27 @@ export function useActiveAccountName() {
     setActiveName(name);
     if (name) localStorage.setItem(LS_KEY, name);
     else localStorage.removeItem(LS_KEY);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event(ACTIVE_NAME_EVENT));
+    }
   };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const refresh = () => {
+      const cached = localStorage.getItem(LS_KEY);
+      setActiveName(cached || null);
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === LS_KEY) refresh();
+    };
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener(ACTIVE_NAME_EVENT, refresh);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener(ACTIVE_NAME_EVENT, refresh);
+    };
+  }, []);
 
   const availableNames = useMemo(() => entries.map((e) => e.name), [entries]);
 

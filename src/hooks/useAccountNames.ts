@@ -8,7 +8,7 @@ export type AccountName = { name: string; owner: string };
  * Fetch all names owned by the authenticated account.
  * Shared between Data Management views so they stay in sync.
  */
-export function useAccountNames() {
+export function useAccountNames(options?: { autoAuth?: boolean }) {
   const [entries, setEntries] = useState<AccountName[]>([]);
   const [primaryName, setPrimaryName] = useState<string | null>(null);
   const [primaryNameError, setPrimaryNameError] = useState(false);
@@ -18,7 +18,10 @@ export function useAccountNames() {
   const { address: userAddress, authenticateUser } = useAuth();
   const { alert } = useAlert();
 
+  const autoAuth = options?.autoAuth !== false;
+
   useEffect(() => {
+    if (!autoAuth) return;
     (async () => {
       try {
         if (!userAddress) await authenticateUser();
@@ -26,7 +29,7 @@ export function useAccountNames() {
         alert(e?.message || 'Authentication failed');
       }
     })();
-  }, [userAddress, authenticateUser, alert]);
+  }, [userAddress, authenticateUser, alert, autoAuth]);
 
   const load = useCallback(async () => {
     if (!userAddress) return;

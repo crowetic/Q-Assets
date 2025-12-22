@@ -29,6 +29,7 @@ import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   loadAllWikiSections,
+  loadSectionFromGroup,
   loadWikiMenu,
   saveWikiMenu,
   publishWikiSection,
@@ -472,6 +473,12 @@ export default function Information() {
     };
   }, [track]);
 
+  const currentId = useMemo(() => {
+    const hid = normId((hash || '').replace(/^#/, ''));
+    if (hid && menu.some((m) => normId(m.id) === hid)) return hid;
+    return normId(menu[0]?.id) || DEFAULT_SECTIONS[0]?.id || 'about';
+  }, [hash, menu, DEFAULT_SECTIONS]);
+
   // Load sections for current menu (pause while menu dialog is open)
   const [openMenuDlg, setOpenMenuDlg] = useState(false);
   useEffect(() => {
@@ -481,7 +488,33 @@ export default function Information() {
     (async () => {
       try {
         const meta = asMeta(menu.length ? menu : DEFAULT_SECTIONS);
-        const rows = await track(loadAllWikiSections(meta), 'wiki:sections');
+        if (!meta.length) return;
+
+        const prioritizedId = currentId || meta[0]?.id;
+        if (prioritizedId) {
+          const remote = await track(
+            loadSectionFromGroup(normId(prioritizedId)),
+            'wiki:sections:current'
+          );
+          if (!cancel && remote?.html) {
+            setVariants((prev) => ({
+              ...(prev || {}),
+              [prioritizedId]: [
+                {
+                  html: remote.html,
+                  publisher: remote.publisher,
+                  role: remote.publisherRole as 'admin' | 'editor' | undefined,
+                  ts: remote.ts,
+                },
+              ],
+            }));
+          }
+        }
+
+        const restMeta = meta.filter((m) => m.id && m.id !== prioritizedId);
+        if (!restMeta.length) return;
+
+        const rows = await track(loadAllWikiSections(restMeta), 'wiki:sections');
         if (cancel) return;
 
         const grouped: Record<string, RemoteRow[]> = {};
@@ -492,9 +525,15 @@ export default function Information() {
           const ts = Number((r as any).timestamp) || 0;
           const publisher = (r as any).publisher;
           const role = (r as any).publisherRole as 'admin' | 'editor' | undefined;
-          (grouped[id] ||= []).push({ html, publisher, role, ts });
+          grouped[id] = [{ html, publisher, role, ts }];
         }
-        setVariants(grouped);
+        setVariants((prev) => {
+          const next = { ...(prev || {}) };
+          for (const [id, rows] of Object.entries(grouped)) {
+            next[id] = rows;
+          }
+          return next;
+        });
       } catch (e) {
         console.error('Info load sections error:', e);
       }
@@ -503,7 +542,7 @@ export default function Information() {
     return () => {
       cancel = true;
     };
-  }, [menu, DEFAULT_SECTIONS, openMenuDlg, asMeta, track]);
+  }, [menu, DEFAULT_SECTIONS, openMenuDlg, asMeta, track, currentId]);
 
   const wikiLoading = isLoadingPrefix('wiki:');
 
@@ -551,12 +590,6 @@ export default function Information() {
   const goto = (id: string) => navigate(`#${normId(id)}`, { replace: false });
 
   /* ------------------------- Current section resolve --------------------- */
-  const currentId = useMemo(() => {
-    const hid = normId((hash || '').replace(/^#/, ''));
-    if (hid && menu.some((m) => normId(m.id) === hid)) return hid;
-    return normId(menu[0]?.id) || DEFAULT_SECTIONS[0]?.id || 'about';
-  }, [hash, menu, DEFAULT_SECTIONS]);
-
   const currentMenuItem = menu.find((m) => normId(m.id) === currentId);
   const nid = normId(currentMenuItem?.id);
   const currentDefault = nid ? DEFAULT_BY_ID[nid] : undefined;

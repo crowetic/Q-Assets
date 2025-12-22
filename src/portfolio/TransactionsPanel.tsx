@@ -22,6 +22,7 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import MemoryIcon from '@mui/icons-material/Memory';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import { useAssetTx } from './useAssetTx';
+import { useQortTransactions } from './useQortTransactions';
 
 const relativeTimeFormat = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
 const RELATIVE_TIME_UNITS: { unit: Intl.RelativeTimeFormatUnit; seconds: number }[] = [
@@ -69,11 +70,13 @@ export default function TransactionsPanel({
   formatAmount,
   onTxClick,
 }: Props) {
-  const { items, loading, error, hasMore, loadMore, initialized } = useAssetTx(
-    address,
-    assetId,
-    20
-  );
+  const qortTxState = useQortTransactions(address, 50);
+  const assetTxState = useAssetTx(address, assetId, 20);
+  const isQort = assetId === 0;
+  const { items, loading, error, hasMore, loadMore, initialized } = isQort
+    ? qortTxState
+    : assetTxState;
+  const detailsById = isQort ? null : assetTxState.detailsById;
   const [statusFilter, setStatusFilter] = useState<'all' | 'confirmed' | 'unconfirmed'>('all');
 
   // Auto-load first page on open
@@ -88,6 +91,12 @@ export default function TransactionsPanel({
     tx?.reference ||
     tx?.txId ||
     `${tx?.type ?? 'TX'}-${tx?.timestamp ?? 0}-${idx}`;
+  const normalizeAddress = (value?: string | null) => (value || '').trim();
+  const formatOrderSide = (assetIdValue?: number, assetName?: string) => {
+    if (assetName) return assetName;
+    if (Number.isFinite(assetIdValue)) return `#${assetIdValue}`;
+    return 'Unknown';
+  };
 
   const filteredItems = useMemo(() => {
     return items.filter((tx) => {
@@ -166,6 +175,11 @@ export default function TransactionsPanel({
     }
   };
 
+  const panelTitle = isQort
+    ? 'Recent QORT Transactions (account history)'
+    : `Recent ${assetName} Transactions`;
+  const panelHint = isQort ? 'Fetched via SEARCH_TRANSACTIONS for the signed-in account.' : null;
+
   return (
     <Collapse in={open} timeout="auto" unmountOnExit>
       <Box
@@ -179,7 +193,14 @@ export default function TransactionsPanel({
         }}
       >
         <Box display="flex" alignItems="baseline" justifyContent="space-between" mb={1}>
-          <Typography variant="subtitle1">Recent {assetName} Transactions</Typography>
+          <Box>
+            <Typography variant="subtitle1">{panelTitle}</Typography>
+            {panelHint && (
+              <Typography variant="caption" color="text.secondary">
+                {panelHint}
+              </Typography>
+            )}
+          </Box>
           <ToggleButtonGroup
             size="small"
             exclusive
@@ -214,25 +235,103 @@ export default function TransactionsPanel({
             }}
           >
             {filteredItems.map((tx, idx) => {
-              const isOut = (tx?.sender ?? '') === address;
+              const txAny = tx as Record<string, any>;
+              const txId = String(txAny.txId ?? txAny.signature ?? txAny.txSignature ?? '');
+              const detail = !isQort && txId ? detailsById?.[txId] : null;
+              const senderAddress =
+                normalizeAddress(
+                  txAny.sender ??
+                    txAny.senderAddress ??
+                    txAny.from ??
+                    txAny.creatorAddress ??
+                    txAny.creator ??
+                    detail?.sender
+                ) || '';
+              const recipientAddress =
+                normalizeAddress(
+                  txAny.recipient ??
+                    txAny.recipientAddress ??
+                    txAny.to ??
+                    txAny.destination ??
+                    txAny.address ??
+                    detail?.recipient
+                ) || '';
+              const isOut = senderAddress === normalizeAddress(address);
               const sign = isOut ? '-' : '+';
               const color = isOut ? 'text.secondary' : undefined;
               const tsMs = normTsMs(Number(tx?.timestamp ?? 0));
               const when = Number.isFinite(tsMs) && tsMs > 0 ? formatRelativeTime(tsMs) : '';
 
-              const otherParty = isOut ? tx?.recipient : tx?.sender;
+              const otherParty = isOut
+                ? recipientAddress || String(tx?.recipient ?? '')
+                : senderAddress || String(tx?.sender ?? '');
               const otherPartyShort =
                 typeof otherParty === 'string' && otherParty.length > 10
-                  ? `${otherParty.slice(0, 10)}…`
-                  : (otherParty ?? '');
+                  ? `${otherParty.slice(0, 10)}...`
+                  : otherParty;
 
-              const amount = Number(tx?.amount ?? 0);
-              const displayType = String(tx?.type ?? 'TX');
+              let amount = Number(txAny.amount ?? txAny.amountQort ?? txAny.amountAsset ?? 0);
+              if (detail?.type === 'TRANSFER_ASSET') {
+                amount = Number(detail.amountAsset ?? amount);
+              } else if (detail?.type === 'ISSUE_ASSET') {
+                amount = Number(detail.quantity ?? amount);
+              } else if (detail?.type === 'CREATE_ASSET_ORDER' && detail.haveAssetId === assetId) {
+                amount = Number(detail.amountHave ?? amount);
+              }
+              if (!amount && Array.isArray(txAny.payments)) {
+                amount = txAny.payments.reduce(
+                  (sum: number, payment: any) =>
+                    sum + Number(payment?.amount ?? payment?.amountQort ?? 0),
+                  0
+                );
+              }
+              const displayType = String(txAny.type ?? 'TX');
+              const detailAssetId =
+                detail && 'assetId' in detail
+                  ? (detail as { assetId?: number }).assetId
+                  : undefined;
+              const rawAssetId = Number(
+                txAny.assetId ?? txAny.haveAssetId ?? txAny.amountAssetId ?? detailAssetId ?? 0
+              );
+              const showRawAmount = isQort && Number.isFinite(rawAssetId) && rawAssetId !== 0;
               const blockHeight =
-                (tx as any)?.blockHeight ??
-                (Number.isFinite(tx.blockHeight) ? tx.blockHeight : undefined);
+                txAny?.blockHeight ??
+                (Number.isFinite(txAny.blockHeight) ? txAny.blockHeight : undefined);
               const isConfirmed = Number.isFinite(blockHeight) && (blockHeight as number) > 0;
               const statusLabel = isConfirmed ? 'Confirmed' : 'Unconfirmed';
+              const detailParts: string[] = [];
+              if (detail?.type === 'ISSUE_ASSET') {
+                detailParts.push(`Issued ${detail.name || `#${detail.assetId}`}`);
+              } else if (detail?.type === 'TRANSFER_ASSET') {
+                detailParts.push(
+                  `Asset ${detail.assetName || (detail.assetId != null ? `#${detail.assetId}` : 'Transfer')}`
+                );
+              } else if (detail?.type === 'CREATE_ASSET_ORDER') {
+                detailParts.push(
+                  `Order ${formatOrderSide(detail.haveAssetId, detail.haveAssetName)} -> ${formatOrderSide(
+                    detail.wantAssetId,
+                    detail.wantAssetName
+                  )}`
+                );
+                if (detail.pricePair) detailParts.push(detail.pricePair);
+              } else if (detail?.type === 'CANCEL_ASSET_ORDER') {
+                if (detail.orderId) detailParts.push(`Cancel ${detail.orderId.slice(0, 10)}...`);
+              }
+              if (!detailParts.length) {
+                if (txAny.assetId && Number(txAny.assetId) !== 0) {
+                  const assetLabel = txAny.assetName
+                    ? `${txAny.assetName} (#${txAny.assetId})`
+                    : `Asset #${txAny.assetId}`;
+                  detailParts.push(assetLabel);
+                }
+                if (txAny.txGroupId) detailParts.push(`Group ${txAny.txGroupId}`);
+                if (Array.isArray(txAny.payments)) {
+                  detailParts.push(
+                    `${txAny.payments.length} payment${txAny.payments.length === 1 ? '' : 's'}`
+                  );
+                }
+              }
+              const detailLine = detailParts.filter(Boolean).join(' | ');
 
               return (
                 <React.Fragment key={keyOf(tx, idx)}>
@@ -253,11 +352,11 @@ export default function TransactionsPanel({
                   <Box
                     role="button"
                     tabIndex={0}
-                    onClick={() => onTxClick?.(tx)}
+                    onClick={() => onTxClick?.(detail ?? tx)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        onTxClick?.(tx);
+                        onTxClick?.(detail ?? tx);
                       }
                     }}
                     sx={{
@@ -299,7 +398,12 @@ export default function TransactionsPanel({
                       <Tooltip title={String(otherParty ?? '')}>
                         <span style={{ fontFamily: 'monospace' }}>{otherPartyShort}</span>
                       </Tooltip>{' '}
-                      • {when}
+                      {when ? ` - ${when}` : ''}
+                      {detailLine && (
+                        <Box component="span" display="block" sx={{ fontSize: '0.65rem', mt: 0.5 }}>
+                          {detailLine}
+                        </Box>
+                      )}
                     </Typography>
                   </Box>
 
@@ -311,7 +415,7 @@ export default function TransactionsPanel({
                     title={String(amount)}
                   >
                     {sign}
-                    {formatAmount(amount, isDivisible)}
+                    {showRawAmount ? String(amount) : formatAmount(amount, isDivisible)}
                   </Typography>
                 </React.Fragment>
               );

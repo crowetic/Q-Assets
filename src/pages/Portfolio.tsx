@@ -10,24 +10,18 @@ import {
   Typography,
   CircularProgress,
   IconButton,
-  Tooltip,
 } from '@mui/material';
-import { Delete, Launch, Send as SendIcon, SwapHoriz, ReceiptLong } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
+import { Delete } from '@mui/icons-material';
 import { useAuth } from 'qapp-core';
 import { formatAssetAmount } from '../utils/qortalAssetRequests';
 import { fetchAssetAvatar } from '../utils/fetchAssetAvatar';
 import { getPrimaryAccountName } from '../utils/qortalApi';
 import pLimit from 'p-limit';
-import { transferAsset } from '../utils/qortalApi';
-import { resolveRecipientStrict } from '../utils/address';
-import SendAssetDialog from '../portfolio/SendAssetDialog';
-import TransactionsPanel from '../portfolio/TransactionsPanel';
-import TxDetailsDialog from '../portfolio/TxDetailsDialog';
-import { useTheme } from '@mui/material/styles';
-import useMediaQuery from '@mui/material/useMediaQuery';
+import PortfolioWallet from '../portfolio/PortfolioWallet';
 import type { Wallet } from '../portfolio/portfolioTypes';
-import { objectToBase64 } from '../utils/data';
+import { base64ToObject, objectToBase64 } from '../utils/data';
+import { getAllAccountNames } from '../utils/qortalApi';
+import { searchSimpleByIdentifierPrefix, type SimpleHit } from '../utils/searchSimple';
 import { useQdnBatchPublisher } from '../utils/useQdnBatchPublisher';
 // import { addPrivateMagic } from '../constants/qdeckIdentifiers';
 
@@ -72,6 +66,65 @@ const normalizeStoredSet = (raw: any): SavedWalletSet | null => {
   return { id, name, wallets, savedAt };
 };
 
+const normalizeNameForComparison = (value?: string | null) => (value || '').trim().toLowerCase();
+
+const isPrivateServiceName = (service?: string) =>
+  typeof service === 'string' && service.toUpperCase().endsWith('_PRIVATE');
+
+const getHitTimestamp = (hit: SimpleHit) => Number(hit.updated ?? hit.created ?? 0) || 0;
+
+async function fetchAndDecodePublishedSets(
+  hit: SimpleHit
+): Promise<{ sets: SavedWalletSet[]; owner?: string; savedAt?: number } | null> {
+  if (!hit.name || !hit.identifier) return null;
+  const service = hit.service ?? 'DOCUMENT_PRIVATE';
+  const response = await qortalRequest({
+    action: 'FETCH_QDN_RESOURCE',
+    name: hit.name,
+    service,
+    identifier: hit.identifier,
+    encoding: 'base64',
+  });
+  const rawBase64 =
+    typeof response === 'string'
+      ? response
+      : response && typeof response === 'object'
+        ? (response.data64 ?? response.base64 ?? '')
+        : '';
+  if (!rawBase64 || typeof rawBase64 !== 'string') {
+    throw new Error('Failed to load published saved sets.');
+  }
+
+  let clear64 = rawBase64;
+  if (isPrivateServiceName(service)) {
+    const decrypted = await qortalRequest({
+      action: 'DECRYPT_DATA',
+      encryptedData: rawBase64,
+    });
+    if (!decrypted || typeof decrypted !== 'string') {
+      throw new Error('Failed to decrypt published saved sets.');
+    }
+    clear64 = decrypted;
+  }
+
+  const payload = base64ToObject(clear64);
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Published saved sets payload is invalid.');
+  }
+
+  const setsRaw = Array.isArray(payload.sets) ? payload.sets : [];
+  const sets = setsRaw
+    .map((raw: SavedWalletSet) => normalizeStoredSet(raw))
+    .filter((set: SavedWalletSet): set is SavedWalletSet => Boolean(set));
+  if (!sets.length) return null;
+
+  return {
+    sets,
+    owner: typeof payload.owner === 'string' ? payload.owner : undefined,
+    savedAt: Number(payload.savedAt ?? 0) || undefined,
+  };
+}
+
 const QA_PORTFOLIO_QDN_PREFIX = 'qa_portfolio_saved_sets';
 
 const buildSavedSetsIdentifier = (address: string) =>
@@ -107,16 +160,6 @@ export default function PortfolioPage() {
   const [adding, setAdding] = useState(false);
   const [authName, setAuthName] = useState<string | null>(null);
   const trackedSet = useMemo(() => new Set(wallets.map((w) => w.address)), [wallets]);
-  // const [sending, setSending] = useState(false);
-  const [sendDialog, setSendDialog] = useState<{ open: boolean; assetId: number }>({
-    open: false,
-    assetId: 0,
-  });
-  const [openTxAssetId, setOpenTxAssetId] = useState<number | null>(null);
-  const [txDialog, setTxDialog] = useState<{ open: boolean; tx: any | null }>({
-    open: false,
-    tx: null,
-  });
   const [savedSets, setSavedSets] = useState<SavedWalletSet[]>([]);
   const [saveSetName, setSaveSetName] = useState('');
   const [savingSet, setSavingSet] = useState(false);
@@ -124,7 +167,23 @@ export default function PortfolioPage() {
   const [publishingSets, setPublishingSets] = useState(false);
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [remotePublishedSets, setRemotePublishedSets] = useState<SavedWalletSet[]>([]);
+  const [remotePublishedMeta, setRemotePublishedMeta] = useState<{
+    publisher: string;
+    owner?: string;
+    ts: number;
+  } | null>(null);
+  const [remotePublishedLoading, setRemotePublishedLoading] = useState(false);
+  const [remotePublishedError, setRemotePublishedError] = useState<string | null>(null);
   const { publish } = useQdnBatchPublisher();
+
+  const {
+    address: authAddress,
+    publicKey: authPublicKey,
+    name: userName,
+    authenticateUser,
+  } = useAuth();
+
   useEffect(() => {
     try {
       const raw = localStorage.getItem(SAVED_SET_STORAGE_KEY);
@@ -148,6 +207,89 @@ export default function PortfolioPage() {
     }
     setSavedSets(next);
   };
+
+  useEffect(() => {
+    if (!authAddress) {
+      setRemotePublishedSets([]);
+      setRemotePublishedMeta(null);
+      setRemotePublishedError(null);
+      setRemotePublishedLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadPublishedSets = async () => {
+      setRemotePublishedSets([]);
+      setRemotePublishedMeta(null);
+      setRemotePublishedError(null);
+      setRemotePublishedLoading(true);
+
+      try {
+        const normalizedNames = new Set<string>();
+        const addName = (value?: string | null) => {
+          const normalized = normalizeNameForComparison(value);
+          if (normalized) normalizedNames.add(normalized);
+        };
+        addName(userName);
+        addName(authName);
+        const accountNames = await getAllAccountNames(authAddress).catch(() => []);
+        if (cancelled) return;
+        if (Array.isArray(accountNames)) {
+          accountNames.forEach(addName);
+        }
+        if (!normalizedNames.size) {
+          setRemotePublishedError('Unable to determine which name owns published sets.');
+          return;
+        }
+
+        const prefix = buildSavedSetsIdentifier(authAddress);
+        const hits = await searchSimpleByIdentifierPrefix('DOCUMENT_PRIVATE', prefix);
+        if (cancelled) return;
+
+        const filtered = hits.filter((hit) => {
+          const hitName = normalizeNameForComparison(hit.name);
+          return hitName && normalizedNames.has(hitName);
+        });
+
+        if (!filtered.length) {
+          return;
+        }
+
+        filtered.sort((a, b) => getHitTimestamp(b) - getHitTimestamp(a));
+        const bestHit = filtered[0];
+        const decoded = await fetchAndDecodePublishedSets(bestHit);
+        if (!decoded) {
+          setRemotePublishedError('Published saved sets could not be decoded.');
+          return;
+        }
+        if (cancelled) return;
+
+        setRemotePublishedSets(decoded.sets);
+        setRemotePublishedMeta({
+          publisher: bestHit.name ?? '',
+          owner: decoded.owner,
+          ts: decoded.savedAt ?? getHitTimestamp(bestHit),
+        });
+      } catch (err) {
+        if (cancelled) return;
+        console.error('Failed to fetch published saved sets', err);
+        setRemotePublishedError(
+          err instanceof Error ? err.message : 'Failed to fetch published saved sets.'
+        );
+      } finally {
+        if (!cancelled) {
+          setRemotePublishedLoading(false);
+        }
+      }
+    };
+
+    loadPublishedSets();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authAddress, userName, authName]);
 
   const handleSaveCurrentSet = () => {
     setPublishStatus(null);
@@ -246,18 +388,6 @@ export default function PortfolioPage() {
     }
   };
 
-  const navigate = useNavigate();
-
-  const {
-    address: authAddress,
-    publicKey: authPublicKey,
-    name: userName,
-    authenticateUser,
-  } = useAuth();
-
-  const theme = useTheme();
-  const isXs = useMediaQuery(theme.breakpoints.down('sm'));
-
   // Resolve primary name for authenticated account (for header prettiness)
   useEffect(() => {
     let cancelled = false;
@@ -285,7 +415,7 @@ export default function PortfolioPage() {
   // Progressive avatar load for assets present in holdings
   useEffect(() => {
     let cancelled = false;
-    const limit = pLimit(6);
+    const limit = pLimit(4);
     const nameCache = new Map<string, string | null>();
 
     const getIssuer = async (addr: string) => {
@@ -339,22 +469,6 @@ export default function PortfolioPage() {
     refreshHoldings();
   }, [wallets, refreshHoldings]);
 
-  // ===== Wallet (AUTH USER ONLY) rows =====
-  const walletRows = useMemo(() => {
-    if (!authAddress) return [];
-    return Object.values(holdings).flatMap((h) => {
-      const meta = assetsIndex[h.assetId];
-      if (!meta) return [];
-      const amt = h.perWallet[authAddress] || 0;
-      if (amt <= 0) return [];
-      return [{ assetId: h.assetId, name: meta.name, isDivisible: meta.isDivisible, amount: amt }];
-    });
-  }, [holdings, assetsIndex, authAddress]);
-
-  const toggleTx = (aid: number) => {
-    setOpenTxAssetId((cur) => (cur === aid ? null : aid));
-  };
-
   // ===== All tracked (existing) rows =====
   const rowsAll = useMemo(() => {
     return Object.values(holdings)
@@ -384,46 +498,6 @@ export default function PortfolioPage() {
     }>;
   }, [holdings, assetsIndex, trackedSet]);
 
-  function colorFromAssetId(aid: number) {
-    const hue = (aid * 57) % 360; // cheap hash
-    return {
-      accent: `hsl(${hue} 80% 50%)`,
-      accentHover: `hsl(${hue} 64% 24%)`,
-      tint: `hsl(${hue} 80% 20% / 0.15)`,
-      border: `hsl(${hue} 80% 45% / 0.6)`,
-    };
-  }
-
-  function walletRowSx(aid: number) {
-    const c = colorFromAssetId(aid);
-    return {
-      display: 'grid',
-      gridTemplateColumns: {
-        xs: 'auto 1fr', // avatar | name (stack amount/actions under via auto rows)
-        sm: 'auto 1fr auto', // add amount
-        md: 'auto 1fr auto auto', // add actions on wide
-      },
-      gridAutoRows: 'min-content',
-      alignItems: 'center',
-      gap: { xs: 1, sm: 1.25, md: 1.5 },
-      p: { xs: 1, sm: 1.25 },
-      borderRadius: 1.5,
-      borderLeft: `4px solid ${c.border}`,
-      backgroundColor: c.tint,
-      transition: 'background-color .15s ease, transform .12s ease',
-      '&:hover': {
-        backgroundColor: c.accentHover,
-        transform: 'translateY(-1px)',
-      },
-      // Let actions fall to next line on xs
-      '& > :nth-of-type(3)': { gridColumn: { xs: '1 / -1', sm: 'auto' } }, // amount
-      '& > :nth-of-type(4)': {
-        gridColumn: { xs: '1 / -1', md: 'auto' },
-        justifySelf: { xs: 'start', md: 'end' },
-      }, // actions
-    } as const;
-  }
-
   // Add tracked wallet (name or address)
   const onAdd = async () => {
     if (!newAddr) return;
@@ -435,42 +509,6 @@ export default function PortfolioPage() {
     if (ok) setNewAddr('');
   };
 
-  // Actions (Wallet section)
-  const hasAuth = !!authAddress;
-
-  const handleSendConfirm = async (recipient: string, amount: number) => {
-    const meta = assetsIndex[sendDialog.assetId];
-    if (!meta) throw new Error('Unknown asset metadata.');
-
-    const resolvedRecipient = await resolveRecipientStrict(recipient);
-
-    if (sendDialog.assetId === 0) {
-      await qortalRequest({
-        action: 'SEND_COIN',
-        coin: 'QORT',
-        recipient: resolvedRecipient,
-        amount,
-      });
-    } else {
-      if (!authPublicKey) throw new Error('Missing auth public key.');
-      await transferAsset(
-        authAddress as string,
-        authPublicKey,
-        resolvedRecipient,
-        sendDialog.assetId,
-        amount
-      );
-    }
-  };
-
-  const onTrade = (assetId: number) => {
-    if (!hasAuth) return;
-    navigate(`/trade/${assetId}`);
-  };
-
-  const onViewDetails = (assetId: number) => {
-    navigate(`/assets/${assetId}`);
-  };
 
   return (
     <Box
@@ -481,356 +519,14 @@ export default function PortfolioPage() {
         gap: { xs: 2, md: 3 },
       }}
     >
-      {/* ===== TOP: Wallet (authenticated user only) ===== */}
-      <Typography variant="h4" textAlign={'center'} sx={{ mb: { xs: 0.5, md: 1 } }}>
-        Wallet
-      </Typography>
-
-      <Paper sx={{ p: { xs: 1.5, md: 2 }, mb: { xs: 2, md: 3 } }}>
-        <Box
-          display="flex"
-          flexWrap="wrap"
-          alignItems="center"
-          justifyContent="space-between"
-          rowGap={0.5}
-          mb={{ xs: 1, md: 1.5 }}
-        >
-          <Typography variant="subtitle2" color="text.secondary">
-            {authAddress ? 'Account:' : 'Not signed in'}
-          </Typography>
-          {authAddress && (
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              sx={{
-                fontFamily: authName ? undefined : 'monospace',
-                maxWidth: '100%',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {authName ?? authAddress}
-            </Typography>
-          )}
-        </Box>
-
-        {!authAddress ? (
-          <Typography variant="body2" color="text.secondary">
-            Sign in to view balances and use wallet actions.
-          </Typography>
-        ) : walletRows.length === 0 ? (
-          <Typography variant="body2" color="text.secondary">
-            This account holds no assets.
-          </Typography>
-        ) : (
-          <Box display="grid" gap={{ xs: 1, md: 1.25 }}>
-            {walletRows.map((row) => {
-              const c = colorFromAssetId(row.assetId);
-              const isOpen = openTxAssetId === row.assetId; // state: which asset's tx panel is open
-              const isQort = row.assetId === 0;
-              return (
-                <React.Fragment key={row.assetId}>
-                  <Box
-                    key={row.assetId}
-                    sx={{ ...walletRowSx(row.assetId), cursor: 'pointer' }}
-                    role="button"
-                    tabIndex={0}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleTx(row.assetId);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        toggleTx(row.assetId);
-                      }
-                    }}
-                  >
-                    {/* Avatar */}
-                    <Box
-                      sx={{
-                        width: { xs: 40, sm: 44, md: 48 },
-                        height: { xs: 40, sm: 44, md: 48 },
-                        borderRadius: 1.5,
-                        overflow: 'hidden',
-                        bgcolor: 'background.default',
-                        border: '1px solid',
-                        borderColor: 'divider',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                    >
-                      {avatarMap[row.assetId] ? (
-                        <img
-                          src={avatarMap[row.assetId]!}
-                          alt=""
-                          style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                        />
-                      ) : (
-                        <img
-                          src="/src/core-assets/asset-placeholder.svg"
-                          alt=""
-                          style={{ width: '75%', height: '75%', opacity: 0.7 }}
-                        />
-                      )}
-                    </Box>
-
-                    {/* Name */}
-                    <Box sx={{ minWidth: 0 }}>
-                      <Typography
-                        variant="h6"
-                        sx={{
-                          lineHeight: 1.1,
-                          fontSize: { xs: '1rem', sm: '1.1rem', md: '1.25rem' },
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                        }}
-                        title={row.name}
-                      >
-                        {row.name}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Asset ID: {row.assetId}
-                      </Typography>
-                    </Box>
-
-                    {/* Amount */}
-                    <Box sx={{ textAlign: { xs: 'left', md: 'right' }, minWidth: { md: 160 } }}>
-                      <Typography
-                        sx={{
-                          fontFamily: 'monospace',
-                          color: c.accent,
-                          lineHeight: 1.1,
-                          fontSize: { xs: '.95rem', sm: '1.05rem', md: '1.15rem' },
-                        }}
-                        title="Balance"
-                      >
-                        {formatAssetAmount(row.amount, row.isDivisible)}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Balance
-                      </Typography>
-                    </Box>
-
-                    {/* Actions */}
-                    <Box
-                      sx={{
-                        // span the full row on xs (belt & suspenders; matches the nth-of-type rule)
-                        gridColumn: { xs: '1 / -1', md: 'auto' },
-                        display: 'grid',
-                        gap: { xs: 0.75, sm: 1 },
-
-                        // Mobile: single column, full width; Desktop: inline icons
-                        gridTemplateColumns: { xs: '1fr', sm: 'repeat(4, min-content)' },
-                        alignItems: 'stretch',
-                        justifyItems: { xs: 'stretch', sm: 'end' },
-                      }}
-                    >
-                      {isXs ? (
-                        // ===== Mobile: full-width labeled buttons =====
-                        <>
-                          <Button
-                            fullWidth
-                            size="small"
-                            variant="outlined"
-                            startIcon={<ReceiptLong fontSize="small" />}
-                            onClick={() => toggleTx(row.assetId)}
-                            disabled={!hasAuth}
-                            sx={{
-                              justifyContent: 'flex-start',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              minHeight: 36,
-                            }}
-                          >
-                            Transactions
-                          </Button>
-
-                          <Button
-                            fullWidth
-                            size="small"
-                            variant="contained"
-                            startIcon={<SendIcon fontSize="small" />}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSendDialog({ open: true, assetId: row.assetId });
-                            }}
-                            disabled={!hasAuth}
-                            sx={{
-                              justifyContent: 'flex-start',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              minHeight: 36,
-                              bgcolor: c.accent,
-                              '&:hover': { bgcolor: c.accentHover },
-                            }}
-                          >
-                            {`Send ${row.name}`}
-                          </Button>
-
-                          {!isQort && (
-                            <Button
-                              fullWidth
-                              size="small"
-                              variant="contained"
-                              startIcon={<SwapHoriz fontSize="small" />}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onTrade(row.assetId);
-                              }}
-                              disabled={!hasAuth}
-                              sx={{
-                                justifyContent: 'flex-start',
-                                whiteSpace: 'nowrap',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                minHeight: 36,
-                                bgcolor: c.accent,
-                                '&:hover': { bgcolor: c.accentHover },
-                              }}
-                            >
-                              {`Trade ${row.name}`}
-                            </Button>
-                          )}
-
-                          <Button
-                            fullWidth
-                            size="small"
-                            variant="outlined"
-                            startIcon={<Launch fontSize="small" />}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onViewDetails(row.assetId);
-                            }}
-                            sx={{
-                              justifyContent: 'flex-start',
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              minHeight: 36,
-                            }}
-                          >
-                            View details
-                          </Button>
-                        </>
-                      ) : (
-                        // ===== Desktop/Tablet: compact icon buttons inline =====
-                        <>
-                          <Tooltip title="Show transactions">
-                            <span>
-                              <IconButton
-                                size="small"
-                                color="inherit"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleTx(row.assetId);
-                                }}
-                                disabled={!hasAuth}
-                              >
-                                <ReceiptLong fontSize="small" />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-
-                          <Tooltip title={`Send ${row.name}`}>
-                            <span>
-                              <IconButton
-                                size="small"
-                                sx={{ color: c.accent }}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSendDialog({ open: true, assetId: row.assetId });
-                                }}
-                                disabled={!hasAuth}
-                              >
-                                <SendIcon fontSize="small" />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-
-                          {!isQort && (
-                            <Tooltip title={`Trade ${row.name}`}>
-                              <span>
-                                <IconButton
-                                  size="small"
-                                  sx={{ color: c.accent }}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onTrade(row.assetId);
-                                  }}
-                                  disabled={!hasAuth}
-                                >
-                                  <SwapHoriz fontSize="small" />
-                                </IconButton>
-                              </span>
-                            </Tooltip>
-                          )}
-
-                          <Tooltip title="View details">
-                            <span>
-                              <IconButton
-                                size="small"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onViewDetails(row.assetId);
-                                }}
-                              >
-                                <Launch fontSize="small" />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-                        </>
-                      )}
-                    </Box>
-
-                    {/* Dialog (shared for both mobile & desktop branches) */}
-                    <SendAssetDialog
-                      open={sendDialog.open}
-                      onClose={() => setSendDialog({ ...sendDialog, open: false })}
-                      assetId={sendDialog.assetId}
-                      assetName={assetsIndex[sendDialog.assetId]?.name || ''}
-                      isDivisible={assetsIndex[sendDialog.assetId]?.isDivisible ?? true}
-                      isUnspendable={assetsIndex[sendDialog.assetId]?.isUnspendable ?? false}
-                      balance={holdings[sendDialog.assetId]?.perWallet?.[authAddress] ?? 0}
-                      avatarUrl={avatarMap[sendDialog.assetId] ?? null}
-                      accent={sendDialog.assetId ? colorFromAssetId(sendDialog.assetId) : undefined}
-                      onConfirm={handleSendConfirm}
-                    />
-                  </Box>
-                  {/* Inline transactions panel as its own grid item, full width */}
-                  <Box
-                    sx={{
-                      gridColumn: '1 / -1',
-                      // Optional: indent panel to align under the avatar block
-                      ml: { xs: '52px', sm: '60px', md: '68px' }, // ≈ avatar width + gap
-                    }}
-                  >
-                    <TransactionsPanel
-                      open={isOpen}
-                      address={authAddress!}
-                      assetId={row.assetId}
-                      assetName={row.name}
-                      isDivisible={row.isDivisible}
-                      accent={c}
-                      formatAmount={formatAssetAmount}
-                      onTxClick={(tx: any) => setTxDialog({ open: true, tx })}
-                    />
-                  </Box>
-                </React.Fragment>
-              );
-            })}
-            <TxDetailsDialog
-              open={txDialog.open}
-              tx={txDialog.tx}
-              onClose={() => setTxDialog({ open: false, tx: null })}
-            />
-          </Box>
-        )}
-      </Paper>
+      <PortfolioWallet
+        authAddress={authAddress}
+        authPublicKey={authPublicKey}
+        authName={authName}
+        assetsIndex={assetsIndex}
+        holdings={holdings}
+        avatarMap={avatarMap}
+      />
 
       {/* ===== BELOW: Tracked wallets manager (left) + Holdings (right) ===== */}
       <Typography variant="h4" textAlign={'center'} sx={{ mb: { xs: 0.5, md: 1 } }}>
@@ -939,7 +635,7 @@ export default function PortfolioPage() {
                 onChange={(e) => setSaveSetName(e.target.value)}
               />
               <Button variant="contained" onClick={handleSaveCurrentSet} disabled={savingSet}>
-                {savingSet ? 'Saving…' : 'Save Set'}
+                {savingSet ? 'Saving...' : 'Save Set'}
               </Button>
             </Stack>
             {savedSetMsg && (
@@ -954,7 +650,7 @@ export default function PortfolioPage() {
                 onClick={handlePublishSavedSets}
                 disabled={publishingSets || !savedSets.length}
               >
-                {publishingSets ? 'Publishing…' : 'Publish saved sets'}
+                {publishingSets ? 'Publishing...' : 'Publish saved sets'}
               </Button>
               {publishError ? (
                 <Typography variant="caption" color="error.main">
@@ -981,7 +677,7 @@ export default function PortfolioPage() {
                       <Box sx={{ flex: 1, minWidth: 0 }}>
                         <Typography variant="subtitle2">{set.name}</Typography>
                         <Typography variant="caption" color="text.secondary">
-                          {set.wallets.length} wallet{set.wallets.length === 1 ? '' : 's'} · saved{' '}
+                          {set.wallets.length} wallet{set.wallets.length === 1 ? '' : 's'} - saved{' '}
                           {new Date(set.savedAt).toLocaleDateString()}
                         </Typography>
                         <Typography
@@ -1017,6 +713,79 @@ export default function PortfolioPage() {
               </Stack>
             )}
           </Box>
+          <Divider sx={{ my: 2 }} />
+          <Box display="grid" gap={1}>
+            <Typography variant="subtitle2">Published Tracked Sets</Typography>
+            {authAddress ? (
+              <>
+                {remotePublishedLoading ? (
+                  <Typography variant="body2" color="text.secondary">
+                    Searching QDN for any published saved sets...
+                  </Typography>
+                ) : remotePublishedError ? (
+                  <Typography variant="body2" color="error.main">
+                    {remotePublishedError}
+                  </Typography>
+                ) : (
+                  remotePublishedMeta && (
+                    <Typography variant="caption" color="text.secondary">
+                      Published by {remotePublishedMeta.publisher}
+                      {remotePublishedMeta.owner ? ` - owner ${remotePublishedMeta.owner}` : ''}
+                      {remotePublishedMeta.ts
+                        ? ` - ${new Date(remotePublishedMeta.ts).toLocaleString()}`
+                        : ''}
+                    </Typography>
+                  )
+                )}
+                {!remotePublishedLoading && !remotePublishedError && (
+                  <>
+                    {remotePublishedSets.length ? (
+                      <Stack spacing={1}>
+                        {remotePublishedSets.map((set) => (
+                          <Paper key={`published-${set.id}`} variant="outlined" sx={{ p: 1.25 }}>
+                            <Stack direction="row" alignItems="flex-start" spacing={1}>
+                              <Box sx={{ flex: 1, minWidth: 0 }}>
+                                <Typography variant="subtitle2">{set.name}</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {set.wallets.length} wallet{set.wallets.length === 1 ? '' : 's'} -
+                                  saved {new Date(set.savedAt).toLocaleDateString()}
+                                </Typography>
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                  sx={{
+                                    display: 'block',
+                                    mt: 0.5,
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                  }}
+                                  title={set.wallets.map((w) => w.name ?? w.address).join(', ')}
+                                >
+                                  {set.wallets.map((w) => w.name ?? w.address).join(', ')}
+                                </Typography>
+                              </Box>
+                              <Button size="small" onClick={() => handleLoadSavedSet(set)}>
+                                Load
+                              </Button>
+                            </Stack>
+                          </Paper>
+                        ))}
+                      </Stack>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        No published tracked account sets were found.
+                      </Typography>
+                    )}
+                  </>
+                )}
+              </>
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                Sign in to check for published saved sets.
+              </Typography>
+            )}
+          </Box>
         </Paper>
 
         {/* Holdings (All Tracked) */}
@@ -1039,7 +808,7 @@ export default function PortfolioPage() {
             <Box
               display="grid"
               gridTemplateColumns={{
-                xs: 'auto 1fr auto', // 👈 amount column exists on mobile too
+                xs: 'auto 1fr auto', // amount column exists on mobile too
                 sm: 'auto 1fr auto',
               }}
               rowGap={1}
@@ -1092,7 +861,7 @@ export default function PortfolioPage() {
                     {row.name}
                   </Typography>
 
-                  {/* Amount — now visible on xs, right-aligned */}
+                  {/* Amount - now visible on xs, right-aligned */}
                   <Typography
                     variant="body1"
                     sx={{

@@ -12,6 +12,12 @@ import { getCached, setCached, invalidateByPrefix } from './cache';
 import { resolveAssetPublicationById } from './resolveAssetPublication';
 import { getGroupResourceServices } from './groupEncryption';
 
+const normalizeTimestamp = (value?: number | null) => {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return n < 1e12 ? n * 1000 : n;
+};
+
 async function canPublishAnnouncement(publisher: string): Promise<boolean> {
   try {
     return await publisherHasPermission(publisher, 'announcements.publish');
@@ -134,7 +140,7 @@ export async function fetchAnnouncements(
         const text = stripHtml(html);
         const excerpt = text.slice(0, 220) + (text.length > 220 ? '…' : '');
 
-        const created = payload.createdAt || createdHint || Date.now();
+        const created = normalizeTimestamp(payload.createdAt ?? createdHint) ?? Date.now();
         const isExpired = expiryCutoff != null && created < expiryCutoff;
         if (!includeExpired && isExpired) return false;
 
@@ -165,7 +171,7 @@ export async function fetchAnnouncements(
         ensureNotAborted();
         const dedupeKey = keyFor(entry.publisher, entry.identifier);
         if (seen.has(dedupeKey)) continue;
-        const createdHint = entry.approvedAt || entry.createdAt || Date.now();
+        const createdHint = normalizeTimestamp(entry.approvedAt ?? entry.createdAt) ?? Date.now();
         const added = await pushAnnouncement(
           entry.publisher,
           entry.identifier,
@@ -202,7 +208,8 @@ export async function fetchAnnouncements(
       const allowed = await canPublishAnnouncement(hit.name);
       if (!allowed) continue;
       const finalService = (hit.service as Service) || ('DOCUMENT' as Service);
-      const added = await pushAnnouncement(hit.name, hit.identifier, finalService, hit.created);
+      const createdHint = normalizeTimestamp(hit.created) ?? hit.created;
+      const added = await pushAnnouncement(hit.name, hit.identifier, finalService, createdHint);
       if (added) {
         seen.add(dedupeKey);
       }
@@ -310,7 +317,7 @@ export async function fetchLatestAssetNews(
       }
     };
 
-    const limiter = pLimit(1);
+    const limiter = pLimit(4);
     const tasks = dedupedHits.map((hit) =>
       limiter(async () => {
         ensureNotAborted();
@@ -394,7 +401,7 @@ export async function fetchLatestAssetNews(
             assetId != null ? `News for ${assetName}` : 'Asset news'
           );
 
-          const created = createdAt || hit.updated || hit.created || Date.now();
+          const created = normalizeTimestamp(createdAt ?? hit.updated ?? hit.created) ?? Date.now();
           const isExpired = expiryCutoff != null && created < expiryCutoff;
           if (!includeExpired && isExpired) return null;
 

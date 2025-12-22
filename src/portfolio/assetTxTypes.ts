@@ -67,7 +67,7 @@ interface TxBaseDetail {
   feeQort?: number;
   sender?: string;
   recipient?: string;
-  raw?: any; // always include raw for “view JSON” and future-proofing
+  raw?: any; // always include raw for "view JSON" and future-proofing
 }
 
 // QORT coin
@@ -110,6 +110,9 @@ export interface TransferAssetDetail extends TxBaseDetail {
   type: 'TRANSFER_ASSET';
   assetId: number;
   amountAsset: number; // human units
+  assetName?: string;
+  senderPublicKey?: string;
+  recipientPublicKey?: string;
 }
 
 export interface IssueAssetDetail extends TxBaseDetail {
@@ -118,6 +121,10 @@ export interface IssueAssetDetail extends TxBaseDetail {
   name: string;
   quantity: number; // human units
   isDivisible: boolean;
+  description?: string;
+  issuerPublicKey?: string;
+  data?: string;
+  isUnspendable?: boolean;
 }
 
 export interface UpdateAssetDetail extends TxBaseDetail {
@@ -132,12 +139,19 @@ export interface CreateAssetOrderDetail extends TxBaseDetail {
   haveAssetId: number;
   wantAssetId: number;
   amountHave: number; // human units of haveAssetId
-  priceQortPerAsset?: number; // if pair involves QORT you can precompute it
+  price?: number;
+  haveAssetName?: string;
+  wantAssetName?: string;
+  pricePair?: string;
+  amountAssetId?: number;
+  amountAssetName?: string;
+  creatorPublicKey?: string;
 }
 
 export interface CancelAssetOrderDetail extends TxBaseDetail {
   type: 'CANCEL_ASSET_ORDER';
   orderId?: string;
+  creatorPublicKey?: string;
 }
 
 // Groups (you can expand later)
@@ -212,7 +226,7 @@ export interface AssetTx {
 }
 
 export interface FetchAssetTxParams {
-  address: string; // the wallet we’re viewing (auth user)
+  address: string; // the wallet we're viewing (auth user)
   assetId: number; // 0 for QORT, >0 for assets
   limit?: number;
   offset?: number;
@@ -325,6 +339,9 @@ const buildAssetSpecificDetail = (
         ...shared,
         assetId,
         amountAsset,
+        assetName: get(tx, 'assetName') ?? get(tx, 'name'),
+        senderPublicKey: String(get(tx, 'senderPublicKey') ?? get(tx, 'senderKey') ?? ''),
+        recipientPublicKey: String(get(tx, 'recipientPublicKey') ?? get(tx, 'recipientKey') ?? ''),
       } as TransferAssetDetail;
     }
     case 'ISSUE_ASSET': {
@@ -336,6 +353,11 @@ const buildAssetSpecificDetail = (
         name: String(get(tx, 'assetName', 'name') ?? ''),
         quantity: human(nnum(get(tx, 'quantity', 'amount'))),
         isDivisible: Boolean(get(tx, 'isDivisible', 'divisible')),
+        description: String(get(tx, 'description') ?? '') || undefined,
+        issuerPublicKey:
+          String(get(tx, 'issuerPublicKey') ?? get(tx, 'creatorPublicKey') ?? '') || undefined,
+        data: String(get(tx, 'data') ?? '') || undefined,
+        isUnspendable: Boolean(get(tx, 'isUnspendable')),
       } as IssueAssetDetail;
     }
     case 'UPDATE_ASSET': {
@@ -349,15 +371,27 @@ const buildAssetSpecificDetail = (
       } as UpdateAssetDetail;
     }
     case 'CREATE_ASSET_ORDER': {
-      const haveAssetId = Number(get(tx, 'haveAssetId', 'initiatingOrder')?.haveAssetId ?? NaN);
-      const wantAssetId = Number(get(tx, 'wantAssetId', 'initiatingOrder')?.wantAssetId ?? NaN);
-      const amountHave = human(nnum(get(tx, 'amount', 'initiatingOrder')?.amount));
+      const haveAssetId =
+        nnum(get(tx, 'haveAssetId')) ?? nnum(get(tx, 'initiatingOrder')?.haveAssetId) ?? 0;
+      const wantAssetId =
+        nnum(get(tx, 'wantAssetId')) ?? nnum(get(tx, 'initiatingOrder')?.wantAssetId) ?? 0;
+      const amountHave =
+        human(nnum(get(tx, 'amount')) ?? nnum(get(tx, 'initiatingOrder')?.amount));
+      const amountAssetId = nnum(get(tx, 'amountAssetId'));
       return {
         type: 'CREATE_ASSET_ORDER',
         ...shared,
         haveAssetId,
         wantAssetId,
         amountHave,
+        price: human(nnum(get(tx, 'price')) ?? nnum(get(tx, 'initiatingOrder')?.price)),
+        haveAssetName: String(get(tx, 'haveAssetName') ?? get(tx, 'haveName') ?? ''),
+        wantAssetName: String(get(tx, 'wantAssetName') ?? get(tx, 'wantName') ?? ''),
+        pricePair: String(get(tx, 'pricePair') ?? get(tx, 'assetPair') ?? ''),
+        amountAssetId,
+        amountAssetName: String(get(tx, 'amountAssetName') ?? ''),
+        creatorPublicKey:
+          String(get(tx, 'creatorPublicKey') ?? get(tx, 'issuerPublicKey') ?? '') || undefined,
       } as CreateAssetOrderDetail;
     }
     case 'CANCEL_ASSET_ORDER': {
@@ -365,6 +399,8 @@ const buildAssetSpecificDetail = (
         type: 'CANCEL_ASSET_ORDER',
         ...shared,
         orderId: String(get(tx, 'orderId') ?? ''),
+        creatorPublicKey:
+          String(get(tx, 'creatorPublicKey') ?? get(tx, 'issuerPublicKey') ?? '') || undefined,
       } as CancelAssetOrderDetail;
     }
     default:

@@ -14,6 +14,12 @@ import {
   Avatar,
   Alert,
   Pagination,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Select,
+  FormControlLabel,
+  Checkbox,
   useTheme,
   useMediaQuery,
 } from '@mui/material';
@@ -50,6 +56,7 @@ import type { ThreadNode } from '../../utils/thread';
 import { useSearchParams } from 'react-router-dom';
 import EditToggleButton from '../buttons/EditToggleButton';
 import InfoOutlineButton from '../buttons/InfoOutlineButton';
+import { useActiveAccountName } from '../../hooks/useActiveAccountName';
 
 type NodeWithTags = ThreadComment & { roleTags: string[] };
 
@@ -345,7 +352,10 @@ export default function CommentsSection({
   lazyLoad = true,
   rootMargin = '5%',
 }: CommentsSectionProps) {
-  const { name: userName } = useAuth();
+  const { name: authName } = useAuth();
+  const { activeName, availableNames, namesLoading } = useActiveAccountName();
+  const [useGlobalName, setUseGlobalName] = useState(true);
+  const [overrideName, setOverrideName] = useState<string | null>(null);
   const [items, setItems] = useState<NodeWithTags[]>([]);
   const [avatars, setAvatars] = useState<Record<string, string | null>>({});
   // const [publishers, setPublishers] = useState<PublisherWithTags[]>([]);
@@ -370,6 +380,16 @@ export default function CommentsSection({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ThreadCommentWithFlags | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    if (useGlobalName) return;
+    if (overrideName && availableNames.includes(overrideName)) return;
+    const fallback = activeName ?? availableNames[0] ?? null;
+    if (fallback) setOverrideName(fallback);
+  }, [useGlobalName, overrideName, activeName, availableNames]);
+
+  const globalName = activeName ?? authName ?? null;
+  const publisherName = useGlobalName ? globalName : overrideName;
 
   // Structure State
   const prefix = useMemo(() => assetCommentsPrefix(assetId), [assetId]);
@@ -704,7 +724,7 @@ export default function CommentsSection({
   };
 
   const publish = async () => {
-    if (!userName)
+    if (!publisherName)
       return alert('You need a Qortal name to publish.', 'error', { severity: 'error' });
     const safeHtml = prepareHtmlForPublish(html, theme);
     if (!safeHtml.trim()) return alert('Comment is empty.');
@@ -719,7 +739,7 @@ export default function CommentsSection({
       // ⬇️ Resolve role tags via the new method (issuer + groups). Never lowercase the name.
       let myTags: string[] = [];
       try {
-        myTags = await addTagsForName(userName, inputs);
+        myTags = await addTagsForName(publisherName, inputs);
       } catch {
         // tagging is best-effort; we'll auto-correct on next load anyway
         myTags = [];
@@ -732,7 +752,7 @@ export default function CommentsSection({
         depth,
         ts: Date.now(),
         createdTs: Date.now(),
-        author: userName,
+        author: publisherName,
         html: safeHtml,
         roleTags: Array.from(new Set(myTags)), // safe even if empty
       };
@@ -754,7 +774,7 @@ export default function CommentsSection({
 
       await qortalRequest({
         action: 'PUBLISH_QDN_RESOURCE',
-        name: userName,
+        name: publisherName,
         service,
         identifier,
         data64: finalData,
@@ -767,9 +787,9 @@ export default function CommentsSection({
         goToPage(1); // will also update URL params
       }
 
-      if (!avatars[userName]) {
-        const url = await fetchAccountAvatarDataUrl(userName);
-        setAvatars((m) => ({ ...m, [userName]: url }));
+      if (!avatars[publisherName]) {
+        const url = await fetchAccountAvatarDataUrl(publisherName);
+        setAvatars((m) => ({ ...m, [publisherName]: url }));
       }
 
       setOpen(false);
@@ -781,9 +801,9 @@ export default function CommentsSection({
   };
 
   function openEdit(n: ThreadCommentWithFlags) {
-    if (!userName)
+    if (!publisherName)
       return alert('You need a Qortal name to edit.', 'Name Required', { severity: 'warning' });
-    if (n.author !== userName)
+    if (n.author !== publisherName)
       return alert('Only the original publisher can edit this comment.', 'orig publisher only', {
         severity: 'warning',
       });
@@ -795,7 +815,7 @@ export default function CommentsSection({
   }
 
   async function saveEdit() {
-    if (!userName || !editTarget) return;
+    if (!publisherName || !editTarget) return;
     const safeHtml = prepareHtmlForPublish(editHtml, theme);
     if (!safeHtml.trim()) {
       return alert('Comment is empty.', 'Empty Comment', { severity: 'warning' });
@@ -812,7 +832,7 @@ export default function CommentsSection({
         ts: editTarget.ts,
         createdTs: editTarget.ts,
         updatedTs: Date.now(),
-        author: userName,
+        author: publisherName,
         html: safeHtml,
         // roleTags will be re-tagged on next load; keeping minimal here is fine
       };
@@ -834,7 +854,7 @@ export default function CommentsSection({
 
       await qortalRequest({
         action: 'PUBLISH_QDN_RESOURCE',
-        name: userName,
+        name: publisherName,
         service,
         identifier,
         base64: finalData,
@@ -858,9 +878,9 @@ export default function CommentsSection({
   }
 
   function confirmDelete(n: ThreadCommentWithFlags) {
-    if (!userName)
+    if (!publisherName)
       return alert('You need a Qortal name to delete.', 'Name Required', { severity: 'warning' });
-    if (n.author !== userName)
+    if (n.author !== publisherName)
       return alert('Only the original publisher can delete this comment.', 'Only Orig. Publisher', {
         severity: 'warning',
       });
@@ -870,7 +890,7 @@ export default function CommentsSection({
   }
 
   async function performDelete() {
-    if (!userName || !deleteTarget) return;
+    if (!publisherName || !deleteTarget) return;
     try {
       setDeleting(true);
       const identifier = assetCommentId(assetId, deleteTarget.id);
@@ -892,7 +912,7 @@ export default function CommentsSection({
 
       await qortalRequest({
         action: 'PUBLISH_QDN_RESOURCE',
-        name: userName,
+        name: publisherName,
         service,
         identifier,
         base64: finalData,
@@ -1036,7 +1056,9 @@ export default function CommentsSection({
                         onEdit={(n) => openEdit(asWithFlags(n))}
                         onDelete={(n) => confirmDelete(asWithFlags(n))}
                         canEdit={
-                          editMode && userName === (node.author || '') && !asWithFlags(node).deleted
+                          editMode &&
+                          publisherName === (node.author || '') &&
+                          !asWithFlags(node).deleted
                         }
                         isDeleted={Boolean(asWithFlags(node).deleted)}
                         isRootNode
@@ -1135,6 +1157,50 @@ export default function CommentsSection({
           >
             {/* reply preview (context) goes here */}
 
+            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={useGlobalName}
+                    onChange={(e) => setUseGlobalName(e.target.checked)}
+                    disabled={namesLoading}
+                  />
+                }
+                label="Use global active name"
+              />
+              {useGlobalName ? (
+                <Typography variant="body2" color={publisherName ? 'text.secondary' : 'error'}>
+                  {publisherName ? `Publishing as: ${publisherName}` : 'No active name selected'}
+                </Typography>
+              ) : (
+                <FormControl size="small" sx={{ minWidth: 220 }}>
+                  <InputLabel id="comment-publish-name">Publish as</InputLabel>
+                  <Select
+                    labelId="comment-publish-name"
+                    label="Publish as"
+                    value={overrideName || ''}
+                    onChange={(e) => {
+                      const next = e.target.value ? String(e.target.value) : '';
+                      setOverrideName(next || null);
+                    }}
+                    disabled={namesLoading || availableNames.length === 0}
+                    displayEmpty
+                  >
+                    {availableNames.length === 0 && (
+                      <MenuItem value="" disabled>
+                        {namesLoading ? 'Loading names...' : 'No names available'}
+                      </MenuItem>
+                    )}
+                    {availableNames.map((name) => (
+                      <MenuItem key={name} value={name}>
+                        {name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              )}
+            </Box>
+
             {replyTo && (
               <ReplyPreview
                 reply={replyTo}
@@ -1153,7 +1219,12 @@ export default function CommentsSection({
 
           <DialogActions>
             <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <BusyButton variant="contained" onClick={publish} loading={publishing}>
+            <BusyButton
+              variant="contained"
+              onClick={publish}
+              loading={publishing}
+              disabled={!publisherName}
+            >
               {replyTo ? 'Reply' : 'Publish'}
             </BusyButton>
           </DialogActions>
