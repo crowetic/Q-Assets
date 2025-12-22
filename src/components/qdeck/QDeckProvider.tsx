@@ -437,10 +437,12 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const refKey = (name: string, cardId: string) => `${name}::${cardId}`;
       const refsFromIndex = (doc: CardsIndexDoc): Array<{ name: string; cardId: string }> => {
         if (Array.isArray(doc.entries) && doc.entries.length) {
-          return doc.entries.filter((e) => e?.name && e?.cardId).map((e) => ({
-            name: e.name,
-            cardId: e.cardId,
-          }));
+          return doc.entries
+            .filter((e) => e?.name && e?.cardId)
+            .map((e) => ({
+              name: e.name,
+              cardId: e.cardId,
+            }));
         }
         if (Array.isArray(doc.cardIds) && doc.cardIds.length) {
           const issuer = b.createdBy || identity.name;
