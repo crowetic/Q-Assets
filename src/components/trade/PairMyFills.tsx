@@ -27,6 +27,7 @@ export default function PairMyFills(props: {
           hour: '2-digit',
           minute: '2-digit',
         });
+        const totalQort = Number.isFinite(f.qort) ? f.qort : f.qtyAsset * f.price;
 
         return (
           <Box
@@ -38,7 +39,9 @@ export default function PairMyFills(props: {
               fontSize: 14,
               alignItems: 'center',
             }}
-            title={`${dateStr} • @ ${formatPrice(f.price)} QORT / ${assetName}`}
+            title={`${dateStr} • Total ${formatPrice(totalQort)} QORT @ ${formatPrice(
+              f.price
+            )} QORT / ${assetName}`}
           >
             {/* Side + Date */}
             <Box sx={{ display: 'flex', flexDirection: 'column' }}>
@@ -63,7 +66,13 @@ export default function PairMyFills(props: {
 
             {/* QORT + Price */}
             <Box sx={{ textAlign: 'right' }}>
-              {formatQty(f.qort, true)} QORT
+              {formatPrice(totalQort)} QORT
+              <Typography
+                variant="caption"
+                sx={{ display: 'block', color: 'text.secondary', lineHeight: 1.1 }}
+              >
+                Total QORT
+              </Typography>
               <Typography
                 variant="caption"
                 sx={{ display: 'block', color: 'text.secondary', lineHeight: 1.1 }}
