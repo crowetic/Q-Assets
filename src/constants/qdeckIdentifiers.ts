@@ -102,8 +102,10 @@ export const QDeckId = {
     `qdeck__privcimg__${boardId}__${cardId}`,
 
   // Card-based file attachments
-  cardFilePublic: (boardId: string, cardId: string) => `qdeck__pubfile__${boardId}__${cardId}`,
-  cardFilePrivate: (boardId: string, cardId: string) => `qdeck__privfile__${boardId}__${cardId}`,
+  cardFilePublic: (boardId: string, cardId: string, fileId: string) =>
+    `qdeck__pubfile__${boardId}__${fileId}__${cardId}`,
+  cardFilePrivate: (boardId: string, cardId: string, fileId: string) =>
+    `qdeck__privfile__${boardId}__${fileId}__${cardId}`,
 
   // PAYMENT tracking
   boardPaymentsDoc: (boardId: string) => `qdeck__payments__${boardId}`,

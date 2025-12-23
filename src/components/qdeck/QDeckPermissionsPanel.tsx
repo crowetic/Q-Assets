@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Card,
@@ -39,6 +39,10 @@ import {
 import { useAuth } from 'qapp-core';
 import pLimit from 'p-limit';
 import { getAccountGroups, type GroupSummary } from '../../utils/qortalApi';
+import { fetchGroupMembers } from '../../utils/access';
+import { isQAddressFormat } from '../../utils/address';
+
+declare function qortalRequest<T = any>(request: any): Promise<T>;
 
 type EditableBoard = QDeckBoard & {
   isDirty?: boolean;
@@ -74,7 +78,134 @@ export default function QDeckPermissionsPanel() {
   const [myGroups, setMyGroups] = useState<GroupSummary[]>([]);
   const [repairingBoards, setRepairingBoards] = useState<Record<string, boolean>>({});
   const [repairedBoardId, setRepairedBoardId] = useState<string | null>(null);
+  const groupMemberCacheRef = useRef(new Map<number, Set<string>>());
+  const nameAddressCacheRef = useRef(new Map<string, string>());
+  const publicKeyCacheRef = useRef(new Map<string, string>());
   // const isPrivate = (b: QDeckBoard) => b.visibility === 'private';
+
+  const resolveNameToAddress = useCallback(async (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const cached = nameAddressCacheRef.current.get(trimmed);
+    if (cached) return cached;
+    if (isQAddressFormat(trimmed)) {
+      nameAddressCacheRef.current.set(trimmed, trimmed);
+      return trimmed;
+    }
+    try {
+      const data = await qortalRequest({ action: 'GET_NAME_DATA', name: trimmed });
+      const owner = data?.owner;
+      if (typeof owner === 'string' && owner.trim()) {
+        const addr = owner.trim();
+        nameAddressCacheRef.current.set(trimmed, addr);
+        return addr;
+      }
+    } catch {
+      /* empty */
+    }
+    return null;
+  }, []);
+
+  const resolvePublicKey = useCallback(async (address: string) => {
+    const trimmed = address.trim();
+    if (!trimmed) return null;
+    const cached = publicKeyCacheRef.current.get(trimmed);
+    if (cached) return cached;
+    try {
+      const data = await qortalRequest({ action: 'GET_ACCOUNT_DATA', address: trimmed });
+      const publicKey = data?.publicKey;
+      if (typeof publicKey === 'string' && publicKey.trim()) {
+        const pk = publicKey.trim();
+        publicKeyCacheRef.current.set(trimmed, pk);
+        return pk;
+      }
+    } catch {
+      /* empty */
+    }
+    return null;
+  }, []);
+
+  const loadGroupMemberSet = useCallback(async (groupId: number) => {
+    const cached = groupMemberCacheRef.current.get(groupId);
+    if (cached) return cached;
+    const rows = await fetchGroupMembers(false, groupId).catch(() => []);
+    const set = new Set(
+      rows.map((row) => String(row?.address || row?.member || '').trim()).filter(Boolean)
+    );
+    groupMemberCacheRef.current.set(groupId, set);
+    return set;
+  }, []);
+
+  const canAddPrivateMember = useCallback(
+    async (board: EditableBoard, nameOrAddress: string) => {
+      if (board.visibility !== 'private') return { ok: true };
+      const mode =
+        board.privateMeta?.mode ?? (board.privateMeta?.groupId != null ? 'group' : 'direct');
+
+      if (mode === 'group') {
+        const groupId = board.privateMeta?.groupId;
+        if (!groupId) {
+          return { ok: false, reason: 'Private board missing encryption group.' };
+        }
+        const address = await resolveNameToAddress(nameOrAddress);
+        if (!address) {
+          return { ok: false, reason: `Unable to resolve "${nameOrAddress}".` };
+        }
+        const members = await loadGroupMemberSet(groupId);
+        if (!members.has(address)) {
+          return {
+            ok: false,
+            reason: `Only members of group #${groupId} can be added to private boards.`,
+          };
+        }
+        return { ok: true };
+      }
+
+      if (mode === 'direct') {
+        const recipients = board.privateMeta?.recipients;
+        if (!recipients?.length) {
+          return { ok: false, reason: 'Direct encrypted boards can only add existing recipients.' };
+        }
+        const address = await resolveNameToAddress(nameOrAddress);
+        if (!address) {
+          return { ok: false, reason: `Unable to resolve "${nameOrAddress}".` };
+        }
+        const publicKey = await resolvePublicKey(address);
+        if (!publicKey) {
+          return { ok: false, reason: 'Unable to resolve account public key.' };
+        }
+        if (!recipients.includes(publicKey)) {
+          return {
+            ok: false,
+            reason: 'Only existing encryption recipients can be added to private boards.',
+          };
+        }
+      }
+
+      return { ok: true };
+    },
+    [loadGroupMemberSet, resolveNameToAddress, resolvePublicKey]
+  );
+
+  const canAddPrivateGroup = useCallback((board: EditableBoard, groupId: number) => {
+    if (board.visibility !== 'private') return { ok: true };
+    const mode =
+      board.privateMeta?.mode ?? (board.privateMeta?.groupId != null ? 'group' : 'direct');
+    if (mode !== 'group') {
+      return { ok: false, reason: 'Direct encrypted boards do not allow group-based permissions.' };
+    }
+    const privateGroupId = board.privateMeta?.groupId;
+    if (!privateGroupId) {
+      return { ok: false, reason: 'Private board missing encryption group.' };
+    }
+    if (groupId !== privateGroupId) {
+      return {
+        ok: false,
+        reason: `Only group #${privateGroupId} can be added to this private board.`,
+      };
+    }
+    return { ok: true };
+  }, []);
 
   const load = async () => {
     setLoading(true);
@@ -88,16 +219,17 @@ export default function QDeckPermissionsPanel() {
       for (const entry of entries) {
         const issuer = entry.issuerName || idx?.issuerName || myName;
         // load full board doc for accurate perms (skip private for now)
-        const resolved =
-          entry.visibility === 'private'
-            ? null
-            : await resolveBoardForRead(issuer, entry.boardId, entry.visibility);
+        const resolved = await resolveBoardForRead(issuer, entry.boardId, entry.visibility).catch(
+          () => null
+        );
 
         const base = resolved || (entry as any);
         const ownerGroups = base.ownerGroups || [];
         const editorGroups = Array.from(
           new Set([...(base.editorGroups || base.groupsAllowed || []), ...ownerGroups])
         );
+        const privMode =
+          base.privateMeta?.mode ?? (base.privateMeta?.groupId != null ? 'group' : entry.mode);
 
         mapped.push({
           ...(base as any),
@@ -111,9 +243,11 @@ export default function QDeckPermissionsPanel() {
           // show encryption mode for private boards
           encryption:
             entry.visibility === 'private'
-              ? base.privateMeta?.mode === 'direct'
+              ? privMode === 'direct'
                 ? 'Direct'
-                : 'Group'
+                : privMode === 'group'
+                  ? 'Group'
+                  : 'Private'
               : undefined,
         });
       }
@@ -153,16 +287,22 @@ export default function QDeckPermissionsPanel() {
     );
   };
 
-  const addName = (boardId: string, field: 'owners' | 'editors', value?: string) => {
+  const addName = async (board: EditableBoard, field: 'owners' | 'editors', value?: string) => {
     const v = (value || '').trim();
-    if (!v) return;
+    if (!v) return false;
+    const allowed = await canAddPrivateMember(board, v);
+    if (!allowed.ok) {
+      setError(allowed.reason || 'Unable to add member.');
+      return false;
+    }
     setBoards((prev) =>
       prev.map((b) =>
-        b.boardId === boardId
+        b.boardId === board.boardId
           ? { ...b, [field]: Array.from(new Set([...(b[field] || []), v])), isDirty: true }
           : b
       )
     );
+    return true;
   };
 
   const removeName = (boardId: string, field: 'owners' | 'editors', value: string) => {
@@ -175,25 +315,37 @@ export default function QDeckPermissionsPanel() {
     );
   };
 
-  const addOwnerGroup = (boardId: string, groupId: number) => {
+  const addOwnerGroup = async (board: EditableBoard, groupId: number) => {
+    const allowed = canAddPrivateGroup(board, groupId);
+    if (!allowed.ok) {
+      setError(allowed.reason || 'Unable to add group.');
+      return false;
+    }
     setBoards((prev) =>
       prev.map((b) => {
-        if (b.boardId !== boardId) return b;
+        if (b.boardId !== board.boardId) return b;
         const ownerGroups = Array.from(new Set([...(b.ownerGroups || []), groupId]));
         const editorGroups = Array.from(new Set([...(b.editorGroups || []), groupId]));
         return { ...b, ownerGroups, editorGroups, isDirty: true };
       })
     );
+    return true;
   };
 
-  const addEditorGroup = (boardId: string, groupId: number) => {
+  const addEditorGroup = async (board: EditableBoard, groupId: number) => {
+    const allowed = canAddPrivateGroup(board, groupId);
+    if (!allowed.ok) {
+      setError(allowed.reason || 'Unable to add group.');
+      return false;
+    }
     setBoards((prev) =>
       prev.map((b) => {
-        if (b.boardId !== boardId) return b;
+        if (b.boardId !== board.boardId) return b;
         const editorGroups = Array.from(new Set([...(b.editorGroups || []), groupId]));
         return { ...b, editorGroups, isDirty: true };
       })
     );
+    return true;
   };
 
   const dirtyCount = useMemo(() => boards.filter((b) => b.isDirty).length, [boards]);
@@ -264,10 +416,11 @@ export default function QDeckPermissionsPanel() {
       setRepairedBoardId(null);
       setRepairingBoards((prev) => ({ ...prev, [entry.boardId]: true }));
       try {
-        const resolved =
-          entry.visibility === 'private'
-            ? null
-            : await resolveBoardForRead(myName, entry.boardId, entry.visibility ?? 'public');
+        const resolved = await resolveBoardForRead(
+          myName,
+          entry.boardId,
+          entry.visibility ?? 'public'
+        );
         if (!resolved) throw new Error('Failed to load board for repair');
         await repairCardsIndex(resolved.createdBy, resolved);
         await loadCardsForBoard(entry);
@@ -417,21 +570,36 @@ export default function QDeckPermissionsPanel() {
         <Stack spacing={1.5} sx={{ mt: 1 }}>
           {boards.map((b) => {
             const isPriv = b.visibility === 'private';
-            const disableProps = isPriv
-              ? {
-                  sx: { opacity: 0.6, pointerEvents: 'none' as const },
-                }
-              : {};
+            const privateMode =
+              b.privateMeta?.mode ?? (b.privateMeta?.groupId != null ? 'group' : 'direct');
+            const privateGroupId = b.privateMeta?.groupId;
+            const groupSelectDisabled =
+              isPriv && (privateMode !== 'group' || privateGroupId == null);
+            const filteredGroups =
+              isPriv && privateMode === 'group' && privateGroupId != null
+                ? myGroups.filter((g) => g.groupId === privateGroupId)
+                : myGroups;
+            const groupOptions =
+              filteredGroups.length === 0 && isPriv && privateMode === 'group' && privateGroupId
+                ? [{ groupId: privateGroupId, groupName: undefined, isOpen: false }]
+                : filteredGroups;
+            const privateNote = isPriv
+              ? privateMode === 'group'
+                ? `Private board: only members of group #${
+                    privateGroupId ?? 'unknown'
+                  } can be added, and encryption settings stay fixed.`
+                : 'Private board uses direct encryption; only existing recipients can be added.'
+              : null;
             return (
               <Card key={b.boardId} variant="outlined">
-                {isPriv && (
-                  <Box sx={{ p: 1, pb: 0, opacity: 0.7 }}>
+                {privateNote && (
+                  <Box sx={{ p: 1, pb: 0 }}>
                     <Typography variant="caption" color="text.secondary">
-                      Private board permissions are read-only for now. Editing support coming soon.
+                      {privateNote}
                     </Typography>
                   </Box>
                 )}
-                <CardContent {...disableProps}>
+                <CardContent>
                   <Box display="flex" justifyContent="space-between" alignItems="center" gap={1}>
                     <Box>
                       <Typography variant="subtitle1">{b.title}</Typography>
@@ -473,19 +641,18 @@ export default function QDeckPermissionsPanel() {
                             )
                           }
                           fullWidth
-                          disabled={isPriv}
                         />
                         <IconButton
                           color="primary"
-                          onClick={() => {
-                            addName(b.boardId, 'owners', (b as any).newOwner);
+                          onClick={async () => {
+                            const ok = await addName(b, 'owners', (b as any).newOwner);
+                            if (!ok) return;
                             setBoards((prev) =>
                               prev.map((x) =>
                                 x.boardId === b.boardId ? { ...x, newOwner: '' } : x
                               )
                             );
                           }}
-                          disabled={isPriv}
                         >
                           <AddIcon />
                         </IconButton>
@@ -527,19 +694,22 @@ export default function QDeckPermissionsPanel() {
                         <Select
                           label="Add admin group"
                           value=""
-                          onChange={(e) => {
+                          onChange={async (e) => {
                             const val = Number(e.target.value);
                             if (!Number.isFinite(val)) return;
-                            addOwnerGroup(b.boardId, val);
+                            await addOwnerGroup(b, val);
                           }}
-                          disabled={isPriv}
+                          disabled={groupSelectDisabled}
                         >
                           <MenuItem value="">
                             <em>Select group…</em>
                           </MenuItem>
-                          {myGroups.map((g) => (
+                          {groupOptions.map((g) => (
                             <MenuItem key={g.groupId} value={g.groupId}>
-                              {g.groupName} (#{g.groupId}) {g.isOpen ? '(public)' : '(private)'}
+                              {g.groupName
+                                ? `${g.groupName} (#${g.groupId})`
+                                : `Group #${g.groupId}`}{' '}
+                              {g.isOpen ? '(public)' : '(private)'}
                             </MenuItem>
                           ))}
                         </Select>
@@ -573,19 +743,18 @@ export default function QDeckPermissionsPanel() {
                             )
                           }
                           fullWidth
-                          disabled={isPriv}
                         />
                         <IconButton
                           color="primary"
-                          onClick={() => {
-                            addName(b.boardId, 'editors', (b as any).newEditor);
+                          onClick={async () => {
+                            const ok = await addName(b, 'editors', (b as any).newEditor);
+                            if (!ok) return;
                             setBoards((prev) =>
                               prev.map((x) =>
                                 x.boardId === b.boardId ? { ...x, newEditor: '' } : x
                               )
                             );
                           }}
-                          disabled={isPriv}
                         >
                           <AddIcon />
                         </IconButton>
@@ -627,19 +796,22 @@ export default function QDeckPermissionsPanel() {
                         <Select
                           label="Add editor group"
                           value=""
-                          onChange={(e) => {
+                          onChange={async (e) => {
                             const val = Number(e.target.value);
                             if (!Number.isFinite(val)) return;
-                            addEditorGroup(b.boardId, val);
+                            await addEditorGroup(b, val);
                           }}
-                          disabled={isPriv}
+                          disabled={groupSelectDisabled}
                         >
                           <MenuItem value="">
                             <em>Select group…</em>
                           </MenuItem>
-                          {myGroups.map((g) => (
+                          {groupOptions.map((g) => (
                             <MenuItem key={g.groupId} value={g.groupId}>
-                              {g.groupName} (#{g.groupId}) {g.isOpen ? '(public)' : '(private)'}
+                              {g.groupName
+                                ? `${g.groupName} (#${g.groupId})`
+                                : `Group #${g.groupId}`}{' '}
+                              {g.isOpen ? '(public)' : '(private)'}
                             </MenuItem>
                           ))}
                         </Select>
@@ -656,7 +828,6 @@ export default function QDeckPermissionsPanel() {
                         <Switch
                           checked={!!b.featureFlags?.enhancedPerms}
                           onChange={() => updateFlag(b.boardId, 'enhancedPerms')}
-                          disabled={isPriv}
                         />
                       </Box>
                     </Tooltip>
@@ -666,7 +837,6 @@ export default function QDeckPermissionsPanel() {
                         <Switch
                           checked={!!b.featureFlags?.cardVariants}
                           onChange={() => updateFlag(b.boardId, 'cardVariants')}
-                          disabled={isPriv}
                         />
                       </Box>
                     </Tooltip>
@@ -676,7 +846,6 @@ export default function QDeckPermissionsPanel() {
                         <Switch
                           checked={!!b.featureFlags?.cardArchive}
                           onChange={() => updateFlag(b.boardId, 'cardArchive')}
-                          disabled={isPriv}
                         />
                       </Box>
                     </Tooltip>
@@ -684,119 +853,106 @@ export default function QDeckPermissionsPanel() {
 
                   <Divider sx={{ my: 1.5 }} />
 
-                  {isPriv ? (
-                    <Typography variant="caption" color="text.secondary">
-                      Ability to modify private board permissions coming in the future.
+                  <Stack
+                    direction="row"
+                    alignItems="flex-start"
+                    justifyContent="space-between"
+                    mb={1}
+                  >
+                    <Typography variant="body2" fontWeight={700}>
+                      Cards & Variants
                     </Typography>
-                  ) : (
-                    <>
-                      <Stack
-                        direction="row"
-                        alignItems="flex-start"
-                        justifyContent="space-between"
-                        mb={1}
+                    <Stack direction="row" spacing={1}>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => loadCardsForBoard(b)}
+                        disabled={loading}
                       >
-                        <Typography variant="body2" fontWeight={700}>
-                          Cards & Variants
-                        </Typography>
-                        <Stack direction="row" spacing={1}>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            onClick={() => loadCardsForBoard(b)}
-                            disabled={loading}
-                          >
-                            Load cards
-                          </Button>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            onClick={() => repairIndex(b)}
-                            disabled={isPriv || loading || !!repairingBoards[b.boardId]}
-                          >
-                            {repairingBoards[b.boardId] ? 'Repairing…' : 'Repair index'}
-                          </Button>
-                        </Stack>
-                      </Stack>
-                      {!!repairedBoardId && repairedBoardId === b.boardId && (
-                        <Typography variant="caption" color="success.main" sx={{ mb: 1 }}>
-                          Index repaired
-                        </Typography>
-                      )}
+                        Load cards
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => repairIndex(b)}
+                        disabled={loading || !!repairingBoards[b.boardId]}
+                      >
+                        {repairingBoards[b.boardId] ? 'Repairing…' : 'Repair index'}
+                      </Button>
+                    </Stack>
+                  </Stack>
+                  {!!repairedBoardId && repairedBoardId === b.boardId && (
+                    <Typography variant="caption" color="success.main" sx={{ mb: 1 }}>
+                      Index repaired
+                    </Typography>
+                  )}
 
-                      {cardsState[b.boardId] ? (
-                        <List dense>
-                          {Object.entries(cardsState[b.boardId].variants).map(([cardId, vars]) => {
-                            const archived = cardsState[b.boardId].archived.has(cardId);
-                            const preferred = cardsState[b.boardId].preferred?.[cardId];
-                            return (
-                              <ListItem
-                                key={cardId}
-                                alignItems="flex-start"
-                                sx={{ flexDirection: 'column' }}
-                              >
-                                <Box
-                                  width="100%"
-                                  display="flex"
-                                  justifyContent="space-between"
-                                  alignItems="center"
+                  {cardsState[b.boardId] ? (
+                    <List dense>
+                      {Object.entries(cardsState[b.boardId].variants).map(([cardId, vars]) => {
+                        const archived = cardsState[b.boardId].archived.has(cardId);
+                        const preferred = cardsState[b.boardId].preferred?.[cardId];
+                        return (
+                          <ListItem
+                            key={cardId}
+                            alignItems="flex-start"
+                            sx={{ flexDirection: 'column' }}
+                          >
+                            <Box
+                              width="100%"
+                              display="flex"
+                              justifyContent="space-between"
+                              alignItems="center"
+                            >
+                              <ListItemText
+                                primary={
+                                  <Box display="flex" alignItems="center" gap={1}>
+                                    <Typography variant="body2" fontWeight={700}>
+                                      {vars[0]?.title || cardId}
+                                    </Typography>
+                                    {archived && (
+                                      <Chip size="small" label="Archived" color="default" />
+                                    )}
+                                  </Box>
+                                }
+                                secondary={
+                                  <>
+                                    <Typography variant="caption" color="text.secondary">
+                                      {cardId} · {vars.length} variant
+                                      {vars.length !== 1 ? 's' : ''}
+                                    </Typography>
+                                  </>
+                                }
+                              />
+                              <Stack direction="row" spacing={1}>
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  color={archived ? 'primary' : 'inherit'}
+                                  onClick={() => toggleArchive(b.boardId, cardId, !archived)}
                                 >
-                                  <ListItemText
-                                    primary={
-                                      <Box display="flex" alignItems="center" gap={1}>
-                                        <Typography variant="body2" fontWeight={700}>
-                                          {vars[0]?.title || cardId}
-                                        </Typography>
-                                        {archived && (
-                                          <Chip size="small" label="Archived" color="default" />
-                                        )}
-                                      </Box>
-                                    }
-                                    secondary={
-                                      <>
-                                        <Typography variant="caption" color="text.secondary">
-                                          {cardId} · {vars.length} variant
-                                          {vars.length !== 1 ? 's' : ''}
-                                        </Typography>
-                                      </>
-                                    }
-                                  />
-                                  <Stack direction="row" spacing={1}>
-                                    <Button
-                                      size="small"
-                                      variant="outlined"
-                                      color={archived ? 'primary' : 'inherit'}
-                                      onClick={() => toggleArchive(b.boardId, cardId, !archived)}
-                                    >
-                                      {archived ? 'Unarchive' : 'Archive'}
-                                    </Button>
-                                  </Stack>
-                                </Box>
-                                <Stack
-                                  direction="row"
-                                  spacing={0.5}
-                                  flexWrap="wrap"
-                                  sx={{ mt: 0.5 }}
-                                >
-                                  {vars.map((v) => (
-                                    <Chip
-                                      key={`${cardId}:${v.publisher}`}
-                                      label={`${v.publisher}${preferred === v.publisher ? ' • preferred' : ''}`}
-                                      color={preferred === v.publisher ? 'primary' : 'default'}
-                                      onClick={() => setPreferred(b.boardId, cardId, v.publisher)}
-                                    />
-                                  ))}
-                                </Stack>
-                              </ListItem>
-                            );
-                          })}
-                        </List>
-                      ) : (
-                        <Typography variant="caption" color="text.secondary">
-                          Load cards to review variants and archiving.
-                        </Typography>
-                      )}
-                    </>
+                                  {archived ? 'Unarchive' : 'Archive'}
+                                </Button>
+                              </Stack>
+                            </Box>
+                            <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ mt: 0.5 }}>
+                              {vars.map((v) => (
+                                <Chip
+                                  key={`${cardId}:${v.publisher}`}
+                                  label={`${v.publisher}${preferred === v.publisher ? ' • preferred' : ''}`}
+                                  color={preferred === v.publisher ? 'primary' : 'default'}
+                                  onClick={() => setPreferred(b.boardId, cardId, v.publisher)}
+                                />
+                              ))}
+                            </Stack>
+                          </ListItem>
+                        );
+                      })}
+                    </List>
+                  ) : (
+                    <Typography variant="caption" color="text.secondary">
+                      Load cards to review variants and archiving.
+                    </Typography>
                   )}
                 </CardContent>
               </Card>

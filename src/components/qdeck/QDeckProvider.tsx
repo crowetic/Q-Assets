@@ -7,7 +7,13 @@ import React, {
   useCallback,
   useEffect,
 } from 'react';
-import { QDeckBoard, QDeckCard, CardCommentThread, CardsIndexDoc } from '../../types/qdeck';
+import {
+  QDeckBoard,
+  QDeckCard,
+  QDeckCardAttachment,
+  CardCommentThread,
+  CardsIndexDoc,
+} from '../../types/qdeck';
 import {
   saveCommentsDoc,
   appendPaymentLine,
@@ -21,6 +27,7 @@ import {
   discoverComments,
   loadCommentsDoc,
   buildCardPublishPayload,
+  buildCardAttachmentPublishPayload,
   buildCardsIndexPublishPayload,
   buildBoardPublishPayload,
   repairCardsIndex as repairCardsIndexDoc,
@@ -110,6 +117,7 @@ type QDeckCtx = {
   createCard: (partial: Partial<QDeckCard>) => Promise<QDeckCard>;
   moveCard: (cardId: string, toListId: string, newOrder: number) => Promise<void>;
   updateCard: (card: QDeckCard) => Promise<void>;
+  publishCardAttachment: (cardId: string, file: File) => Promise<QDeckCardAttachment>;
   archiveCard: (cardId: string, archived: boolean) => Promise<void>;
   setPreferredVariant: (cardId: string, publisher: string) => Promise<void>;
 
@@ -906,6 +914,16 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (current.statusListId !== card.statusListId) {
           changedFields.push('status');
         }
+        const currentAttachments = current.attachments ?? [];
+        const nextAttachments = card.attachments ?? [];
+        const attachmentMismatch =
+          currentAttachments.length !== nextAttachments.length ||
+          currentAttachments.some(
+            (att, idx) => att.attachmentId !== nextAttachments[idx]?.attachmentId
+          );
+        if (attachmentMismatch) {
+          changedFields.push('attachments');
+        }
         if (current.isDone !== card.isDone) {
           recordChange({
             type: card.isDone ? 'completed' : 'reopened',
@@ -947,6 +965,68 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       queueOrPublishResources,
       normalizeCardCollapse,
       recordChange,
+    ]
+  );
+
+  const publishCardAttachment = useCallback<QDeckCtx['publishCardAttachment']>(
+    async (cardId, file) => {
+      if (!board) throw new Error('No board loaded');
+      if (!auth.name || !identity.name) throw new Error('Authentication Failed');
+      const ok = await canUserEditBoard(board, { name: identity.name, address: identity.address });
+      if (!ok) throw new Error('You are not allowed to edit cards on this board.');
+
+      const current = cards[cardId];
+      if (!current) throw new Error('Card not found');
+
+      const publisher = identity.name || auth.name;
+      const attachmentId = `f${uniqueId6()}`;
+      const { resource, attachment } = await buildCardAttachmentPublishPayload(
+        publisher,
+        board,
+        cardId,
+        file,
+        attachmentId
+      );
+
+      const nextCard: QDeckCard = {
+        ...current,
+        attachments: [...(current.attachments ?? []), attachment],
+        updatedAt: Date.now(),
+        seq: current.seq + 1,
+      };
+
+      recordChange({
+        type: 'updated',
+        cardId,
+        title: current.title,
+        ts: nextCard.updatedAt,
+        details: 'attachments',
+      });
+
+      setCards((prev) => ({ ...prev, [cardId]: normalizeCardCollapse(nextCard) }));
+      const cardPayload = await buildCardPublishPayload(publisher, board, nextCard);
+      const currentIndexDoc =
+        cardsIndexCacheRef.current[board.boardId] ?? createEmptyCardsIndexDoc(board.boardId);
+      const indexDoc = await addCardToIndex(publisher, board, cardId, publisher, {
+        skipPublish: true,
+        currentDoc: currentIndexDoc,
+      });
+      setCachedCardsIndexDoc(board.boardId, indexDoc);
+      const indexPayload = await buildCardsIndexPublishPayload(publisher, board, indexDoc);
+      await queueOrPublishResources(board.boardId, [resource, cardPayload, indexPayload]);
+
+      return attachment;
+    },
+    [
+      board,
+      auth.name,
+      identity.name,
+      identity.address,
+      cards,
+      queueOrPublishResources,
+      recordChange,
+      normalizeCardCollapse,
+      setCachedCardsIndexDoc,
     ]
   );
 
@@ -1305,6 +1385,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       createCard,
       moveCard,
       updateCard,
+      publishCardAttachment,
       archiveCard,
       setPreferredVariant,
       addComment,
@@ -1338,6 +1419,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       createCard,
       moveCard,
       updateCard,
+      publishCardAttachment,
       archiveCard,
       setPreferredVariant,
       addComment,

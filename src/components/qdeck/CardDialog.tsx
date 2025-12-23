@@ -21,6 +21,7 @@ import {
   useMediaQuery,
 } from '@mui/material';
 import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
+import AttachFileIcon from '@mui/icons-material/AttachFile';
 import { useTheme } from '@mui/material';
 import { useQDeck } from '../../components/qdeck/QDeckProvider';
 import { QDeckCard, Priority } from '../../types/qdeck';
@@ -46,7 +47,7 @@ export default function CardDialog(props: Props) {
   const { open, onClose, boardOwnerAddress, qassetsRevenueAddress, treasuryAddress, cardId } =
     props;
   const theme = useTheme();
-  const { board, cards, updateCard } = useQDeck();
+  const { board, cards, updateCard, publishCardAttachment } = useQDeck();
   const card = cards[cardId];
   const { address: userAddress, name: userName } = useAuth();
 
@@ -101,6 +102,7 @@ export default function CardDialog(props: Props) {
   // --- primary image ---
   const [imgDataUrl, setImgDataUrl] = React.useState<string | undefined>(undefined);
   const [uploading, setUploading] = React.useState(false);
+  const [attachmentsUploading, setAttachmentsUploading] = React.useState(false);
 
   // --- payments ---
   const [upvoteAmount, setUpvoteAmount] = React.useState(1);
@@ -160,6 +162,25 @@ export default function CardDialog(props: Props) {
     setTags((prev) => (prev.includes(v) ? prev : [...prev, v]));
   };
   const handleRemoveTag = (tag: string) => setTags((prev) => prev.filter((t) => t !== tag));
+  const formatBytes = (value?: number) => {
+    if (!value) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let current = value;
+    let unit = 0;
+    while (current >= 1024 && unit < units.length - 1) {
+      current /= 1024;
+      unit += 1;
+    }
+    const fixed = current >= 100 ? 0 : current >= 10 ? 1 : 2;
+    return `${current.toFixed(fixed)} ${units[unit]}`;
+  };
+  const formatAttachmentMeta = (attachment: NonNullable<QDeckCard['attachments']>[number]) => {
+    const parts: string[] = [];
+    if (attachment.size) parts.push(formatBytes(attachment.size));
+    if (attachment.uploadedBy) parts.push(attachment.uploadedBy);
+    if (attachment.uploadedAt) parts.push(new Date(attachment.uploadedAt).toLocaleString());
+    return parts.join(' · ');
+  };
 
   // Minimal name verification (keeps UI snappy; invalids can be edited/removed later)
   async function verifyQortalName(name: string): Promise<boolean> {
@@ -200,6 +221,7 @@ export default function CardDialog(props: Props) {
   const removeAssignee = (nm: string) => setAssignees((prev) => prev.filter((x) => x !== nm));
 
   if (!board || !card) return null;
+  const attachments = card.attachments ?? [];
 
   // Save
   const handleSave = async () => {
@@ -252,6 +274,23 @@ export default function CardDialog(props: Props) {
     }
   };
 
+  const onChooseAttachments = async (files: FileList | null) => {
+    if (!files || !canEdit || !card) return;
+    const list = Array.from(files).filter(Boolean);
+    if (!list.length) return;
+    try {
+      setAttachmentsUploading(true);
+      for (const file of list) {
+        await publishCardAttachment(card.cardId, file);
+      }
+    } catch (err) {
+      console.error('Failed to publish attachments', err);
+      alert('Failed to publish attachments. Please try again.');
+    } finally {
+      setAttachmentsUploading(false);
+    }
+  };
+
   const doUpvote = async () => {
     await upvoteCard({
       issuerName: board.createdBy,
@@ -296,10 +335,11 @@ export default function CardDialog(props: Props) {
         dividers
         sx={{
           display: 'grid',
-          gridTemplateColumns: { xs: '1fr', md: '1fr' },
+          gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 1.6fr) minmax(0, 1fr)' },
           alignItems: 'start',
           gap: '1rem',
-          overflow: 'auto',
+          overflowY: 'auto',
+          overflowX: 'hidden',
           minHeight: 0,
         }}
       >
@@ -313,8 +353,8 @@ export default function CardDialog(props: Props) {
             disabled={!canEdit}
           />
 
-          <Stack direction="row" spacing={2}>
-            <FormControl size="small" sx={{ minWidth: 160 }}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ width: '100%' }}>
+            <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 160 }, flex: 1 }}>
               <InputLabel id="priority">Priority</InputLabel>
               <Select
                 labelId="priority"
@@ -331,7 +371,7 @@ export default function CardDialog(props: Props) {
               </Select>
             </FormControl>
 
-            <FormControl size="small" sx={{ minWidth: 200 }}>
+            <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 200 }, flex: 1 }}>
               <InputLabel id="status">List / Status</InputLabel>
               <Select
                 labelId="status"
@@ -378,7 +418,13 @@ export default function CardDialog(props: Props) {
           <Typography variant="subtitle2" sx={{ opacity: 0.8 }}>
             Assignees
           </Typography>
-          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={1}
+            alignItems={{ xs: 'stretch', sm: 'center' }}
+            flexWrap="wrap"
+            sx={{ width: '100%' }}
+          >
             <TextField
               size="small"
               label="Add assignee (Qortal name)"
@@ -397,6 +443,7 @@ export default function CardDialog(props: Props) {
               variant="outlined"
               onClick={addAssignee}
               disabled={!canEdit || !assigneeDraft.trim()}
+              sx={{ alignSelf: { xs: 'flex-start', sm: 'center' } }}
             >
               Add
             </Button>
@@ -423,14 +470,14 @@ export default function CardDialog(props: Props) {
           />
 
           {/* ETA */}
-          <Stack direction="row" spacing={2} alignItems="center">
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center">
             <TextField
               label="Estimated time (minutes)"
               type="number"
               inputProps={{ min: 0 }}
               value={etaMinutes}
               onChange={(e) => setEtaMinutes(e.target.value === '' ? '' : Number(e.target.value))}
-              sx={{ width: 240 }}
+              sx={{ width: { xs: '100%', sm: 240 } }}
               disabled={!canEdit}
             />
           </Stack>
@@ -453,7 +500,7 @@ export default function CardDialog(props: Props) {
         </Stack>
 
         {/* RIGHT: image + contributions */}
-        <Stack spacing={2}>
+        <Stack spacing={2} sx={{ minWidth: 0 }}>
           <Box>
             <Stack
               direction="row"
@@ -504,11 +551,90 @@ export default function CardDialog(props: Props) {
 
           <Divider />
 
+          <Box>
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="space-between"
+              sx={{ mb: 0.5 }}
+            >
+              <Typography variant="subtitle2" sx={{ opacity: 0.8 }}>
+                Attachments
+              </Typography>
+              {canEdit && (
+                <Tooltip title="Add attachment">
+                  <IconButton component="label" size="small" disabled={attachmentsUploading}>
+                    {attachmentsUploading ? (
+                      <CircularProgress size={18} />
+                    ) : (
+                      <AttachFileIcon fontSize="small" />
+                    )}
+                    <input
+                      type="file"
+                      hidden
+                      multiple
+                      onChange={(e) => {
+                        onChooseAttachments(e.target.files);
+                        e.currentTarget.value = '';
+                      }}
+                    />
+                  </IconButton>
+                </Tooltip>
+              )}
+            </Stack>
+            {attachments.length ? (
+              <Stack spacing={1}>
+                {attachments.map((attachment) => {
+                  const meta = formatAttachmentMeta(attachment);
+                  return (
+                    <Box
+                      key={attachment.attachmentId}
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        justifyContent: 'space-between',
+                        gap: 1,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <Stack
+                        direction="row"
+                        spacing={1}
+                        alignItems="center"
+                        sx={{ minWidth: 0, flex: 1 }}
+                      >
+                        <AttachFileIcon fontSize="small" />
+                        <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>
+                          {attachment.fileName || attachment.identifier}
+                        </Typography>
+                      </Stack>
+                      {meta ? (
+                        <Typography variant="caption" color="text.secondary">
+                          {meta}
+                        </Typography>
+                      ) : null}
+                    </Box>
+                  );
+                })}
+              </Stack>
+            ) : (
+              <Typography variant="body2" sx={{ opacity: 0.7 }}>
+                No attachments.
+              </Typography>
+            )}
+          </Box>
+
+          <Divider />
+
           {/* Upvote */}
           <Stack spacing={1}>
             <Typography variant="subtitle2">Paid Upvote</Typography>
-            <Stack direction="row" spacing={1} alignItems="center">
-              <FormControl size="small" sx={{ minWidth: 120 }}>
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={1}
+              alignItems={{ xs: 'stretch', sm: 'center' }}
+            >
+              <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 120 } }}>
                 <InputLabel id="upvoteCur">Currency</InputLabel>
                 <Select
                   labelId="upvoteCur"
@@ -525,7 +651,7 @@ export default function CardDialog(props: Props) {
                 label="Amount"
                 value={upvoteAmount}
                 onChange={(e) => setUpvoteAmount(Number(e.target.value))}
-                sx={{ width: 140 }}
+                sx={{ width: { xs: '100%', sm: 140 } }}
               />
               <Button variant="contained" onClick={doUpvote}>
                 Upvote
@@ -541,8 +667,12 @@ export default function CardDialog(props: Props) {
           {/* Bounty */}
           <Stack spacing={1}>
             <Typography variant="subtitle2">Contribute to Bounty</Typography>
-            <Stack direction="row" spacing={1} alignItems="center">
-              <FormControl size="small" sx={{ minWidth: 120 }}>
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={1}
+              alignItems={{ xs: 'stretch', sm: 'center' }}
+            >
+              <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 120 } }}>
                 <InputLabel id="bountyCur">Currency</InputLabel>
                 <Select
                   labelId="bountyCur"
@@ -559,7 +689,7 @@ export default function CardDialog(props: Props) {
                 label="Amount"
                 value={bountyAmount}
                 onChange={(e) => setBountyAmount(Number(e.target.value))}
-                sx={{ width: 140 }}
+                sx={{ width: { xs: '100%', sm: 140 } }}
               />
               <Button variant="outlined" onClick={doContributeBounty}>
                 Contribute

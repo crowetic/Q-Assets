@@ -10,6 +10,7 @@ import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import ArchiveIcon from '@mui/icons-material/Archive';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import AttachFileIcon from '@mui/icons-material/AttachFile';
 import { fetchAccountAvatarDataUrl } from '../../utils/qdnAvatar';
 import { resolvePrimaryImageDataUrl } from '../../utils/qdeckApi';
 import { priorityMeta, formatMinutes } from './ui';
@@ -51,6 +52,7 @@ export const DraggableCard: FC<DraggableProps> = ({
   const card = cards[cardId];
   const commentThread = comments[cardId];
   const commentCount = commentThread?.comments?.length ?? 0;
+  const attachmentCount = card?.attachments?.length ?? 0;
   const [loadedAssignees, setLoadedAssignees] = useState<string[] | null>(null);
 
   const [minimized, setMinimized] = useState(false);
@@ -319,6 +321,16 @@ export const DraggableCard: FC<DraggableProps> = ({
                   bgcolor: pMeta.bg,
                 }}
               />
+              {attachmentCount > 0 && (
+                <Tooltip title={`${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}`}>
+                  <Chip
+                    size="small"
+                    icon={<AttachFileIcon fontSize="small" />}
+                    label={attachmentCount}
+                    sx={{ height: '1.35rem' }}
+                  />
+                </Tooltip>
+              )}
               {!!card.estimatedCompletionTimeMinutes && (
                 <Tooltip title="Estimated completion time">
                   <Chip

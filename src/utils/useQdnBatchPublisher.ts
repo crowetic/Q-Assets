@@ -152,6 +152,22 @@ const formatBytes = (value: number) => {
 //   }
 // };
 
+const normalizeBase64 = (resource: BatchPublishResource): BatchPublishResource => {
+  if (typeof resource.base64 === 'string') return resource;
+  const legacy = (resource as BatchPublishResource & { data64?: unknown }).data64;
+  if (typeof legacy === 'string') {
+    console.warn('[useQdnBatchPublisher] resource missing base64, using data64', {
+      name: resource.name,
+      service: resource.service,
+      identifier: resource.identifier,
+    });
+    return { ...resource, base64: legacy };
+  }
+  throw new Error(
+    `Missing base64 data for ${resource.identifier} (${resource.service}).`
+  );
+};
+
 const validateResources = (resources: BatchPublishResource[]) => {
   resources.forEach((res) => {
     // ensurePrivateMagicPrefix(res);
@@ -302,10 +318,12 @@ const summarizeResourceForLog = (resource: PublishableResource) => ({
 export async function publishQdnResources(resources: BatchPublishResource[]): Promise<void> {
   if (!resources.length) return;
 
-  validateResources(resources);
+  const normalized = resources.map(normalizeBase64);
+
+  validateResources(normalized);
 
   const publishable: { original: BatchPublishResource; sanitized: PublishableResource }[] =
-    resources.map((res) => ({
+    normalized.map((res) => ({
       original: res,
       sanitized: sanitizeResource(res),
     }));

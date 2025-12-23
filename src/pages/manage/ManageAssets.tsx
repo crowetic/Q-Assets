@@ -28,6 +28,7 @@ import { useAlert } from '../../components/alerts';
 import { enqueueQdnPublishJob } from '../../state/publishQueue';
 import { getAccountGroups, type GroupSummary } from '../../utils/qortalApi';
 import { resolveAssetPublicationById } from '../../utils/resolveAssetPublication';
+import type { BatchPublishResource } from '../../utils/useQdnBatchPublisher';
 
 type ManageAsset = Asset & { issuerAddress: string };
 
@@ -216,7 +217,7 @@ export default function ManageAssets() {
     try {
       setSaving(true);
       const publishInfo = await getAssetIdentifiers(selectedAsset.name, selectedAsset.assetId);
-      const resources: any[] = [];
+      const resources: BatchPublishResource[] = [];
 
       // publication (encrypt if private)
       const pub64 = await objectToBase64(pub);
@@ -228,13 +229,17 @@ export default function ManageAssets() {
           groupId: groupIdNum,
           isAdmins: false,
         });
-        pubData64 = enc;
+        const enc64 = typeof enc === 'string' ? enc : (enc?.data64 ?? enc?.base64);
+        if (!enc64 || typeof enc64 !== 'string') {
+          throw new Error('ENCRYPT_QORTAL_GROUP_DATA failed for publication.');
+        }
+        pubData64 = enc64;
       }
       resources.push({
         name: issuerName,
         service: publishInfo.services.genesisPost,
         identifier: publishInfo.identifiers.genesisPost,
-        data64: pubData64,
+        base64: pubData64,
       });
 
       // privacy hint doc
@@ -251,7 +256,7 @@ export default function ManageAssets() {
           name: issuerName,
           service: 'DOCUMENT',
           identifier: privacyId,
-          data64: await objectToBase64(payload),
+          base64: await objectToBase64(payload),
         });
       }
 
@@ -265,13 +270,17 @@ export default function ManageAssets() {
             groupId: groupIdNum,
             isAdmins: false,
           });
-          avatarData64 = enc;
+          const enc64 = typeof enc === 'string' ? enc : (enc?.data64 ?? enc?.base64);
+          if (!enc64 || typeof enc64 !== 'string') {
+            throw new Error('ENCRYPT_QORTAL_GROUP_DATA failed for avatar.');
+          }
+          avatarData64 = enc64;
         }
         resources.push({
           name: issuerName,
           service: publishInfo.services.avatar,
           identifier: publishInfo.identifiers.avatar,
-          data64: avatarData64,
+          base64: avatarData64,
         });
       }
 

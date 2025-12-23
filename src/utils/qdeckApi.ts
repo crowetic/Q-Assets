@@ -2,6 +2,7 @@ import type { Service } from 'qapp-core';
 import {
   QDeckBoard,
   QDeckCard,
+  QDeckCardAttachment,
   CardCommentThread,
   coerceVisibility,
   coerceService,
@@ -1482,6 +1483,87 @@ export async function resolvePrimaryImageDataUrl(
 
   // Always return a proper data URL (previous code accidentally returned just the MIME)
   return `data:${mime};base64,${base64}`;
+}
+
+export async function buildCardAttachmentPublishPayload(
+  issuerName: string,
+  board: QDeckBoard,
+  cardId: string,
+  file: File,
+  attachmentId: string
+): Promise<{ resource: BatchPublishResource; attachment: QDeckCardAttachment }> {
+  const identifier =
+    board.visibility === 'private'
+      ? QDeckId.cardFilePrivate(board.boardId, cardId, attachmentId)
+      : QDeckId.cardFilePublic(board.boardId, cardId, attachmentId);
+  const isPrivate = board.visibility === 'private';
+  const mode = board.privateMeta?.mode ?? (board.privateMeta?.groupId ? 'group' : 'direct');
+  const service: Service =
+    !isPrivate || mode === 'group' ? 'ATTACHMENT' : ('ATTACHMENT_PRIVATE' as Service);
+
+  let data64 = await fileToBase64(file);
+  data64 = stripDataUrlPrefix(data64);
+
+  let recipients = board.privateMeta?.recipients;
+  if (isPrivate) {
+    if (mode === 'group') {
+      if (!board.privateMeta?.groupId)
+        throw new Error('private board missing groupId for attachment upload');
+    } else if (!recipients?.length) {
+      const issNameData = await qortalRequest({
+        action: 'GET_NAME_DATA',
+        name: issuerName,
+      });
+      const issuerAddress = issNameData?.owner;
+      if (!issuerAddress) throw new Error('Cannot resolve issuer address for direct attachments');
+
+      const { publicKeys } = await collectRecipientPublicKeys({
+        usersAllowed: board.usersAllowed ?? [],
+        includeSelf: true,
+        me: { name: issuerName, address: issuerAddress },
+      });
+      recipients = publicKeys;
+    }
+
+    if (mode === 'direct' && !recipients?.length) {
+      throw new Error('Direct mode attachment upload has no recipients resolved');
+    }
+
+    data64 = await encryptPrivatePayload({
+      payloadBase64: data64,
+      mode,
+      groupId: board.privateMeta?.groupId,
+      isAdmins: board.privateMeta?.isAdmins,
+      recipients,
+      service,
+    });
+  }
+
+  const attachment: QDeckCardAttachment = {
+    attachmentId,
+    identifier,
+    fileName: file.name,
+    size: file.size,
+    mimeType: file.type || undefined,
+    uploadedAt: Date.now(),
+    uploadedBy: issuerName,
+    service,
+    isPrivate,
+  };
+
+  const resource: BatchPublishResource = {
+    name: issuerName,
+    service,
+    identifier,
+    base64: data64,
+    filename: file.name,
+    privateMode: isPrivate ? mode : undefined,
+    groupId: isPrivate ? board.privateMeta?.groupId : undefined,
+    isAdmins: isPrivate ? board.privateMeta?.isAdmins : undefined,
+    recipients: isPrivate && mode === 'direct' ? recipients : undefined,
+  };
+
+  return { resource, attachment };
 }
 
 // tombstone related ("DELETE" deck boards, cards, comments, etc.) --------------------------------------------------<DELETE FUNCTIONS> TOMBSTONE FUNCTIONS

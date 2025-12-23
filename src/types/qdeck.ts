@@ -111,6 +111,18 @@ export interface QDeckList {
   defaultCollapsed?: boolean;
 }
 
+export type QDeckCardAttachment = {
+  attachmentId: string;
+  identifier: string;
+  fileName: string;
+  size?: number;
+  mimeType?: string;
+  uploadedAt: number;
+  uploadedBy?: string;
+  service?: string;
+  isPrivate?: boolean;
+};
+
 export interface QDeckCard {
   _type: 'QDECK_CARD';
   version: QDeckVersion;
@@ -119,6 +131,7 @@ export interface QDeckCard {
   title: string;
   descriptionHtml?: string; // prepared HTML (TipTap output)
   quickDescription?: string;
+  attachments?: QDeckCardAttachment[];
   primaryImageUrl?: string;
   primaryImage?: {
     // NEW: small stable reference
