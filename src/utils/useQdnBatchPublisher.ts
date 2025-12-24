@@ -59,6 +59,7 @@ const KB = 1024;
 const MB = KB * KB;
 const GB = MB * 1024;
 const MAX_TAGS = 5;
+const CHUNK_METADATA_TAG = 'qassets-chunk';
 
 // QDN service limits (bytes). Private variants fall back to half of their public counterpart.
 const BASE_SERVICE_LIMITS: Partial<Record<Service, number>> = {
@@ -163,14 +164,21 @@ const normalizeBase64 = (resource: BatchPublishResource): BatchPublishResource =
     });
     return { ...resource, base64: legacy };
   }
-  throw new Error(
-    `Missing base64 data for ${resource.identifier} (${resource.service}).`
-  );
+  throw new Error(`Missing base64 data for ${resource.identifier} (${resource.service}).`);
+};
+
+const isChunkedPublishResource = (resource: BatchPublishResource) => {
+  const meta = (resource.metadata || {}) as Record<string, any>;
+  if (meta.qassetsChunk?.chunked) return true;
+  if (meta.qassetsFs?.chunked) return true;
+  if (Array.isArray(resource.tags) && resource.tags.includes(CHUNK_METADATA_TAG)) return true;
+  return false;
 };
 
 const validateResources = (resources: BatchPublishResource[]) => {
   resources.forEach((res) => {
     // ensurePrivateMagicPrefix(res);
+    if (isChunkedPublishResource(res)) return;
     const limit = deriveLimit(res.service);
     const size = estimateBase64Bytes(res.base64);
     if (size > limit) {

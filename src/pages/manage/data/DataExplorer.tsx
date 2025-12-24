@@ -177,7 +177,7 @@ const CHUNK_METADATA_TAG = 'qassets-chunk';
 const MANIFEST_SERVICE = ensurePrivateService('DOCUMENT_PRIVATE');
 
 const getChunkIdentifiersForResource = (resource: QdnResource): string[] => {
-  const chunkMeta = (resource.metadata?.qassetsFs || {}) as Record<string, any>;
+  const chunkMeta = (getResourceMetadata(resource)?.qassetsFs || {}) as Record<string, any>;
   if (!chunkMeta?.chunked) return [];
   const chunkCount = Number(chunkMeta.chunkCount);
   if (!Number.isFinite(chunkCount) || chunkCount <= 0) return [];
@@ -321,6 +321,31 @@ const getMetadataTags = (metadata: Record<string, any> | undefined) => {
   return Array.isArray(tags) ? tags : [];
 };
 
+const extractEmbeddedMetadata = (description?: string) => {
+  if (!description) return null;
+  const segments = description.split(/\n\s*\n/);
+  for (const segment of segments) {
+    const trimmed = segment.trim();
+    if (!trimmed.startsWith('Metadata:')) continue;
+    const jsonText = trimmed.slice('Metadata:'.length).trim();
+    if (!jsonText) return null;
+    try {
+      const parsed = JSON.parse(jsonText);
+      if (parsed && typeof parsed === 'object') return parsed as Record<string, any>;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+
+const getResourceMetadata = (resource: QdnResource) => {
+  const metadata = (resource.metadata || {}) as Record<string, any>;
+  const embedded = extractEmbeddedMetadata(metadata.description);
+  if (!embedded) return metadata;
+  return { ...embedded, ...metadata };
+};
+
 const CHUNK_IDENTIFIER_PATTERN = /__chunk__\d{4}$/i;
 
 const normalizeChunkTitle = (value?: string | null) => {
@@ -329,7 +354,7 @@ const normalizeChunkTitle = (value?: string | null) => {
 };
 
 const isChunkResource = (resource: QdnResource) => {
-  const metadata = resource.metadata as Record<string, any> | undefined;
+  const metadata = getResourceMetadata(resource);
   const tags = getMetadataTags(metadata);
   if (tags.includes(CHUNK_METADATA_TAG)) return true;
   if ((metadata as any)?.qassetsChunk?.chunked) return true;
@@ -338,7 +363,7 @@ const isChunkResource = (resource: QdnResource) => {
 };
 
 const getStructuredInfo = (resource: QdnResource) => {
-  const metadata = resource.metadata as Record<string, any> | undefined;
+  const metadata = getResourceMetadata(resource);
   const decoded = decodePrivateStructuredMetadata(metadata?.description);
   const fileName =
     decoded?.fileName ||
@@ -356,7 +381,7 @@ const getStructuredInfo = (resource: QdnResource) => {
 };
 
 const getChunkParentIdentifier = (resource: QdnResource): string | null => {
-  const metadata = resource.metadata as Record<string, any> | undefined;
+  const metadata = getResourceMetadata(resource);
   const chunkMeta = (metadata as any)?.qassetsChunk;
   if (chunkMeta?.parentIdentifier) return String(chunkMeta.parentIdentifier);
   const tags = getMetadataTags(metadata);
@@ -367,6 +392,17 @@ const getChunkParentIdentifier = (resource: QdnResource): string | null => {
     }
   }
   return null;
+};
+
+const getChunkIndex = (resource: QdnResource): number | null => {
+  const metadata = getResourceMetadata(resource);
+  const chunkMeta = (metadata as any)?.qassetsChunk;
+  if (Number.isFinite(chunkMeta?.index)) return Number(chunkMeta.index);
+  const identifier = resource.identifier || '';
+  const match = identifier.match(/__chunk__(\d{4})$/i);
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : null;
 };
 
 const resolveChunkParentResource = (
@@ -739,14 +775,12 @@ async function decryptPrivateBase64(
 
   // Always try direct decrypt first (covers NODE-inserted metadata-less items)
   try {
-    if (mode != 'group' || !mode) {
-      console.log('no group mode detected, or no mode found, attempting direct decrypt');
-      const direct = await qortalRequest({
-        action: 'DECRYPT_DATA',
-        encryptedData: encryptedPayload,
-      });
-      if (direct) return direct;
-    }
+    console.log('attempting direct decrypt');
+    const direct = await qortalRequest({
+      action: 'DECRYPT_DATA',
+      encryptedData: encryptedPayload,
+    });
+    if (direct) return direct;
   } catch {
     // ignore; fall through
   }
@@ -1421,7 +1455,7 @@ export default function DataExplorer() {
         skipCache?: boolean;
       }
     ) => {
-      const chunkedMeta = Boolean((resource.metadata?.qassetsFs as any)?.chunked);
+      const chunkedMeta = Boolean((getResourceMetadata(resource)?.qassetsFs as any)?.chunked);
       if (!options?.skipCache && loadedContent && loadedContent.key === resource.identifier) {
         const cachedEntry = hydrateChunkedEntry(loadedContent);
         if (!chunkedMeta || cachedEntry.chunkedManifest) {
@@ -1452,7 +1486,7 @@ export default function DataExplorer() {
       if (chunkManifest) {
         entry.chunkedManifest = chunkManifest;
         entry.mime = chunkManifest.mimeType || guessMimeTypeFromFilename(chunkManifest.fileName);
-      } else if ((resource.metadata?.qassetsFs as any)?.chunked) {
+      } else if ((getResourceMetadata(resource)?.qassetsFs as any)?.chunked) {
         entry.mime = inferredMime;
       }
       setLoadedContent(entry);
@@ -2044,6 +2078,66 @@ export default function DataExplorer() {
     return map;
   }, [combinedResources]);
 
+  const chunkedParentInfo = useMemo(() => {
+    const parentIds = new Set<string>();
+    const chunkIndexMap = new Map<string, Set<number>>();
+    combinedResources.forEach((resource) => {
+      if (!isChunkResource(resource)) return;
+      const parentId = getChunkParentIdentifier(resource);
+      if (!parentId) return;
+      parentIds.add(parentId);
+      const chunkIndex = getChunkIndex(resource);
+      if (chunkIndex == null) return;
+      const set = chunkIndexMap.get(parentId) || new Set<number>();
+      set.add(chunkIndex);
+      chunkIndexMap.set(parentId, set);
+    });
+    const map = new Map<
+      string,
+      { parent: QdnResource; chunkCount: number; chunkIds: string[]; complete: boolean }
+    >();
+    parentIds.forEach((parentId) => {
+      const parent = combinedResourceMap.get(parentId);
+      if (!parent) return;
+      const chunkMeta = (getResourceMetadata(parent)?.qassetsFs || {}) as Record<string, any>;
+      const declaredCount = Number(chunkMeta.chunkCount);
+      const hasDeclaredCount = Number.isFinite(declaredCount) && declaredCount > 0;
+      const indices = Array.from(chunkIndexMap.get(parentId) || []).sort((a, b) => a - b);
+      const maxIndex = indices.length ? indices[indices.length - 1] : -1;
+      const derivedCount = hasDeclaredCount ? declaredCount : maxIndex + 1;
+      if (!Number.isFinite(derivedCount) || derivedCount <= 0) return;
+      const chunkIds = Array.from({ length: derivedCount }, (_item, index) =>
+        buildChunkIdentifier(parentId, index).slice(0, MAX_FILE_IDENTIFIER_LENGTH)
+      );
+      const complete = hasDeclaredCount
+        ? chunkIds.every((id) => combinedResourceMap.has(id))
+        : indices.length === derivedCount && indices.every((value, index) => value === index);
+      map.set(parentId, { parent, chunkCount: derivedCount, chunkIds, complete });
+    });
+    return map;
+  }, [combinedResources, combinedResourceMap]);
+
+  const chunkedStructuredSources = useMemo(() => {
+    const map = new Map<string, StructuredEntry>();
+    combinedResources.forEach((resource) => {
+      if (!isChunkResource(resource)) return;
+      const parentId = getChunkParentIdentifier(resource);
+      if (!parentId) return;
+      const info = inferStructuredMeta(resource);
+      if (!info?.fileName) return;
+      const nextEntry: StructuredEntry = {
+        resource,
+        folderSegments: info.folderSegments,
+        fileName: normalizeChunkTitle(info.fileName) || info.fileName,
+        isPrivate: resourceIsPrivate(resource),
+      };
+      if (!map.has(parentId)) {
+        map.set(parentId, nextEntry);
+      }
+    });
+    return map;
+  }, [combinedResources]);
+
   const assembleChunkedBlob = useCallback(
     async (
       manifest: ChunkedFileManifest,
@@ -2087,8 +2181,14 @@ export default function DataExplorer() {
     () =>
       combinedResources
         .map((res) => inferStructuredMeta(res))
-        .filter((entry): entry is StructuredEntry => Boolean(entry)),
-    [combinedResources]
+        .filter((entry): entry is StructuredEntry => Boolean(entry))
+        .filter((entry) => {
+          if (!isChunkResource(entry.resource)) return true;
+          const parentId = getChunkParentIdentifier(entry.resource);
+          if (!parentId) return true;
+          return !chunkedParentInfo.get(parentId)?.complete;
+        }),
+    [combinedResources, chunkedParentInfo]
   );
 
   const manifestStructuredEntries = useMemo(() => {
@@ -2108,17 +2208,39 @@ export default function DataExplorer() {
           isPrivate: resourceIsPrivate(resource),
         } as StructuredEntry;
       })
-      .filter((entry): entry is StructuredEntry => Boolean(entry));
-  }, [manifestDoc, combinedResourceMap]);
+      .filter((entry): entry is StructuredEntry => Boolean(entry))
+      .filter((entry) => {
+        if (!isChunkResource(entry.resource)) return true;
+        const parentId = getChunkParentIdentifier(entry.resource);
+        if (!parentId) return true;
+        return !chunkedParentInfo.get(parentId)?.complete;
+      });
+  }, [manifestDoc, combinedResourceMap, chunkedParentInfo]);
 
   const baseStructuredEntries = useMemo(() => {
     const map = new Map<string, StructuredEntry>();
     resourceStructuredEntries.forEach((entry) => map.set(entry.resource.identifier, entry));
     manifestStructuredEntries.forEach((entry) => map.set(entry.resource.identifier, entry));
+    chunkedParentInfo.forEach((info, parentId) => {
+      if (!info.complete || map.has(parentId)) return;
+      const source = chunkedStructuredSources.get(parentId);
+      if (!source?.fileName) return;
+      map.set(parentId, {
+        resource: info.parent,
+        folderSegments: source.folderSegments,
+        fileName: normalizeChunkTitle(source.fileName) || source.fileName,
+        isPrivate: resourceIsPrivate(info.parent),
+      });
+    });
     return Array.from(map.values()).sort((a, b) =>
       a.fileName.localeCompare(b.fileName, undefined, { sensitivity: 'base' })
     );
-  }, [resourceStructuredEntries, manifestStructuredEntries]);
+  }, [
+    resourceStructuredEntries,
+    manifestStructuredEntries,
+    chunkedParentInfo,
+    chunkedStructuredSources,
+  ]);
 
   const allStructuredEntries = useMemo(() => {
     if (!Object.keys(pendingMoves).length) return baseStructuredEntries;
@@ -2697,6 +2819,9 @@ export default function DataExplorer() {
   const detailTags = selectedResource ? getDisplayTags(selectedResource) : [];
   const selectedResourceFileType = selectedResource
     ? detectedTypes[selectedResource.identifier] || selectedResource.service || '—'
+    : null;
+  const selectedChunkedInfo = selectedResource
+    ? chunkedParentInfo.get(selectedResource.identifier) || null
     : null;
 
   const ensureFolderPathAllowed = useCallback(
@@ -3554,10 +3679,14 @@ export default function DataExplorer() {
   };
 
   const handlePreviewResource = async (resourceArg?: QdnResource) => {
-    const target = resourceArg || selectedResource;
-    if (!target) return;
-    if (resourceArg && resourceArg.identifier !== selectedResourceId) {
-      setSelectedResourceId(resourceArg.identifier);
+    const initialTarget = resourceArg || selectedResource;
+    if (!initialTarget) return;
+    const resolvedParent = isChunkResource(initialTarget)
+      ? resolveChunkParentResource(initialTarget, combinedResourceMap).parent
+      : null;
+    const target = resolvedParent || initialTarget;
+    if (target.identifier !== selectedResourceId) {
+      setSelectedResourceId(target.identifier);
     }
     cleanupChunkedVideoPreview();
     const initialSteps = clonePreviewSteps();
@@ -5884,6 +6013,11 @@ export default function DataExplorer() {
                       const icon = getIconForMime(mime);
                       const displayTags = getDisplayTags(resource);
                       const createdAt = getResourceCreatedAt(resource);
+                      const chunkInfo = chunkedParentInfo.get(resource.identifier);
+                      const chunkLabel =
+                        chunkInfo && chunkInfo.complete
+                          ? `${chunkInfo.chunkCount} chunk${chunkInfo.chunkCount === 1 ? '' : 's'}`
+                          : null;
                       return (
                         <Paper
                           key={resource.identifier}
@@ -5948,6 +6082,9 @@ export default function DataExplorer() {
                                   color="secondary"
                                   variant="outlined"
                                 />
+                              )}
+                              {chunkLabel && (
+                                <Chip size="small" label={chunkLabel} variant="outlined" />
                               )}
                               {isNewResource(resource) && (
                                 <Chip size="small" label="New" color="info" variant="outlined" />
@@ -6031,6 +6168,11 @@ export default function DataExplorer() {
                   <Typography variant="body2" color="text.secondary">
                     Size: {formatBytes(selectedResource.size)}
                   </Typography>
+                  {selectedChunkedInfo?.complete && (
+                    <Typography variant="body2" color="text.secondary">
+                      Chunks: {selectedChunkedInfo.chunkCount}
+                    </Typography>
+                  )}
                   <Typography variant="body2" color="text.secondary">
                     Created: {formatDate(getResourceCreatedAt(selectedResource))}
                   </Typography>
