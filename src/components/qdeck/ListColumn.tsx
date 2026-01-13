@@ -1,9 +1,10 @@
 // ListColumn.tsx
 import { useDroppable } from '@dnd-kit/core';
 import { Box } from '@mui/material';
+import { memo } from 'react';
 import { DraggableCard } from './DraggableCard';
 
-export function ListColumn({
+export const ListColumn = memo(function ListColumn({
   list,
   cardIds,
   onCardClick,
@@ -53,4 +54,6 @@ export function ListColumn({
       ))}
     </Box>
   );
-}
+});
+
+ListColumn.displayName = 'ListColumn';

@@ -1,4 +1,4 @@
-import { QDeckBoard, QDeckList } from '../types/qdeck';
+import { QDeckBoard, QDeckList, QDeckProject } from '../types/qdeck';
 import type { QDeckVisibility } from '../types/qdeck';
 import { uniqueId6 } from './ids';
 
@@ -41,7 +41,8 @@ export async function createBoard(args: CreateBoardInput): Promise<QDeckBoard> {
   const isPrivate = visibility === 'private';
   const boardId = uniqueId6() + uniqueId6();
 
-  if (isPrivate && args.groupId == null) {
+  const isDirect = isPrivate && args.mode === 'direct';
+  if (isPrivate && !isDirect && args.groupId == null) {
     throw new Error('Private boards require groupId');
   }
 
@@ -73,4 +74,61 @@ export async function createBoard(args: CreateBoardInput): Promise<QDeckBoard> {
   };
 
   return board;
+}
+
+type CreateProjectInput = {
+  title: string;
+  description?: string;
+  createdBy: string;
+  createdByAddress: string;
+  groupsAllowed: number[];
+  usersAllowed?: string[];
+  visibility?: QDeckVisibility;
+  groupId?: number;
+  isAdmins?: boolean;
+  adminOverride?: boolean;
+  mode?: 'direct' | 'group';
+  recipients?: string[];
+};
+
+export async function createProject(args: CreateProjectInput): Promise<QDeckProject> {
+  const visibility = args.visibility ?? 'public';
+  const isPrivate = visibility === 'private';
+  const projectId = uniqueId6() + uniqueId6();
+
+  const isDirect = isPrivate && args.mode === 'direct';
+  if (isPrivate && !isDirect && args.groupId == null) {
+    throw new Error('Private projects require groupId');
+  }
+
+  const now = Date.now();
+  const project: QDeckProject = {
+    _type: 'QDECK_PROJECT',
+    version: 1,
+    projectId,
+    title: args.title,
+    description: args.description?.trim() || undefined,
+    createdBy: args.createdBy,
+    creatorAddress: args.createdByAddress,
+    createdAt: now,
+    updatedAt: now,
+    groupsAllowed: args.groupsAllowed ?? [],
+    usersAllowed: args.usersAllowed,
+    adminOverride: !!args.adminOverride,
+    boards: [],
+    assetIds: [],
+    seq: 1,
+    visibility,
+    service: isPrivate ? 'DOCUMENT_PRIVATE' : 'DOCUMENT',
+    privateMeta: isPrivate
+      ? {
+          groupId: args.groupId!,
+          isAdmins: args.isAdmins,
+          mode: args.mode,
+          recipients: args.recipients,
+        }
+      : undefined,
+  };
+
+  return project;
 }

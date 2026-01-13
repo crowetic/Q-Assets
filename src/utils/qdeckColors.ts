@@ -88,6 +88,53 @@ export function pastelBgFromId(id: string, mode: 'light' | 'dark'): string {
   }
 }
 
+function hslToHex(h: number, s: number, l: number): string {
+  const sat = s / 100;
+  const light = l / 100;
+  const c = (1 - Math.abs(2 * light - 1)) * sat;
+  const hPrime = ((h % 360) + 360) % 360 / 60;
+  const x = c * (1 - Math.abs((hPrime % 2) - 1));
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (hPrime >= 0 && hPrime < 1) {
+    r = c;
+    g = x;
+  } else if (hPrime >= 1 && hPrime < 2) {
+    r = x;
+    g = c;
+  } else if (hPrime >= 2 && hPrime < 3) {
+    g = c;
+    b = x;
+  } else if (hPrime >= 3 && hPrime < 4) {
+    g = x;
+    b = c;
+  } else if (hPrime >= 4 && hPrime < 5) {
+    r = x;
+    b = c;
+  } else {
+    r = c;
+    b = x;
+  }
+  const m = light - c / 2;
+  const toHex = (v: number) => {
+    const clamped = Math.max(0, Math.min(255, Math.round((v + m) * 255)));
+    return clamped.toString(16).padStart(2, '0');
+  };
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+export function pastelHexFromId(id: string): string {
+  const k = (id ?? '').trim().toLowerCase();
+  const h32 = hash32(k);
+  const frac = h32 / 0xffffffff;
+  const hue = hueFromFrac(frac);
+  const wiggle = ((h32 >>> 8) & 0xff) / 255;
+  const s = 28 + wiggle * 10;
+  const l = 90 + wiggle * 4;
+  return hslToHex(hue, s, l);
+}
+
 // Optional: slightly stronger border/hover derived from the same id
 export function pastelBorderFromId(id: string, mode: 'light' | 'dark'): string {
   const bg = pastelBgFromId(id, mode);

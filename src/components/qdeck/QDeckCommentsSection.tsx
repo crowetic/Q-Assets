@@ -24,9 +24,10 @@ import {
 import { useQDeck } from './QDeckProvider';
 import TiptapEditor from '../TipTapEditor';
 import { ThreadNodeView, ReplyPreview } from '../comments/CommentsSection';
-import { Spacer } from 'qapp-core';
 import { ThreadNode } from '../../utils/thread';
 import { useActiveAccountName } from '../../hooks/useActiveAccountName';
+import { fetchAccountAvatarDataUrl } from '../../utils/qdnAvatar';
+import pLimit from 'p-limit';
 
 type Props = {
   cardId: string;
@@ -60,6 +61,12 @@ export default function QDeckCommentsSection({ cardId, canComment }: Props) {
   const [open, setOpen] = React.useState(false);
   const [replyTo, setReplyTo] = React.useState<UINode | null>(null);
   const [html, setHtml] = React.useState('');
+  const [avatars, setAvatars] = React.useState<Record<string, string | null>>({});
+  const avatarsRef = React.useRef<Record<string, string | null>>(avatars);
+
+  React.useEffect(() => {
+    avatarsRef.current = avatars;
+  }, [avatars]);
 
   React.useEffect(() => {
     if (useGlobalName) return;
@@ -146,11 +153,41 @@ export default function QDeckCommentsSection({ cardId, canComment }: Props) {
 
   const thread = comments[cardId];
   const items = thread?.comments ?? [];
+  const commentCount = items.length;
 
   const forest = React.useMemo<ThreadNode[]>(
     () => buildThreadForestFromCardComments(items),
     [items]
   );
+
+  React.useEffect(() => {
+    if (!items.length) return;
+    const authors = Array.from(
+      new Set(items.map((c) => (c.author || '').trim()).filter(Boolean))
+    );
+    if (!authors.length) return;
+
+    let cancelled = false;
+    const limit = pLimit(4);
+
+    void Promise.all(
+      authors.map((author) =>
+        limit(async () => {
+          if (cancelled) return;
+          if (avatarsRef.current[author] !== undefined) return;
+          const url = await fetchAccountAvatarDataUrl(author);
+          if (cancelled) return;
+          setAvatars((current) =>
+            current[author] !== undefined ? current : { ...current, [author]: url }
+          );
+        })
+      )
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [items]);
 
   const openNew = (parent?: ThreadNode | null) => {
     setReplyTo(parent ?? null);
@@ -161,31 +198,56 @@ export default function QDeckCommentsSection({ cardId, canComment }: Props) {
   const publish = async () => {
     if (!publisherName || !html.trim() || !canComment) return;
     await addComment(cardId, html, replyTo?.id, { publisherName });
+    if (publisherName && avatarsRef.current[publisherName] === undefined) {
+      const url = await fetchAccountAvatarDataUrl(publisherName);
+      setAvatars((current) =>
+        current[publisherName] !== undefined ? current : { ...current, [publisherName]: url }
+      );
+    }
     setOpen(false);
     setReplyTo(null);
     setHtml('');
     await loadCommentsForCard(cardId);
   };
 
+  const addCommentButton = (
+    <Button
+      variant="outlined"
+      onClick={() => openNew(null)}
+      disabled={!canComment}
+      sx={{
+        width: { xs: '100%', sm: 'auto' },
+        minWidth: { sm: '12rem' },
+        p: '0.5rem 1rem',
+      }}
+    >
+      Add Comment
+    </Button>
+  );
+
   return (
     <>
-      <Box
-        sx={{
-          display: 'flex',
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <Spacer height="1rem" width="1rem" />
-        <Typography variant="h4" textAlign="center">
-          Comments
-        </Typography>
-      </Box>
-
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mt: '1rem' }}>
         <Card sx={{ mt: '0.5rem', width: '100%' }}>
           <CardContent>
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={1.5}
+              alignItems={{ xs: 'stretch', sm: 'center' }}
+              justifyContent="space-between"
+              sx={{ mb: 2 }}
+            >
+              <Box>
+                <Typography variant="h6">
+                  Comments ({commentCount})
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Share updates, feedback, and follow-ups.
+                </Typography>
+              </Box>
+              {addCommentButton}
+            </Stack>
+
             {(!thread || items.length === 0) && (
               <Typography color="text.secondary" textAlign="center">
                 No comments yet.
@@ -198,7 +260,7 @@ export default function QDeckCommentsSection({ cardId, canComment }: Props) {
                   <ThreadNodeView
                     key={node.id}
                     node={node}
-                    avatars={{}} // inject avatar map later if you want
+                    avatars={avatars}
                     onReply={(n: any) => openNew(n)}
                     onEdit={() => {
                       /* editing not yet implemented for Q-Deck */
@@ -208,6 +270,7 @@ export default function QDeckCommentsSection({ cardId, canComment }: Props) {
                     }}
                     canEdit={false}
                     isDeleted={false}
+                    headerLayout="name-first"
                   />
                 ))}
               </Stack>
@@ -216,18 +279,7 @@ export default function QDeckCommentsSection({ cardId, canComment }: Props) {
             <Divider sx={{ my: 2 }} />
 
             <Box sx={{ display: 'flex', justifyContent: 'center' }}>
-              <Button
-                variant="outlined"
-                onClick={() => openNew(null)}
-                disabled={!canComment}
-                sx={{
-                  width: { xs: '100%', sm: 'auto' },
-                  minWidth: { sm: '12rem' },
-                  p: '0.5rem 1rem',
-                }}
-              >
-                Add Comment
-              </Button>
+              {addCommentButton}
             </Box>
           </CardContent>
         </Card>

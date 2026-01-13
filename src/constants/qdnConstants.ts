@@ -4,12 +4,10 @@ import { uniqueId6 } from '../utils/ids';
 
 export const Q_ASSETS_OWNER_ADDRESS = 'QWZDZBKafP19Hin4HivuV6WXgWaBaWUMrN';
 export const Q_ASSET_APP_PUBLISHER: string = 'Q-Assets';
-export const Q_ASSET_APP_VERSION: number = 0.83;
+export const Q_ASSET_APP_VERSION: string = __APP_VERSION__;
 export const isBeta: boolean = true;
 
-export const Q_ASSETS_VERSION: string = isBeta
-  ? Q_ASSET_APP_VERSION + 'b'
-  : Q_ASSET_APP_VERSION.toString();
+export const Q_ASSETS_VERSION: string = isBeta ? `${Q_ASSET_APP_VERSION}b` : Q_ASSET_APP_VERSION;
 export const ASSETS_KEY = 'qa_assets_index' + Q_ASSET_APP_VERSION;
 
 export const MINTER_GROUP_ID = 694;

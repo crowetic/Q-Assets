@@ -1,6 +1,6 @@
 // utils/qdnSearchSimple.ts
 import type { Service } from 'qapp-core';
-import { getGroupResourceServices } from './groupEncryption';
+import { getGroupResourceServices, LEGACY_GROUP_ENCRYPTION_SERVICE } from './groupEncryption';
 
 export interface SimpleHit {
   name: string;
@@ -50,6 +50,17 @@ const toServiceArray = (service: string | string[]): string[] => {
   return [service];
 };
 
+async function resolveSearchServices(
+  isPrivate?: boolean,
+  servicesOverride?: string | string[]
+): Promise<string[]> {
+  if (servicesOverride) return toServiceArray(servicesOverride);
+  if (!isPrivate) return ['DOCUMENT'];
+  const services = new Set<string>(await getGroupResourceServices());
+  services.add(LEGACY_GROUP_ENCRYPTION_SERVICE);
+  return Array.from(services);
+}
+
 async function fetchSearchSimple(url: string): Promise<SimpleHit[]> {
   try {
     const res = await fetch(url, {
@@ -94,9 +105,10 @@ export async function searchSimpleByIdentifierPrefix(
 
 export async function searchSimpleByIdPrefixOnly(
   identifierPrefix: string,
-  isPrivate?: boolean
+  isPrivate?: boolean,
+  servicesOverride?: string | string[]
 ): Promise<SimpleHit[]> {
-  const services = isPrivate ? await getGroupResourceServices() : (['DOCUMENT'] as Service[]);
+  const services = (await resolveSearchServices(isPrivate, servicesOverride)) as Service[];
   const results = await Promise.all(
     services.map((svc) =>
       fetchSearchSimple(
@@ -112,9 +124,10 @@ export async function searchSimpleByIdPrefixOnly(
 export async function searchSimpleNameIdPrefix(
   identifierPrefix: string,
   name: string,
-  isPrivate?: boolean
+  isPrivate?: boolean,
+  servicesOverride?: string | string[]
 ): Promise<SimpleHit[]> {
-  const services = isPrivate ? await getGroupResourceServices() : (['DOCUMENT'] as Service[]);
+  const services = (await resolveSearchServices(isPrivate, servicesOverride)) as Service[];
   const results = await Promise.all(
     services.map((svc) =>
       fetchSearchSimple(
@@ -131,9 +144,10 @@ export async function searchSimpleNameIdPrefix(
 
 export async function searchSimpleByFullId(
   identifier: string,
-  isPrivate?: boolean
+  isPrivate?: boolean,
+  servicesOverride?: string | string[]
 ): Promise<SimpleHit[]> {
-  const services = isPrivate ? await getGroupResourceServices() : (['DOCUMENT'] as Service[]);
+  const services = (await resolveSearchServices(isPrivate, servicesOverride)) as Service[];
   const results = await Promise.all(
     services.map((svc) =>
       fetchSearchSimple(

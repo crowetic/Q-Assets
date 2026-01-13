@@ -64,6 +64,40 @@ export function parsePrivateBoardIdentV2(ident: string): {
   return null;
 }
 
+export function projectPrivateIdentV2(
+  projectId: string,
+  mode: 'group' | 'direct',
+  opts?: { groupId?: number; isAdmins?: boolean }
+) {
+  if (mode === 'direct') return `qdeck_priv__prjv2__${projectId}__m-d`;
+  const gid = opts?.groupId;
+  if (gid == null) throw new Error('group mode requires groupId');
+  const a = opts?.isAdmins ? '1' : '0';
+  return `qdeck_priv__prjv2__${projectId}__m-g__gid-${gid}__a-${a}`;
+}
+
+export function parsePrivateProjectIdentV2(ident: string): {
+  projectId: string;
+  mode: 'group' | 'direct';
+  groupId?: number;
+  isAdmins?: boolean;
+} | null {
+  // group
+  {
+    const m = ident.match(/^qdeck_priv__prjv2__([^_]+)__m-g__gid-(\d+)__a-(0|1)$/);
+    if (m) {
+      const [, projectId, gid, a] = m;
+      return { projectId, mode: 'group', groupId: Number(gid), isAdmins: a === '1' };
+    }
+  }
+  // direct
+  {
+    const m = ident.match(/^qdeck_priv__prjv2__([^_]+)__m-d$/);
+    if (m) return { projectId: m[1], mode: 'direct' };
+  }
+  return null;
+}
+
 export const QDeckId = {
   boardPublic: (boardId: string) => `qdeck_pub__board__${boardId}`,
   boardPrivate: (
@@ -75,6 +109,16 @@ export const QDeckId = {
     mode === 'group'
       ? boardPrivateIdentV2(boardId, 'group', { groupId: groupId!, isAdmins })
       : boardPrivateIdentV2(boardId, 'direct'),
+  projectPublic: (projectId: string) => `qdeck_pub__project__${projectId}`,
+  projectPrivate: (
+    projectId: string,
+    mode: 'group' | 'direct',
+    isAdmins?: boolean,
+    groupId?: number
+  ) =>
+    mode === 'group'
+      ? projectPrivateIdentV2(projectId, 'group', { groupId: groupId!, isAdmins })
+      : projectPrivateIdentV2(projectId, 'direct'),
   // boardPrivate: (boardId: string) => `qdeck_priv__board__${boardId}`,
   // boardPrivate: (boardId: string) => `qd_pr__bd__${boardId}_${grpNum}_${isAdminsOrDirect}`,
   cardPublic: (boardId: string, cardId: string) => `qdeck_pub__card__${boardId}__${cardId}`,
@@ -91,6 +135,7 @@ export const QDeckId = {
 
   // Owner-managed local index (per issuer)
   ownerBoardsIndex: () => `qdeck__boards_index`,
+  ownerProjectsIndex: () => `qdeck__projects_index`,
 
   // Board-based index for all cards
   cardsIndex: (boardId: string) => `qdeck__cards_index__${boardId}`,
@@ -119,6 +164,8 @@ export const QDeckId = {
   prefixPublicBoards: `qdeck_pub__board__`,
   // prefixPrivateBoards: `qdeck_priv__board__`,
   prefixPrivateBoards: 'qdeck_priv__bdv2__', // v2
+  prefixPublicProjects: `qdeck_pub__project__`,
+  prefixPrivateProjects: 'qdeck_priv__prjv2__',
 };
 
 export const QDeckCommentsId = {

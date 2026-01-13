@@ -785,48 +785,6 @@ export default function MyBoards() {
               </Select>
             </FormControl>
 
-            {/* Private mode controls */}
-            {groupsAllowedIds.length > 0 && (
-              <>
-                <FormControl size="small" fullWidth disabled={!canUseGroupEncryption}>
-                  <InputLabel id="priv-board-group">Private board group</InputLabel>
-                  <Select
-                    labelId="priv-board-group"
-                    label="Private board group"
-                    value={privateGroupId ?? ''}
-                    displayEmpty
-                    onChange={(e) =>
-                      setPrivateGroupId(e.target.value ? Number(e.target.value) : null)
-                    }
-                    MenuProps={{ PaperProps: { sx: { maxHeight: 320 } } }}
-                  >
-                    <MenuItem value="">
-                      <em>
-                        {canUseGroupEncryption ? 'Select one private group' : 'Not applicable'}
-                      </em>
-                    </MenuItem>
-                    {groupOptions
-                      .filter((g) => groupsAllowedIds.includes(g.groupId) && !g.isOpen)
-                      .map((g) => (
-                        <MenuItem key={g.groupId} value={g.groupId}>
-                          {g.groupName} (#{g.groupId}) — PRIVATE
-                        </MenuItem>
-                      ))}
-                  </Select>
-                </FormControl>
-
-                {privateGroupId != null && (
-                  <Box display="flex" alignItems="center" gap={1}>
-                    <Checkbox
-                      checked={visibility === 'private'}
-                      onChange={(e) => setVisibility(e.target.checked ? 'private' : 'public')}
-                    />
-                    <Typography variant="body2">Make this a private board</Typography>
-                  </Box>
-                )}
-              </>
-            )}
-
             {groupsAllowedIds.length > 0 && (
               <Box display="flex" alignItems="center" gap={1}>
                 <Checkbox

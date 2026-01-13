@@ -13,6 +13,8 @@ import {
   Select,
   InputLabel,
   FormControl,
+  Checkbox,
+  FormControlLabel,
   Typography,
   Divider,
   IconButton,
@@ -42,6 +44,25 @@ type Props = {
 };
 
 const priorities: Priority[] = ['CRITICAL', 'HIGH', 'NORMAL', 'LOW'];
+
+const pad2 = (value: number) => value.toString().padStart(2, '0');
+
+const toLocalInputValue = (stamp?: number) => {
+  if (!stamp) return '';
+  const d = new Date(stamp);
+  const yyyy = d.getFullYear();
+  const mm = pad2(d.getMonth() + 1);
+  const dd = pad2(d.getDate());
+  const hh = pad2(d.getHours());
+  const min = pad2(d.getMinutes());
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+};
+
+const fromLocalInputValue = (value: string) => {
+  if (!value) return undefined;
+  const stamp = new Date(value).getTime();
+  return Number.isFinite(stamp) ? stamp : undefined;
+};
 
 export default function CardDialog(props: Props) {
   const { open, onClose, boardOwnerAddress, qassetsRevenueAddress, treasuryAddress, cardId } =
@@ -99,6 +120,14 @@ export default function CardDialog(props: Props) {
     typeof initialEta === 'number' ? initialEta : ''
   );
 
+  const [scheduleStart, setScheduleStart] = React.useState(() =>
+    toLocalInputValue(card?.scheduledStart)
+  );
+  const [scheduleEnd, setScheduleEnd] = React.useState(() =>
+    toLocalInputValue(card?.scheduledEnd)
+  );
+  const [scheduleAllDay, setScheduleAllDay] = React.useState(!!card?.scheduledAllDay);
+
   // --- primary image ---
   const [imgDataUrl, setImgDataUrl] = React.useState<string | undefined>(undefined);
   const [uploading, setUploading] = React.useState(false);
@@ -153,6 +182,9 @@ export default function CardDialog(props: Props) {
     setHtml(card.descriptionHtml ?? '');
     setAssignees(card.assignees ?? []);
     setEtaMinutes((card as any).estimatedCompletionTimeMinutes ?? '');
+    setScheduleStart(toLocalInputValue(card.scheduledStart));
+    setScheduleEnd(toLocalInputValue(card.scheduledEnd));
+    setScheduleAllDay(!!card.scheduledAllDay);
   }, [cardId, card?.seq, card]);
 
   // --- helpers ---
@@ -184,22 +216,23 @@ export default function CardDialog(props: Props) {
 
   // Minimal name verification (keeps UI snappy; invalids can be edited/removed later)
   async function verifyQortalName(name: string): Promise<boolean> {
-    const nm = encodeURIComponent(name.trim());
+    const nm = name.trim();
     if (!nm) return false;
     try {
       const data = await (window as any).qortalRequest?.({ action: 'GET_NAME_DATA', name: nm });
-      return data?.name;
+      if (data && (data.name === nm || data?.owner)) return true;
     } catch {
-      try {
-        const res = await fetch(`/names/${nm}`, {
-          headers: { Accept: 'application/json' },
-        });
-        if (!res) return false;
-        const j = await res.json().catch(() => null);
-        return !!j.name;
-      } catch {
-        return false;
-      }
+      /* fall through */
+    }
+    try {
+      const res = await fetch(`/names/${encodeURIComponent(nm)}`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) return false;
+      const j = await res.json().catch(() => null);
+      return !!j && (j.name === nm || j?.owner);
+    } catch {
+      return false;
     }
   }
 
@@ -226,6 +259,11 @@ export default function CardDialog(props: Props) {
   // Save
   const handleSave = async () => {
     if (!canEdit) return;
+    const startStamp = fromLocalInputValue(scheduleStart);
+    const endStampRaw = fromLocalInputValue(scheduleEnd);
+    let endStamp = endStampRaw;
+    if (startStamp && endStamp && endStamp < startStamp) endStamp = startStamp;
+    const hasSchedule = !!startStamp || !!endStamp;
     const next: QDeckCard = {
       ...card,
       title,
@@ -236,6 +274,9 @@ export default function CardDialog(props: Props) {
       tags,
       statusListId,
       assignees,
+      scheduledStart: startStamp,
+      scheduledEnd: endStamp,
+      scheduledAllDay: hasSchedule ? scheduleAllDay : undefined,
       updatedAt: Date.now(),
       seq: card.seq + 1,
     };
@@ -316,6 +357,13 @@ export default function CardDialog(props: Props) {
     });
   };
 
+  const sectionSx = {
+    border: `1px solid ${theme.palette.divider}`,
+    borderRadius: 2,
+    p: { xs: 1.5, sm: 2 },
+    backgroundColor: theme.palette.action.hover,
+  };
+
   return (
     <Dialog
       open={open}
@@ -334,143 +382,150 @@ export default function CardDialog(props: Props) {
       <DialogContent
         dividers
         sx={{
-          display: 'grid',
-          gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 1.6fr) minmax(0, 1fr)' },
-          alignItems: 'start',
-          gap: '1rem',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 2,
           overflowY: 'auto',
           overflowX: 'hidden',
           minHeight: 0,
         }}
       >
-        {/* LEFT: meta & content */}
-        <Stack spacing={2} sx={{ minWidth: 0 }}>
-          <TextField
-            label="Title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            fullWidth
-            disabled={!canEdit}
-          />
+        <Box sx={sectionSx}>
+          <Typography variant="subtitle1" sx={{ mb: 1, fontWeight: 600 }}>
+            Card details
+          </Typography>
+          <Stack spacing={2}>
+            <TextField
+              label="Title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              fullWidth
+              disabled={!canEdit}
+            />
 
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ width: '100%' }}>
-            <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 160 }, flex: 1 }}>
-              <InputLabel id="priority">Priority</InputLabel>
-              <Select
-                labelId="priority"
-                label="Priority"
-                value={priority}
-                onChange={(e) => setPriority(e.target.value as Priority)}
-                disabled={!canEdit}
-              >
-                {priorities.map((p) => (
-                  <MenuItem key={p} value={p}>
-                    {p}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-
-            <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 200 }, flex: 1 }}>
-              <InputLabel id="status">List / Status</InputLabel>
-              <Select
-                labelId="status"
-                label="List / Status"
-                value={statusListId}
-                onChange={(e) => setStatusListId(e.target.value as string)}
-                disabled={!canEdit}
-              >
-                {board.lists
-                  .slice()
-                  .sort((a, b) => a.order - b.order)
-                  .map((l) => (
-                    <MenuItem key={l.listId} value={l.listId}>
-                      {l.title}
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ width: '100%' }}>
+              <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 160 }, flex: 1 }}>
+                <InputLabel id="priority">Priority</InputLabel>
+                <Select
+                  labelId="priority"
+                  label="Priority"
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value as Priority)}
+                  disabled={!canEdit}
+                >
+                  {priorities.map((p) => (
+                    <MenuItem key={p} value={p}>
+                      {p}
                     </MenuItem>
                   ))}
-              </Select>
-            </FormControl>
-          </Stack>
+                </Select>
+              </FormControl>
 
-          {/* Tags */}
-          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-            <TextField
-              size="small"
-              label="Add tag"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  const v = (e.target as HTMLInputElement).value.trim();
-                  handleAddTag(v);
-                  (e.target as HTMLInputElement).value = '';
-                }
-              }}
-              disabled={!canEdit}
-            />
+              <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 200 }, flex: 1 }}>
+                <InputLabel id="status">List / Status</InputLabel>
+                <Select
+                  labelId="status"
+                  label="List / Status"
+                  value={statusListId}
+                  onChange={(e) => setStatusListId(e.target.value as string)}
+                  disabled={!canEdit}
+                >
+                  {board.lists
+                    .slice()
+                    .sort((a, b) => a.order - b.order)
+                    .map((l) => (
+                      <MenuItem key={l.listId} value={l.listId}>
+                        {l.title}
+                      </MenuItem>
+                    ))}
+                </Select>
+              </FormControl>
+            </Stack>
+
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+              <TextField
+                size="small"
+                label="Add tag"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const v = (e.target as HTMLInputElement).value.trim();
+                    handleAddTag(v);
+                    (e.target as HTMLInputElement).value = '';
+                  }
+                }}
+                disabled={!canEdit}
+              />
+              <Stack direction="row" spacing={1} flexWrap="wrap">
+                {tags.map((t) => (
+                  <Chip
+                    key={t}
+                    label={t}
+                    onDelete={canEdit ? () => handleRemoveTag(t) : undefined}
+                  />
+                ))}
+              </Stack>
+            </Stack>
+
+            <Divider />
+
+            <Typography variant="subtitle2" sx={{ opacity: 0.8 }}>
+              Assignees
+            </Typography>
+            <Stack
+              direction={{ xs: 'column', sm: 'row' }}
+              spacing={1}
+              alignItems={{ xs: 'stretch', sm: 'center' }}
+              flexWrap="wrap"
+              sx={{ width: '100%' }}
+            >
+              <TextField
+                size="small"
+                label="Add assignee (Qortal name)"
+                value={assigneeDraft}
+                onChange={(e) => setAssigneeDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addAssignee();
+                  }
+                }}
+                disabled={!canEdit}
+              />
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={addAssignee}
+                disabled={!canEdit || !assigneeDraft.trim()}
+                sx={{ alignSelf: { xs: 'flex-start', sm: 'center' } }}
+              >
+                Add
+              </Button>
+            </Stack>
             <Stack direction="row" spacing={1} flexWrap="wrap">
-              {tags.map((t) => (
-                <Chip key={t} label={t} onDelete={canEdit ? () => handleRemoveTag(t) : undefined} />
+              {assignees.map((nm) => (
+                <Chip
+                  key={nm}
+                  label={nm}
+                  onDelete={canEdit ? () => removeAssignee(nm) : undefined}
+                />
               ))}
             </Stack>
-          </Stack>
 
-          {/* Assignees */}
-          <Divider />
-          <Typography variant="subtitle2" sx={{ opacity: 0.8 }}>
-            Assignees
-          </Typography>
-          <Stack
-            direction={{ xs: 'column', sm: 'row' }}
-            spacing={1}
-            alignItems={{ xs: 'stretch', sm: 'center' }}
-            flexWrap="wrap"
-            sx={{ width: '100%' }}
-          >
+            <Divider />
+
+            <Typography variant="subtitle2" sx={{ opacity: 0.8 }}>
+              Quick description
+            </Typography>
             <TextField
+              value={quick}
+              onChange={(e) => setQuick(e.target.value)}
+              fullWidth
               size="small"
-              label="Add assignee (Qortal name)"
-              value={assigneeDraft}
-              onChange={(e) => setAssigneeDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  addAssignee();
-                }
-              }}
+              multiline
+              minRows={3}
               disabled={!canEdit}
             />
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={addAssignee}
-              disabled={!canEdit || !assigneeDraft.trim()}
-              sx={{ alignSelf: { xs: 'flex-start', sm: 'center' } }}
-            >
-              Add
-            </Button>
-          </Stack>
-          <Stack direction="row" spacing={1} flexWrap="wrap">
-            {assignees.map((nm) => (
-              <Chip key={nm} label={nm} onDelete={canEdit ? () => removeAssignee(nm) : undefined} />
-            ))}
-          </Stack>
 
-          {/* Quick description */}
-          <Divider />
-          <Typography variant="subtitle2" sx={{ opacity: 0.8 }}>
-            Quick description
-          </Typography>
-          <TextField
-            value={quick}
-            onChange={(e) => setQuick(e.target.value)}
-            fullWidth
-            size="small"
-            multiline
-            minRows={3}
-            disabled={!canEdit}
-          />
-
-          {/* ETA */}
-          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center">
             <TextField
               label="Estimated time (minutes)"
               type="number"
@@ -480,11 +535,52 @@ export default function CardDialog(props: Props) {
               sx={{ width: { xs: '100%', sm: 240 } }}
               disabled={!canEdit}
             />
-          </Stack>
 
-          {/* Rich description */}
-          <Divider />
-          <Typography variant="subtitle2" sx={{ opacity: 0.8 }}>
+            <Divider />
+
+            <Typography variant="subtitle2" sx={{ opacity: 0.8 }}>
+              Schedule
+            </Typography>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems="center">
+              <TextField
+                label="Start"
+                type="datetime-local"
+                value={scheduleStart}
+                onChange={(e) => setScheduleStart(e.target.value)}
+                size="small"
+                InputLabelProps={{ shrink: true }}
+                sx={{ flex: 1, minWidth: 200 }}
+                disabled={!canEdit}
+              />
+              <TextField
+                label="End"
+                type="datetime-local"
+                value={scheduleEnd}
+                onChange={(e) => setScheduleEnd(e.target.value)}
+                size="small"
+                InputLabelProps={{ shrink: true }}
+                sx={{ flex: 1, minWidth: 200 }}
+                disabled={!canEdit}
+              />
+            </Stack>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={scheduleAllDay}
+                  onChange={(e) => setScheduleAllDay(e.target.checked)}
+                  disabled={!canEdit}
+                />
+              }
+              label="All-day"
+            />
+            <Typography variant="caption" sx={{ opacity: 0.7 }}>
+              If no end time is set, the calendar defaults to a 1-hour block.
+            </Typography>
+          </Stack>
+        </Box>
+
+        <Box sx={sectionSx}>
+          <Typography variant="subtitle1" sx={{ mb: 1, fontWeight: 600 }}>
             Description
           </Typography>
           <Box
@@ -492,221 +588,217 @@ export default function CardDialog(props: Props) {
               border: `1px solid ${theme.palette.divider}`,
               borderRadius: 2,
               p: 1,
-              minHeight: '8rem',
+              minHeight: '10rem',
+              backgroundColor: theme.palette.background.paper,
             }}
           >
             <TiptapEditor value={html} onChange={setHtml} />
           </Box>
-        </Stack>
+        </Box>
 
-        {/* RIGHT: image + contributions */}
-        <Stack spacing={2} sx={{ minWidth: 0 }}>
-          <Box>
-            <Stack
-              direction="row"
-              alignItems="center"
-              justifyContent="space-between"
-              sx={{ mb: 0.5 }}
-            >
-              <Typography variant="subtitle2" sx={{ opacity: 0.8 }}>
-                Primary image
-              </Typography>
-              {canEdit && (
-                <Tooltip title="Replace primary image">
-                  <IconButton component="label" size="small">
-                    {uploading ? (
-                      <CircularProgress size={18} />
-                    ) : (
-                      <PhotoCameraIcon fontSize="small" />
-                    )}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      hidden
-                      onChange={(e) => onChooseImage(e.target.files?.[0] ?? null)}
-                    />
-                  </IconButton>
-                </Tooltip>
-              )}
-            </Stack>
-
-            {imgDataUrl ? (
-              <Box
-                component="img"
-                src={imgDataUrl}
-                alt=""
-                sx={{
-                  width: '100%',
-                  borderRadius: 2,
-                  objectFit: 'cover',
-                  maxHeight: isMdUp ? '50vh' : '35vh',
-                }}
-              />
-            ) : (
-              <Typography variant="body2" sx={{ opacity: 0.7 }}>
-                No primary image.
-              </Typography>
+        <Box sx={sectionSx}>
+          <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+              Primary image
+            </Typography>
+            {canEdit && (
+              <Tooltip title="Replace primary image">
+                <IconButton component="label" size="small">
+                  {uploading ? (
+                    <CircularProgress size={18} />
+                  ) : (
+                    <PhotoCameraIcon fontSize="small" />
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    hidden
+                    onChange={(e) => onChooseImage(e.target.files?.[0] ?? null)}
+                  />
+                </IconButton>
+              </Tooltip>
             )}
-          </Box>
+          </Stack>
 
-          <Divider />
+          {imgDataUrl ? (
+            <Box
+              component="img"
+              src={imgDataUrl}
+              alt=""
+              sx={{
+                width: '100%',
+                borderRadius: 2,
+                objectFit: 'cover',
+                maxHeight: isMdUp ? '40vh' : '35vh',
+              }}
+            />
+          ) : (
+            <Typography variant="body2" sx={{ opacity: 0.7 }}>
+              No primary image.
+            </Typography>
+          )}
+        </Box>
 
-          <Box>
-            <Stack
-              direction="row"
-              alignItems="center"
-              justifyContent="space-between"
-              sx={{ mb: 0.5 }}
-            >
-              <Typography variant="subtitle2" sx={{ opacity: 0.8 }}>
-                Attachments
-              </Typography>
-              {canEdit && (
-                <Tooltip title="Add attachment">
-                  <IconButton component="label" size="small" disabled={attachmentsUploading}>
-                    {attachmentsUploading ? (
-                      <CircularProgress size={18} />
-                    ) : (
-                      <AttachFileIcon fontSize="small" />
-                    )}
-                    <input
-                      type="file"
-                      hidden
-                      multiple
-                      onChange={(e) => {
-                        onChooseAttachments(e.target.files);
-                        e.currentTarget.value = '';
-                      }}
-                    />
-                  </IconButton>
-                </Tooltip>
-              )}
-            </Stack>
-            {attachments.length ? (
-              <Stack spacing={1}>
-                {attachments.map((attachment) => {
-                  const meta = formatAttachmentMeta(attachment);
-                  return (
-                    <Box
-                      key={attachment.attachmentId}
-                      sx={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        justifyContent: 'space-between',
-                        gap: 1,
-                        flexWrap: 'wrap',
-                      }}
+        <Box sx={sectionSx}>
+          <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+              Attachments
+            </Typography>
+            {canEdit && (
+              <Tooltip title="Add attachment">
+                <IconButton component="label" size="small" disabled={attachmentsUploading}>
+                  {attachmentsUploading ? (
+                    <CircularProgress size={18} />
+                  ) : (
+                    <AttachFileIcon fontSize="small" />
+                  )}
+                  <input
+                    type="file"
+                    hidden
+                    multiple
+                    onChange={(e) => {
+                      onChooseAttachments(e.target.files);
+                      e.currentTarget.value = '';
+                    }}
+                  />
+                </IconButton>
+              </Tooltip>
+            )}
+          </Stack>
+          {attachments.length ? (
+            <Stack spacing={1}>
+              {attachments.map((attachment) => {
+                const meta = formatAttachmentMeta(attachment);
+                return (
+                  <Box
+                    key={attachment.attachmentId}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      justifyContent: 'space-between',
+                      gap: 1,
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <Stack
+                      direction="row"
+                      spacing={1}
+                      alignItems="center"
+                      sx={{ minWidth: 0, flex: 1 }}
                     >
-                      <Stack
-                        direction="row"
-                        spacing={1}
-                        alignItems="center"
-                        sx={{ minWidth: 0, flex: 1 }}
-                      >
-                        <AttachFileIcon fontSize="small" />
-                        <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>
-                          {attachment.fileName || attachment.identifier}
-                        </Typography>
-                      </Stack>
-                      {meta ? (
-                        <Typography variant="caption" color="text.secondary">
-                          {meta}
-                        </Typography>
-                      ) : null}
-                    </Box>
-                  );
-                })}
+                      <AttachFileIcon fontSize="small" />
+                      <Typography variant="body2" sx={{ overflowWrap: 'anywhere' }}>
+                        {attachment.fileName || attachment.identifier}
+                      </Typography>
+                    </Stack>
+                    {meta ? (
+                      <Typography variant="caption" color="text.secondary">
+                        {meta}
+                      </Typography>
+                    ) : null}
+                  </Box>
+                );
+              })}
+            </Stack>
+          ) : (
+            <Typography variant="body2" sx={{ opacity: 0.7 }}>
+              No attachments.
+            </Typography>
+          )}
+        </Box>
+
+        <Box sx={sectionSx}>
+          <Typography variant="subtitle1" sx={{ mb: 1, fontWeight: 600 }}>
+            Support this card
+          </Typography>
+
+          <Stack spacing={1.5}>
+            <Stack spacing={1}>
+              <Typography variant="subtitle2">Paid Upvote</Typography>
+              <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                spacing={1}
+                alignItems={{ xs: 'stretch', sm: 'center' }}
+              >
+                <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 120 } }}>
+                  <InputLabel id="upvoteCur">Currency</InputLabel>
+                  <Select
+                    labelId="upvoteCur"
+                    label="Currency"
+                    value={upvoteCurrency}
+                    onChange={(e) => setUpvoteCurrency(e.target.value as any)}
+                  >
+                    <MenuItem value="QASSET">Q-Asset</MenuItem>
+                    <MenuItem value="QORT">QORT</MenuItem>
+                  </Select>
+                </FormControl>
+                <TextField
+                  size="small"
+                  label="Amount"
+                  value={upvoteAmount}
+                  onChange={(e) => setUpvoteAmount(Number(e.target.value))}
+                  sx={{ width: { xs: '100%', sm: 140 } }}
+                />
+                <Button variant="contained" onClick={doUpvote}>
+                  Upvote
+                </Button>
               </Stack>
-            ) : (
-              <Typography variant="body2" sx={{ opacity: 0.7 }}>
-                No attachments.
+              <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                Initially split 10% fee then 66/33% Q-Assets/BoardOnwer. Percentages will be able to
+                be modified in the future based on QARS Ratings, etc. See more details on
+                Information Page under Q-Deck Initial Version Functionality.
               </Typography>
-            )}
-          </Box>
-
-          <Divider />
-
-          {/* Upvote */}
-          <Stack spacing={1}>
-            <Typography variant="subtitle2">Paid Upvote</Typography>
-            <Stack
-              direction={{ xs: 'column', sm: 'row' }}
-              spacing={1}
-              alignItems={{ xs: 'stretch', sm: 'center' }}
-            >
-              <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 120 } }}>
-                <InputLabel id="upvoteCur">Currency</InputLabel>
-                <Select
-                  labelId="upvoteCur"
-                  label="Currency"
-                  value={upvoteCurrency}
-                  onChange={(e) => setUpvoteCurrency(e.target.value as any)}
-                >
-                  <MenuItem value="QASSET">Q-Asset</MenuItem>
-                  <MenuItem value="QORT">QORT</MenuItem>
-                </Select>
-              </FormControl>
-              <TextField
-                size="small"
-                label="Amount"
-                value={upvoteAmount}
-                onChange={(e) => setUpvoteAmount(Number(e.target.value))}
-                sx={{ width: { xs: '100%', sm: 140 } }}
-              />
-              <Button variant="contained" onClick={doUpvote}>
-                Upvote
-              </Button>
             </Stack>
-            <Typography variant="caption" sx={{ opacity: 0.7 }}>
-              Initially split 10% fee then 66/33% Q-Assets/BoardOnwer. Percentages will be able to
-              be modified in the future based on QARS Ratings, etc. See more details on Information
-              Page under Q-Deck Initial Version Functionality.
-            </Typography>
-          </Stack>
 
-          {/* Bounty */}
-          <Stack spacing={1}>
-            <Typography variant="subtitle2">Contribute to Bounty</Typography>
-            <Stack
-              direction={{ xs: 'column', sm: 'row' }}
-              spacing={1}
-              alignItems={{ xs: 'stretch', sm: 'center' }}
-            >
-              <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 120 } }}>
-                <InputLabel id="bountyCur">Currency</InputLabel>
-                <Select
-                  labelId="bountyCur"
-                  label="Currency"
-                  value={bountyCurrency}
-                  onChange={(e) => setBountyCurrency(e.target.value as any)}
-                >
-                  <MenuItem value="QASSET">Q-Asset</MenuItem>
-                  <MenuItem value="QORT">QORT</MenuItem>
-                </Select>
-              </FormControl>
-              <TextField
-                size="small"
-                label="Amount"
-                value={bountyAmount}
-                onChange={(e) => setBountyAmount(Number(e.target.value))}
-                sx={{ width: { xs: '100%', sm: 140 } }}
-              />
-              <Button variant="outlined" onClick={doContributeBounty}>
-                Contribute
-              </Button>
+            <Divider />
+
+            <Stack spacing={1}>
+              <Typography variant="subtitle2">Contribute to Bounty</Typography>
+              <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                spacing={1}
+                alignItems={{ xs: 'stretch', sm: 'center' }}
+              >
+                <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 120 } }}>
+                  <InputLabel id="bountyCur">Currency</InputLabel>
+                  <Select
+                    labelId="bountyCur"
+                    label="Currency"
+                    value={bountyCurrency}
+                    onChange={(e) => setBountyCurrency(e.target.value as any)}
+                  >
+                    <MenuItem value="QASSET">Q-Asset</MenuItem>
+                    <MenuItem value="QORT">QORT</MenuItem>
+                  </Select>
+                </FormControl>
+                <TextField
+                  size="small"
+                  label="Amount"
+                  value={bountyAmount}
+                  onChange={(e) => setBountyAmount(Number(e.target.value))}
+                  sx={{ width: { xs: '100%', sm: 140 } }}
+                />
+                <Button variant="outlined" onClick={doContributeBounty}>
+                  Contribute
+                </Button>
+              </Stack>
+              <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                Funds go to Q-Assets Escrow account now... Escrow AT in Phase-2.
+              </Typography>
             </Stack>
-            <Typography variant="caption" sx={{ opacity: 0.7 }}>
-              Funds go to Q-Assets Escrow account now... Escrow AT in Phase-2.
-            </Typography>
           </Stack>
-          <Divider />
+        </Box>
 
+        <Box sx={sectionSx}>
+          <Typography variant="subtitle1" sx={{ mb: 1, fontWeight: 600 }}>
+            Comments
+          </Typography>
           <QDeckCommentsSection
             cardId={card.cardId}
             canComment={Boolean(userAddress)}
             showAdminsBadge={Boolean(board.privateMeta?.isAdmins)} // not used yet; keep for future
           />
-        </Stack>
+        </Box>
       </DialogContent>
 
       <DialogActions sx={{ px: { xs: 1, sm: 2 }, py: { xs: 1, sm: 1.5 } }}>

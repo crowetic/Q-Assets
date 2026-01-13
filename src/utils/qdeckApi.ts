@@ -8,15 +8,18 @@ import {
   coerceService,
   QDeckTombstone,
   CardsIndexDoc,
+  QDeckProject,
+  ProjectsIndexDoc,
   PaymentLine,
   BoardsIndexDoc,
   PaymentsDoc,
 } from '../types/qdeck';
 import { base64ToObject, objectToBase64 } from 'qapp-core';
-import { createBoard } from './qdeckDefaults';
+import { createBoard, createProject } from './qdeckDefaults';
 import {
   getQAssetsRevenueAddress,
   parsePrivateBoardIdentV2,
+  parsePrivateProjectIdentV2,
   PRIVATE_MAGIC_B64,
   QDeckCommentsId,
   QDeckId,
@@ -28,6 +31,8 @@ import {
   normalizeIndexDoc,
   saveBoardsIndexWriteThrough,
 } from './qdeckIndexCache';
+import { loadProjectsIndexMerged, saveProjectsIndexWriteThrough } from './qdeckProjectIndexCache';
+import { getLocalProjectDoc, setLocalProjectDoc } from './qdeckProjectDocCache';
 import { searchSimpleByFullId, searchSimpleByIdPrefixOnly } from './searchSimple';
 import { fileToBase64 } from './data';
 import { guessImageMimeFromBase64 } from './fetchAssetAvatar';
@@ -71,6 +76,22 @@ type CreateBoardArgs = {
   adminOverride?: boolean;
 };
 
+type CreateProjectArgs = {
+  issuerName: string;
+  title: string;
+  description?: string;
+  groupsAllowed: number[];
+  usersAllowed?: string[];
+  visibility?: 'public' | 'private';
+  privateOpts?: {
+    groupId?: number;
+    isAdmins?: boolean;
+    mode?: 'group' | 'direct';
+    recipients?: string[];
+  };
+  adminOverride?: boolean;
+};
+
 export function displayNameOf(u: QUserIdentity) {
   return u.name || u.address || 'unknown';
 }
@@ -103,9 +124,13 @@ export async function loadCardsIndex(
 type CardsIndexCandidate = {
   name: string;
   doc: CardsIndexDoc;
+  stamp?: number;
 };
 
 const pickNewestCardsIndex = (a: CardsIndexCandidate, b: CardsIndexCandidate) => {
+  const aStamp = a.stamp ?? 0;
+  const bStamp = b.stamp ?? 0;
+  if (aStamp !== bStamp) return aStamp > bStamp ? a : b;
   const aSeq = a.doc.seq ?? 0;
   const bSeq = b.doc.seq ?? 0;
   if (aSeq !== bSeq) return aSeq > bSeq ? a : b;
@@ -123,12 +148,21 @@ export async function loadNewestCardsIndex(
   const isPrivate = board.visibility === 'private';
   const hits = await searchSimpleByFullId(identifier, isPrivate).catch(() => []);
   const names = new Set<string>();
+  const hitStamps = new Map<string, number>();
   for (const hint of opts?.issuerHints ?? []) {
     const trimmed = (hint || '').trim();
     if (trimmed) names.add(trimmed);
   }
   for (const hit of hits) {
-    if (hit?.name) names.add(hit.name);
+    if (hit?.name) {
+      const normalized = hit.name.trim();
+      if (!normalized) continue;
+      names.add(normalized);
+      const stamp = Number.isFinite(hit.updated) ? Number(hit.updated) : Number(hit.created) || 0;
+      const key = normalized.toLowerCase();
+      const prev = hitStamps.get(key) ?? 0;
+      if (stamp > prev) hitStamps.set(key, stamp);
+    }
   }
   if (names.size === 0) return null;
 
@@ -140,7 +174,8 @@ export async function loadNewestCardsIndex(
           try {
             const doc = await loadCardsIndex(name, board);
             if (!doc || doc.boardId !== board.boardId) return null;
-            return { name, doc };
+            const stamp = hitStamps.get(name.toLowerCase()) ?? 0;
+            return { name, doc, stamp };
           } catch {
             return null;
           }
@@ -586,6 +621,48 @@ export async function buildBoardPublishPayload(
   });
 }
 
+export async function buildProjectPublishPayload(
+  issuerName: string,
+  project: QDeckProject
+): Promise<BatchPublishResource> {
+  const identifier =
+    project.visibility === 'public'
+      ? QDeckId.projectPublic(project.projectId)
+      : QDeckId.projectPrivate(
+          project.projectId,
+          project.privateMeta?.mode ?? 'group',
+          project.privateMeta?.isAdmins,
+          project.privateMeta?.groupId
+        );
+  return preparePublishPayload({
+    name: issuerName,
+    identifier,
+    object: project,
+    isPrivate: project.visibility === 'private',
+    groupId: project.privateMeta?.groupId,
+    isAdmins: project.privateMeta?.isAdmins,
+    mode: project.privateMeta?.mode,
+    recipients: project.privateMeta?.recipients,
+    service:
+      project.visibility === 'private'
+        ? resolveGroupPublishService(project.privateMeta?.mode ?? 'group')
+        : 'DOCUMENT',
+  });
+}
+
+export async function buildProjectsIndexPublishPayload(
+  issuerName: string,
+  doc: ProjectsIndexDoc
+): Promise<BatchPublishResource> {
+  return preparePublishPayload({
+    name: issuerName,
+    identifier: QDeckId.ownerProjectsIndex(),
+    object: doc,
+    isPrivate: false,
+    service: 'DOCUMENT',
+  });
+}
+
 async function decryptDirect(encryptedData: string) {
   const clear: string | null = await qortalRequest({
     action: 'DECRYPT_DATA',
@@ -979,6 +1056,79 @@ export async function loadBoardDoc(
   return qdeckFetch<QDeckBoard>(issuerName, ident, true, undefined, undefined, 'direct');
 }
 
+/* ------------------------ Projects (visibility-aware) ----------------------- */
+
+export async function saveProjectDoc(issuerName: string, project: QDeckProject) {
+  const identifier =
+    project.visibility === 'public'
+      ? QDeckId.projectPublic(project.projectId)
+      : QDeckId.projectPrivate(
+          project.projectId,
+          project.privateMeta?.mode ?? 'group',
+          project.privateMeta?.isAdmins,
+          project.privateMeta?.groupId
+        );
+
+  const base64 = await objectToBase64(project);
+
+  if (project.visibility === 'public') {
+    project.service = 'DOCUMENT';
+    return qortalRequest({
+      action: 'PUBLISH_QDN_RESOURCE',
+      service: 'DOCUMENT',
+      name: issuerName,
+      identifier,
+      base64,
+    });
+  }
+
+  await publishPrivate({
+    identifier,
+    payloadBase64: base64,
+    mode: project.privateMeta?.mode ?? 'group',
+    groupId: project.privateMeta?.groupId,
+    isAdmins: project.privateMeta?.isAdmins,
+    recipients: project.privateMeta?.recipients,
+    issuerName,
+  });
+  project.service = resolveGroupPublishService(project.privateMeta?.mode ?? 'group') as
+    | 'DOCUMENT'
+    | 'DOCUMENT_PRIVATE';
+}
+
+export async function loadProjectDoc(
+  issuerName: string,
+  projectIdOrIdent: string,
+  visibilityHint: 'public' | 'private'
+): Promise<QDeckProject | null> {
+  if (visibilityHint === 'public') {
+    const ident = projectIdOrIdent.startsWith(QDeckId.prefixPublicProjects)
+      ? projectIdOrIdent
+      : QDeckId.projectPublic(projectIdOrIdent);
+    return qdeckFetch<QDeckProject>(issuerName, ident, false);
+  }
+
+  const ident = projectIdOrIdent.startsWith(QDeckId.prefixPrivateProjects)
+    ? projectIdOrIdent
+    : null;
+
+  if (!ident) return null;
+  const parsed = parsePrivateProjectIdentV2(ident);
+  if (!parsed) return null;
+
+  if (parsed.mode === 'group') {
+    return qdeckFetch<QDeckProject>(
+      issuerName,
+      ident,
+      true,
+      parsed.groupId,
+      parsed.isAdmins,
+      'group'
+    );
+  }
+  return qdeckFetch<QDeckProject>(issuerName, ident, true, undefined, undefined, 'direct');
+}
+
 // Cards -------------------------
 
 export async function saveCardDoc(issuerName: string, board: QDeckBoard, card: QDeckCard) {
@@ -1169,10 +1319,10 @@ export async function discoverComments(
           board.privateMeta?.isAdmins
         );
 
-  console.log('ident from discoverComments', ident);
+  // console.log('ident from discoverComments', ident);
 
   const refs = await searchSimpleByFullId(ident, board.visibility === 'private' ? true : false);
-  console.log('refs from discoverComments', refs);
+  // console.log('refs from discoverComments', refs);
 
   return refs;
 }
@@ -1196,6 +1346,7 @@ export async function canEncryptToGroup(groupId: number, isAdmins?: boolean): Pr
 /* ------------------------------ Owner index doc ----------------------------- */
 
 const INDEX_ID = QDeckId.ownerBoardsIndex();
+const PROJECTS_INDEX_ID = QDeckId.ownerProjectsIndex();
 
 export async function loadBoardsIndex(issuerName: string): Promise<BoardsIndexDoc | null> {
   return await qdeckFetch<BoardsIndexDoc>(issuerName, INDEX_ID);
@@ -1204,6 +1355,15 @@ export async function loadBoardsIndex(issuerName: string): Promise<BoardsIndexDo
 export async function saveBoardsIndex(issuerName: string, doc: BoardsIndexDoc) {
   console.log('[Q-Deck] saveBoardsIndex', { issuerName, INDEX_ID });
   return await qdeckPublish(issuerName, INDEX_ID, doc);
+}
+
+export async function loadProjectsIndex(issuerName: string): Promise<ProjectsIndexDoc | null> {
+  return await qdeckFetch<ProjectsIndexDoc>(issuerName, PROJECTS_INDEX_ID);
+}
+
+export async function saveProjectsIndex(issuerName: string, doc: ProjectsIndexDoc) {
+  console.log('[Q-Deck] saveProjectsIndex', { issuerName, PROJECTS_INDEX_ID });
+  return await qdeckPublish(issuerName, PROJECTS_INDEX_ID, doc);
 }
 
 export async function createBoardAndIndex(args: CreateBoardArgs) {
@@ -1290,6 +1450,121 @@ export async function createBoardAndIndex(args: CreateBoardArgs) {
 
   await saveBoardsIndexWriteThrough(issuerName, next);
   return board;
+}
+
+export async function createProjectAndIndex(args: CreateProjectArgs) {
+  const { issuerName, title, description, groupsAllowed, usersAllowed, visibility, privateOpts, adminOverride } =
+    args;
+
+  let myName = issuerName;
+  let my = await qortalRequest({ action: 'GET_USER_ACCOUNT' });
+  if (!myName && my.name) myName = my.name;
+
+  let myAddress = my.address;
+  if (!myAddress && myName) {
+    const nameData = await qortalRequest({
+      action: 'GET_NAME_DATA',
+      name: myName,
+    });
+    myAddress = nameData.owner;
+  }
+  if (!myAddress) throw Error('failed to obtain address in createProjectAndIndex');
+  if (!myName) throw Error('failed to obtain name in createProjectAndIndex');
+
+  const project: QDeckProject = await createProject({
+    title,
+    description,
+    createdBy: myName,
+    createdByAddress: myAddress,
+    groupsAllowed: groupsAllowed ?? [],
+    usersAllowed,
+    visibility,
+    groupId: privateOpts?.groupId,
+    isAdmins: privateOpts?.isAdmins,
+    mode: privateOpts?.mode,
+    adminOverride,
+  });
+
+  if (privateOpts && privateOpts.mode === 'direct') {
+    const { publicKeys } = await collectRecipientPublicKeys({
+      groupIds: groupsAllowed,
+      usersAllowed,
+      assignees: [],
+      includeSelf: true,
+      me: { name: myName, address: myAddress },
+    });
+    project.privateMeta = {
+      mode: 'direct',
+      recipients: publicKeys,
+      isAdmins: false,
+    };
+  }
+
+  await saveProjectDoc(myName, project);
+  setLocalProjectDoc(myName, project);
+
+  const idx = (await loadProjectsIndexMerged(myName)) ?? {
+    _type: 'QDECK_PROJECTS_INDEX' as const,
+    version: 1 as const,
+    issuerName: myName,
+    projects: [],
+    updatedAt: 0,
+    seq: 0,
+  };
+
+  const next = {
+    ...idx,
+    projects: [
+      ...idx.projects.filter((p) => p.projectId !== project.projectId),
+      {
+        projectId: project.projectId,
+        title: project.title,
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
+        visibility: coerceVisibility(project.visibility),
+        service: coerceService(project.service),
+        mode: project.privateMeta?.mode ?? 'group',
+      },
+    ],
+    updatedAt: Date.now(),
+    seq: (idx.seq ?? 0) + 1,
+  };
+
+  await saveProjectsIndexWriteThrough(myName, next);
+  return project;
+}
+
+export async function saveProjectDocAndIndex(issuerName: string, project: QDeckProject) {
+  await saveProjectDoc(issuerName, project);
+  setLocalProjectDoc(issuerName, project);
+  const idx = (await loadProjectsIndexMerged(issuerName)) ?? {
+    _type: 'QDECK_PROJECTS_INDEX' as const,
+    version: 1 as const,
+    issuerName,
+    projects: [],
+    updatedAt: 0,
+    seq: 0,
+  };
+
+  const next = {
+    ...idx,
+    projects: [
+      ...idx.projects.filter((p) => p.projectId !== project.projectId),
+      {
+        projectId: project.projectId,
+        title: project.title,
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
+        visibility: coerceVisibility(project.visibility),
+        service: coerceService(project.service),
+        mode: project.privateMeta?.mode ?? 'group',
+      },
+    ],
+    updatedAt: Date.now(),
+    seq: (idx.seq ?? 0) + 1,
+  };
+
+  await saveProjectsIndexWriteThrough(issuerName, next);
 }
 
 // PRIMARY IMAGE FUNCTIONS -----------------------------------------------------------
@@ -1989,6 +2264,14 @@ export type BoardProbe = {
   isAdmins?: boolean; // only for private+group
 } | null;
 
+export type ProjectProbe = {
+  doc: QDeckProject;
+  visibility: 'public' | 'private';
+  mode?: 'group' | 'direct';
+  groupId?: number;
+  isAdmins?: boolean;
+} | null;
+
 // qdeckApi.ts
 export async function resolveBoardForRead(
   issuerName: string,
@@ -2107,4 +2390,148 @@ export async function resolveBoardForReadWithMeta(
     if (pub) return { doc: pub, visibility: 'public' as const };
   }
   return await discoverPrivateV2();
+}
+
+export async function resolveProjectForRead(
+  issuerName: string,
+  projectIdOrIdent: string,
+  hint?: 'public' | 'private'
+): Promise<QDeckProject | null> {
+  const res = await resolveProjectForReadWithMeta(issuerName, projectIdOrIdent, hint);
+  return res?.doc ?? null;
+}
+
+export async function resolveProjectForReadWithMeta(
+  issuer: string,
+  projectIdOrIdent: string,
+  hint?: 'public' | 'private'
+) {
+  const localProbeFor = (projectId: string, expected?: 'public' | 'private') => {
+    if (!projectId) return null;
+    const cached = getLocalProjectDoc(issuer, projectId);
+    if (!cached) return null;
+    const visibility = cached.visibility === 'private' ? 'private' : 'public';
+    if (expected && visibility !== expected) return null;
+    if (visibility === 'private') {
+      const mode = cached.privateMeta?.mode ?? 'group';
+      if (mode === 'group') {
+        return {
+          doc: cached,
+          visibility: 'private' as const,
+          mode: 'group' as const,
+          groupId: cached.privateMeta?.groupId,
+          isAdmins: !!cached.privateMeta?.isAdmins,
+        };
+      }
+      return { doc: cached, visibility: 'private' as const, mode: 'direct' as const };
+    }
+    return { doc: cached, visibility: 'public' as const };
+  };
+
+  const discoverPrivateV2 = async (projectId: string) => {
+    const privHeads = await searchSimpleByIdPrefixOnly(QDeckId.prefixPrivateProjects, true);
+    const mine = privHeads.filter((h) => h.name === issuer);
+    const hit = mine.find((h) => {
+      const p = parsePrivateProjectIdentV2(h.identifier);
+      return p && p.projectId === projectId;
+    });
+    if (!hit) return null;
+
+    const p = parsePrivateProjectIdentV2(hit.identifier)!;
+    if (p.mode === 'group') {
+      const doc = await qdeckFetch<QDeckProject>(
+        issuer,
+        hit.identifier,
+        true,
+        p.groupId,
+        !!p.isAdmins,
+        'group'
+      );
+      return doc
+        ? {
+            doc,
+            visibility: 'private' as const,
+            mode: 'group' as const,
+            groupId: p.groupId,
+            isAdmins: !!p.isAdmins,
+          }
+        : null;
+    }
+    const doc = await qdeckFetch<QDeckProject>(
+      issuer,
+      hit.identifier,
+      true,
+      undefined,
+      undefined,
+      'direct'
+    );
+    return doc ? { doc, visibility: 'private' as const, mode: 'direct' as const } : null;
+  };
+
+  if (projectIdOrIdent.startsWith(QDeckId.prefixPublicProjects)) {
+    const doc = await qdeckFetch<QDeckProject>(issuer, projectIdOrIdent, false);
+    if (doc) return { doc, visibility: 'public' as const };
+    const projectId = projectIdOrIdent.slice(QDeckId.prefixPublicProjects.length);
+    const local = localProbeFor(projectId, 'public');
+    if (local) return local;
+    return projectId ? await discoverPrivateV2(projectId) : null;
+  }
+  if (projectIdOrIdent.startsWith(QDeckId.prefixPrivateProjects)) {
+    const p = parsePrivateProjectIdentV2(projectIdOrIdent);
+    if (!p) return null;
+    if (p.mode === 'group') {
+      const doc = await qdeckFetch<QDeckProject>(
+        issuer,
+        projectIdOrIdent,
+        true,
+        p.groupId,
+        !!p.isAdmins,
+        'group'
+      );
+      if (doc) {
+        return {
+          doc,
+          visibility: 'private' as const,
+          mode: 'group' as const,
+          groupId: p.groupId,
+          isAdmins: !!p.isAdmins,
+        };
+      }
+      return localProbeFor(p.projectId, 'private');
+    }
+    const doc = await qdeckFetch<QDeckProject>(
+      issuer,
+      projectIdOrIdent,
+      true,
+      undefined,
+      undefined,
+      'direct'
+    );
+    if (doc) return { doc, visibility: 'private' as const, mode: 'direct' as const };
+    return localProbeFor(p.projectId, 'private');
+  }
+
+  const projectId = projectIdOrIdent.trim();
+  if (!projectId) return null;
+
+  if (hint === 'public') {
+    const pubIdent = QDeckId.projectPublic(projectId);
+    const doc = await qdeckFetch<QDeckProject>(issuer, pubIdent, false);
+    return doc ? { doc, visibility: 'public' as const } : localProbeFor(projectId, 'public');
+  }
+
+  if (hint === 'private') {
+    const local = localProbeFor(projectId, 'private');
+    if (local) return local;
+    return await discoverPrivateV2(projectId);
+  }
+
+  {
+    const pubIdent = QDeckId.projectPublic(projectId);
+    const pub = await qdeckFetch<QDeckProject>(issuer, pubIdent, false);
+    if (pub) return { doc: pub, visibility: 'public' as const };
+  }
+  const local = localProbeFor(projectId);
+  if (local) return local;
+  return await discoverPrivateV2(projectId);
 }

@@ -1304,6 +1304,7 @@ function ThreadNodeView({
   isDeleted,
   isRootNode = false,
   isFirstReplyInThread = false,
+  headerLayout = 'timestamp-first',
 }: {
   node: import('../../utils/thread').ThreadNode;
   avatars: Record<string, string | null>;
@@ -1314,6 +1315,7 @@ function ThreadNodeView({
   isDeleted: boolean;
   isRootNode?: boolean;
   isFirstReplyInThread?: boolean;
+  headerLayout?: 'timestamp-first' | 'name-first';
 }) {
   const depth = Number.isFinite(node.depth) ? (node.depth as number) : 0;
   const kids = Array.isArray(node.children) ? node.children : [];
@@ -1327,6 +1329,9 @@ function ThreadNodeView({
   const isEdited =
     Number.isFinite(node.updatedTs) && (node.updatedTs as number) > (node.ts as number);
   const contentIndent = indentDepth ? { ml: `calc(${indentDepth} * ${INDENT_STEP})` } : undefined;
+  const timestamp = new Date(node.ts).toLocaleString();
+  const editedLabel = isEdited ? ` — edited ${new Date(node.updatedTs!).toLocaleString()}` : '';
+  const deletedLabel = isDeleted ? ' — (deleted)' : '';
 
   return (
     <Paper
@@ -1358,11 +1363,24 @@ function ThreadNodeView({
       </Avatar>
 
       <Box sx={contentIndent}>
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-          {new Date(node.ts).toLocaleString()} — {author}
-          {isEdited ? ` — edited ${new Date(node.updatedTs!).toLocaleString()}` : ''}
-          {isDeleted ? ' — (deleted)' : ''}
-        </Typography>
+        {headerLayout === 'name-first' ? (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: '0.1rem' }}>
+            <Typography variant="subtitle2" sx={{ lineHeight: 1.2 }}>
+              {author}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+              {timestamp}
+              {editedLabel}
+              {deletedLabel}
+            </Typography>
+          </Box>
+        ) : (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+            {timestamp} — {author}
+            {editedLabel}
+            {deletedLabel}
+          </Typography>
+        )}
 
         {(node.roleTags?.length ?? 0) > 0 && (
           <Stack
@@ -1440,6 +1458,7 @@ function ThreadNodeView({
                 isDeleted={Boolean((child as any).deleted)}
                 isRootNode={false}
                 isFirstReplyInThread={isRootNode && index === 0}
+                headerLayout={headerLayout}
               />
             ))}
           </Stack>

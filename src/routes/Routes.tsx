@@ -22,8 +22,11 @@ import { AlertProvider } from '../components/alerts';
 import AssetDataPage from '../pages/AssetDataPage';
 import QDeckAllBoards from '../pages/QDeckAllBoards';
 import QDeckHome from '../pages/QDeckHome';
+import QDeckLanding from '../pages/QDeckLanding';
 import QDeckMyBoards from '../pages/QDeckMyBoards';
 import QDeckPage from '../pages/QDeckPage';
+import QDeckProjects from '../pages/QDeckProjects';
+import QDeckProjectPage from '../pages/QDeckProjectPage';
 import { QDeckProvider } from '../components/qdeck/QDeckProvider';
 
 // --- Manage (new) ---
@@ -136,8 +139,11 @@ export function Routes() {
             </QDeckProvider>
           ),
           children: [
-            { index: true, element: <QDeckMyBoards /> },
+            { index: true, element: <QDeckLanding /> },
+            { path: 'my', element: <QDeckMyBoards /> },
             { path: 'public', element: <QDeckAllBoards /> },
+            { path: 'projects', element: <QDeckProjects /> },
+            { path: 'projects/:issuer/:projectId', element: <QDeckProjectPage /> },
             { path: ':issuer/:boardId', element: <QDeckPage /> },
           ],
         },

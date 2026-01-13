@@ -23,11 +23,7 @@ export default function QDeckPage() {
   const navigate = useNavigate();
   const user = useAuth();
 
-  // call-once guard per route key
-  const calledForKey = React.useRef<string>('');
-
   React.useEffect(() => {
-    const key = `${issuer ?? ''}:${boardId ?? ''}`;
     if (!issuer || !boardId) {
       const fallback = user?.name;
       if (fallback && boardId) {
@@ -38,11 +34,8 @@ export default function QDeckPage() {
       return;
     }
 
-    if (calledForKey.current === key) return; // already kicked off for this route
-    calledForKey.current = key;
-
     loadBoardById(issuer, boardId).catch(console.error);
-  }, [issuer, boardId, navigate, user]);
+  }, [issuer, boardId, navigate, user?.name, user?.address, loadBoardById]);
 
   if (!board)
     return (

@@ -55,7 +55,7 @@ import { uniqueId6 } from '../../../utils/ids';
 import { stripPrivateMagic, PRIVATE_MAGIC_B64 } from '../../../constants/qdeckIdentifiers';
 import { collectRecipientPublicKeys } from '../../../utils/qdeckAccess';
 import { getAccountGroups, type GroupSummary } from '../../../utils/qortalApi';
-import { useAuth, VideoPlayer } from 'qapp-core';
+import { AudioPlayerControls, useAuth, VideoPlayer } from 'qapp-core';
 import type { Service } from 'qapp-core';
 import {
   MANIFEST_IDENTIFIER,
@@ -136,7 +136,7 @@ type PreviewDialogState = {
   title?: string;
   content?: string;
   dataUrl?: string;
-  type?: 'text' | 'binary' | 'image' | 'video';
+  type?: 'text' | 'binary' | 'image' | 'video' | 'audio';
   error?: string;
   loading?: boolean;
   steps: PreviewStep[];
@@ -144,6 +144,7 @@ type PreviewDialogState = {
   zoomed?: boolean;
   expanded?: boolean;
   videoUrl?: string;
+  audioUrl?: string;
   chunked?: boolean;
 };
 
@@ -162,6 +163,7 @@ const createPreviewDialogState = (): PreviewDialogState => ({
   expanded: false,
   loading: false,
   videoUrl: undefined,
+  audioUrl: undefined,
   chunked: false,
 });
 
@@ -3699,6 +3701,7 @@ export default function DataExplorer() {
       zoomed: false,
       expanded: false,
       videoUrl: undefined,
+      audioUrl: undefined,
       chunked: false,
     });
     const updateStep = (key: PreviewStepKey, status: PreviewStepStatus, message?: string) => {
@@ -3735,6 +3738,7 @@ export default function DataExplorer() {
               zoomed: false,
               chunked: true,
               videoUrl: fallbackUrl,
+              audioUrl: undefined,
               error: undefined,
             }));
             updateStep('analyze', 'success');
@@ -3753,7 +3757,52 @@ export default function DataExplorer() {
               zoomed: false,
               chunked: false,
               videoUrl: undefined,
+              audioUrl: undefined,
               error: error?.message || 'Unable to load chunked video.',
+            }));
+            return;
+          }
+        } else if (chunkedMime.startsWith('audio/')) {
+          updateStep('analyze', 'active', 'Decrypting chunked audio…');
+          try {
+            cleanupChunkedVideoPreview();
+            const fallbackUrl = await createChunkedBlobUrl(chunkManifest, {
+              onProgress: (index, total) => {
+                updateStep('analyze', 'active', `Decrypting chunked audio (${index}/${total})…`);
+              },
+            });
+            setPreviewChunkedBlobUrl(fallbackUrl);
+            setPreviewDialog((prev) => ({
+              ...prev,
+              open: true,
+              loading: false,
+              title: getResourceLabel(target),
+              type: 'audio',
+              resource: target,
+              zoomed: false,
+              chunked: true,
+              videoUrl: undefined,
+              audioUrl: fallbackUrl,
+              error: undefined,
+            }));
+            updateStep('analyze', 'success');
+            return;
+          } catch (error: any) {
+            updateStep('analyze', 'error', error?.message);
+            cleanupChunkedVideoPreview();
+            setPreviewDialog((prev) => ({
+              ...prev,
+              open: true,
+              loading: false,
+              title: getResourceLabel(target),
+              type: 'binary',
+              content: 'Unable to preview this chunked audio. Use Save to system to download.',
+              resource: target,
+              zoomed: false,
+              chunked: false,
+              videoUrl: undefined,
+              audioUrl: undefined,
+              error: error?.message || 'Unable to load chunked audio.',
             }));
             return;
           }
@@ -3771,6 +3820,7 @@ export default function DataExplorer() {
           zoomed: false,
           chunked: false,
           videoUrl: undefined,
+          audioUrl: undefined,
         }));
         return;
       }
@@ -3786,6 +3836,23 @@ export default function DataExplorer() {
           zoomed: false,
           chunked: false,
           videoUrl: undefined,
+          audioUrl: undefined,
+        }));
+        return;
+      }
+
+      if (loaded.mime.startsWith('audio/')) {
+        setPreviewDialog((prev) => ({
+          ...prev,
+          open: true,
+          loading: false,
+          title: getResourceLabel(target),
+          type: 'audio',
+          resource: target,
+          zoomed: false,
+          chunked: false,
+          videoUrl: undefined,
+          audioUrl: undefined,
         }));
         return;
       }
@@ -3804,6 +3871,7 @@ export default function DataExplorer() {
             zoomed: false,
             chunked: false,
             videoUrl: undefined,
+            audioUrl: undefined,
           }));
         } else {
           setPreviewDialog((prev) => ({
@@ -3817,6 +3885,7 @@ export default function DataExplorer() {
             zoomed: false,
             chunked: false,
             videoUrl: undefined,
+            audioUrl: undefined,
           }));
         }
       } catch {
@@ -3832,6 +3901,7 @@ export default function DataExplorer() {
           zoomed: false,
           chunked: false,
           videoUrl: undefined,
+          audioUrl: undefined,
         }));
       }
     } catch (e: any) {
@@ -3847,6 +3917,7 @@ export default function DataExplorer() {
         zoomed: false,
         chunked: false,
         videoUrl: undefined,
+        audioUrl: undefined,
       }));
     }
   };
@@ -6589,6 +6660,36 @@ export default function DataExplorer() {
                     name: previewDialog.resource.name,
                     identifier: previewDialog.resource.identifier,
                   }}
+                />
+              )}
+            </Box>
+          )}
+          {previewDialog.type === 'audio' && previewDialog.resource && (
+            <Box
+              sx={{
+                width: '100%',
+                maxWidth: '100%',
+              }}
+            >
+              {previewDialog.audioUrl ? (
+                <audio
+                  src={previewDialog.audioUrl}
+                  controls
+                  style={{
+                    width: '100%',
+                  }}
+                />
+              ) : (
+                <AudioPlayerControls
+                  srcs={[
+                    {
+                      service: previewDialog.resource.service as any,
+                      name: previewDialog.resource.name,
+                      identifier: previewDialog.resource.identifier,
+                    },
+                  ]}
+                  controls
+                  sx={{ width: '100%' }}
                 />
               )}
             </Box>

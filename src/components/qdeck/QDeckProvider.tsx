@@ -62,6 +62,8 @@ type LoadOpts = {
 type PublishMode = 'immediate' | 'batch';
 const QUEUE_STORAGE_KEY = 'qdeck_publish_queue_v1';
 const PUBLISH_MODE_STORAGE_KEY = 'qdeck_publish_mode_v1';
+const publishQueueKey = (res: BatchPublishResource) =>
+  `${res.service}::${(res.name || '').toLowerCase()}::${res.identifier}`;
 
 const readPublishQueueFromStorage = (): Record<string, BatchPublishResource[]> => {
   if (typeof window === 'undefined') return {};
@@ -135,6 +137,8 @@ type QDeckCtx = {
   publishMode: PublishMode;
   setPublishMode: (mode: PublishMode) => void;
   pendingPublishCount: (boardId: string) => number;
+  getPublishQueueForBoard: (boardId: string) => BatchPublishResource[];
+  removePublishQueueItem: (boardId: string, resource: BatchPublishResource) => void;
   publishPendingResources: (boardId: string) => Promise<void>;
   isPublishingQueue: (boardId: string) => boolean;
   clearPublishQueue: (boardId?: string) => void;
@@ -232,6 +236,9 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     entries: [],
   });
   const cardsIndexCacheRef = useRef<Record<string, CardsIndexDoc | null>>({});
+  const pendingCardsLoadRef = useRef<string | null>(null);
+  const cardsLoadRetryRef = useRef<Record<string, number>>({});
+  const currentBoardIdRef = useRef<string | null>(null);
   const { publish: publishResources } = useQdnBatchPublisher();
   const { alert } = useAlert();
   const [publishQueue, setPublishQueue] = useState<Record<string, BatchPublishResource[]>>(() =>
@@ -244,6 +251,10 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     cardsIndexCacheRef.current[boardId] = doc;
     setLocalCardsIndex(boardId, doc);
   }, []);
+
+  useEffect(() => {
+    currentBoardIdRef.current = board?.boardId ?? null;
+  }, [board?.boardId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -273,7 +284,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const deduped: BatchPublishResource[] = [];
         for (let i = combined.length - 1; i >= 0; i -= 1) {
           const res = combined[i];
-          const key = `${res.service}::${(res.name || '').toLowerCase()}::${res.identifier}`;
+          const key = publishQueueKey(res);
           if (seen.has(key)) continue;
           seen.add(key);
           deduped.push(res);
@@ -309,6 +320,24 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     (boardId: string) => publishQueue[boardId]?.length ?? 0,
     [publishQueue]
   );
+  const getPublishQueueForBoard = useCallback(
+    (boardId: string) => publishQueue[boardId] ?? [],
+    [publishQueue]
+  );
+  const removePublishQueueItem = useCallback((boardId: string, resource: BatchPublishResource) => {
+    const key = publishQueueKey(resource);
+    setPublishQueue((prev) => {
+      const existing = prev[boardId];
+      if (!existing?.length) return prev;
+      const nextItems = existing.filter((item) => publishQueueKey(item) !== key);
+      if (!nextItems.length) {
+        const next = { ...prev };
+        delete next[boardId];
+        return next;
+      }
+      return { ...prev, [boardId]: nextItems };
+    });
+  }, []);
 
   const queueOrPublishResources = useCallback(
     async (boardId: string, resources: BatchPublishResource[]) => {
@@ -432,8 +461,13 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const loadCardsForBoard = React.useCallback(
     async (_issuerIgnored: string, b: QDeckBoard) => {
       // 0) Access check
+      if (b.visibility === 'private' && !identity.address) {
+        pendingCardsLoadRef.current = b.boardId;
+        return;
+      }
       const canView = await canUserViewBoard(b, { address: identity.address });
       if (!canView) {
+        pendingCardsLoadRef.current = null;
         console.error('[Q-Deck] viewer not allowed; cannot open board');
         setCards({});
         setCardVariants({});
@@ -464,6 +498,9 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         idxDoc: CardsIndexDoc | null,
         opts?: { cache?: boolean }
       ) => {
+        if (usable.length) {
+          delete cardsLoadRetryRef.current[b.boardId];
+        }
         const archivedSet = new Set(idxDoc?.archivedIds ?? []);
         const cacheDoc = idxDoc ?? createEmptyCardsIndexDoc(b.boardId);
         if (opts?.cache !== false) {
@@ -604,6 +641,19 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setCards({});
         setCardVariants({});
         setArchivedCardIds(new Set());
+        if (typeof window !== 'undefined') {
+          const attempts = cardsLoadRetryRef.current[b.boardId] ?? 0;
+          if (attempts < 1) {
+            cardsLoadRetryRef.current[b.boardId] = attempts + 1;
+            window.setTimeout(() => {
+              if (currentBoardIdRef.current !== b.boardId) return;
+              void track(
+                loadCardsForBoard(b.createdBy || identity.name || '', b),
+                `qdeck:cards:retry:${b.boardId}`
+              );
+            }, 1200);
+          }
+        }
         return;
       }
 
@@ -611,8 +661,18 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const usable = await loadDocsForRefs(refs);
       applyLoadedCards(usable, idx);
     },
-    [identity.address, identity.name, cardLimiter]
+    [identity.address, identity.name, cardLimiter, track]
   );
+
+  React.useEffect(() => {
+    if (!board || !identity.address) return;
+    if (pendingCardsLoadRef.current !== board.boardId) return;
+    pendingCardsLoadRef.current = null;
+    void track(
+      loadCardsForBoard(board.createdBy || identity.name || '', board),
+      `qdeck:cards:retry:${board.boardId}`
+    );
+  }, [board, identity.address, identity.name, loadCardsForBoard, track]);
 
   const repairCardsIndex = useCallback(async () => {
     if (!board) throw new Error('No board loaded');
@@ -786,6 +846,9 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         order: partial.order ?? 0,
         isDone: false,
         completedAt: undefined,
+        scheduledStart: partial.scheduledStart,
+        scheduledEnd: partial.scheduledEnd,
+        scheduledAllDay: partial.scheduledAllDay,
         hasBounty: !!partial.hasBounty,
         bountyInfo: partial.hasBounty ? partial.bountyInfo : undefined,
         upvotes: partial.upvotes ?? { currency: 'QASSET', count: 0, totalAmount: '0' },
@@ -1395,6 +1458,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       publishMode,
       setPublishMode,
       pendingPublishCount,
+      getPublishQueueForBoard,
+      removePublishQueueItem,
       publishPendingResources,
       isPublishingQueue,
       clearPublishQueue,
@@ -1429,6 +1494,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       publishMode,
       setPublishMode,
       pendingPublishCount,
+      getPublishQueueForBoard,
+      removePublishQueueItem,
       publishPendingResources,
       isPublishingQueue,
       clearPublishQueue,

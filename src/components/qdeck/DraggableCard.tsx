@@ -16,7 +16,16 @@ import { resolvePrimaryImageDataUrl } from '../../utils/qdeckApi';
 import { priorityMeta, formatMinutes } from './ui';
 import { useTheme } from '@mui/material';
 import { alpha } from '@mui/material/styles';
-import { CSSProperties, FC, MouseEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  CSSProperties,
+  FC,
+  MouseEvent,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 
 type DraggableProps = {
   cardId: string;
@@ -28,7 +37,7 @@ type DraggableProps = {
   forceMinimized?: boolean;
 };
 
-export const DraggableCard: FC<DraggableProps> = ({
+const DraggableCardInner: FC<DraggableProps> = ({
   cardId,
   listId,
   onClick,
@@ -519,3 +528,6 @@ export const DraggableCard: FC<DraggableProps> = ({
     </Paper>
   );
 };
+
+export const DraggableCard = memo(DraggableCardInner);
+DraggableCard.displayName = 'DraggableCard';

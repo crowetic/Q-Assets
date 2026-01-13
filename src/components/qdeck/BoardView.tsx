@@ -13,6 +13,9 @@ import {
 } from 'react';
 
 import { useQDeck } from './QDeckProvider';
+import PublishQueueEditor from './PublishQueueEditor';
+import ManageListsDialog, { type ManageListsDialogHandle } from './ManageListsDialog';
+import CalendarView from './CalendarView';
 import {
   DndContext,
   DragEndEvent,
@@ -34,6 +37,8 @@ import {
   IconButton,
   Menu,
   MenuItem,
+  Checkbox,
+  FormControlLabel,
   List as MList,
   ListItem,
   ListItemIcon,
@@ -55,10 +60,8 @@ import {
 } from '@mui/material';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 // import EditIcon from '@mui/icons-material/Edit';
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import ListAltIcon from '@mui/icons-material/ListAlt';
-import PlaylistAddIcon from '@mui/icons-material/PlaylistAdd';
 import ArchiveIcon from '@mui/icons-material/Archive';
 import UnarchiveIcon from '@mui/icons-material/Unarchive';
 import TuneIcon from '@mui/icons-material/Tune';
@@ -68,7 +71,6 @@ import { ListColumn } from './ListColumn';
 import { Priority } from '../../types/qdeck';
 import CardDialog from './CardDialog';
 // import { publishPrimaryImageForCard } from '../../utils/qdeckApi';
-import { uniqueId6 } from '../../utils/ids';
 import {
   qAssetsRevenueAddress,
   tempQAssetEscrowAccountAddress,
@@ -221,10 +223,9 @@ export const AddCardInline = memo(function AddCardInline({
 
 type BoardViewProps = {
   issuerName: string;
-  onCloneBoard?: (title: string) => Promise<void> | void; // optional external handler
 };
 
-export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
+export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
   const {
     identity,
     board,
@@ -313,12 +314,13 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
   const menuOpen = Boolean(menuEl);
 
   // dialogs
-  const [manageListsOpen, setManageListsOpen] = useState(false);
-  const [cloneOpen, setCloneOpen] = useState(false);
-  const [cloneTitle, setCloneTitle] = useState('');
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [notifyOpen, setNotifyOpen] = useState(false);
+  const [queueEditorOpen, setQueueEditorOpen] = useState(false);
   const [notifyLoading, setNotifyLoading] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [calendarIncludeDone, setCalendarIncludeDone] = useState(false);
+  const manageListsRef = useRef<ManageListsDialogHandle | null>(null);
   const [notifyPreview, setNotifyPreview] = useState<{
     title: string;
     html: string;
@@ -342,7 +344,7 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
     boardLink: string;
   } | null>(null);
 
-  // Manage Lists – drafts keyed by listId
+  // Manage Lists – drafts keyed by listId (inline rename)
   const [listTitleDrafts, setListTitleDrafts] = useState<Record<string, string>>({});
   // --- per-list inline rename state ---
   const [editingListId, setEditingListId] = useState<string | null>(null);
@@ -499,6 +501,8 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
     return out;
   }, [archivedCardIds, cardVariants, board]);
 
+  const sortedLists = useMemo(() => lists.slice().sort((a, b) => a.order - b.order), [lists]);
+
   useEffect(() => {
     if (editingTitle) {
       setTitleInput(board?.title ?? '');
@@ -513,15 +517,6 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
     }
   }, [addingForList]);
 
-  useEffect(() => {
-    if (manageListsOpen && board) {
-      // seed drafts from current board on open
-      const seed: Record<string, string> = {};
-      for (const l of lists) seed[l.listId] = l.title;
-      setListTitleDrafts(seed);
-    }
-  }, [manageListsOpen, board, lists]);
-
   const boardLink = useMemo(() => {
     if (!board) return '';
     return `qortal://APP/Q-Assets/qdeck/${encodeURIComponent(issuerName)}/${board.boardId}`;
@@ -531,6 +526,14 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
     const map = new Map<string, string>();
     for (const l of lists) {
       map.set(l.listId, l.title);
+    }
+    return map;
+  }, [lists]);
+
+  const listColorById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const l of lists) {
+      if (l.faintColor) map.set(l.listId, l.faintColor);
     }
     return map;
   }, [lists]);
@@ -721,20 +724,6 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
     resetBoardChangeLog,
   ]);
 
-  const saveManageListTitles = useCallback(async () => {
-    if (!board) return;
-    const nextLists = lists.map((l) => {
-      const t = (listTitleDrafts[l.listId] ?? l.title).trim();
-      return t && t !== l.title ? { ...l, title: t } : l;
-    });
-    // only persist if any title changed
-    const changed = nextLists.some((l, i) => l.title !== lists[i].title);
-    if (changed) {
-      await persistBoard({ ...board, lists: nextLists, updatedAt: Date.now() });
-    }
-    setManageListsOpen(false);
-  }, [board, listTitleDrafts, persistBoard, lists]);
-
   const cardsByList = useMemo(() => {
     const byList: Record<string, string[]> = {};
     for (const c of Object.values(cards)) {
@@ -752,6 +741,35 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
     }
     return byList;
   }, [cards, sortByPriority]);
+
+  const calendarEvents = useMemo(() => {
+    const hourMs = 60 * 60 * 1000;
+    return Object.values(cards).flatMap((card) => {
+      const hasSchedule = !!card.scheduledStart || !!card.scheduledEnd;
+      const includeCompleted = calendarIncludeDone && !!card.completedAt;
+      if (!hasSchedule && !includeCompleted) return [];
+      const start =
+        card.scheduledStart ??
+        card.scheduledEnd ??
+        (includeCompleted ? card.completedAt : undefined);
+      if (!start) return [];
+      let end = card.scheduledEnd;
+      if (card.isDone && card.completedAt) end = card.completedAt;
+      if (!end) end = card.scheduledAllDay ? start : start + hourMs;
+      if (end < start) end = start;
+      return [
+        {
+          id: card.cardId,
+          title: card.title,
+          start,
+          end,
+          allDay: !!card.scheduledAllDay,
+          color: listColorById.get(card.statusListId),
+          meta: listTitleById.get(card.statusListId) ?? card.statusListId,
+        },
+      ];
+    });
+  }, [cards, calendarIncludeDone, listColorById, listTitleById]);
 
   const getOrderForPosition = useCallback(
     (listId: string, position: AddPosition) => {
@@ -840,8 +858,6 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
     ]
   );
 
-  const sortedLists = useMemo(() => lists.slice().sort((a, b) => a.order - b.order), [lists]);
-
   function ListDroppable({ id, children }: { id: string; children: ReactNode }) {
     const { setNodeRef } = useDroppable({ id });
     return (
@@ -892,8 +908,6 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
   }, []);
   const closeCard = () => setDialogOpen(false);
 
-  if (!board) return <Typography>Loading board…</Typography>;
-
   const saveTitle = async () => {
     const t = titleInput.trim();
     if (!t || !board) {
@@ -906,50 +920,21 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
     setEditingTitle(false);
   };
 
-  const addList = async () => {
-    if (!board) return;
-    const id = uniqueId6();
-    const next = {
-      ...board,
-      lists: [
-        ...board.lists,
-        {
-          listId: id,
-          title: 'New List',
-          order: board.lists.length, // append at end
-          faintColor: undefined,
-        },
-      ],
-      updatedAt: Date.now(),
-    };
-    await persistBoard(next);
-  };
-
-  const removeList = async (listId: string) => {
-    if (!board) return;
-    const nextLists = board.lists
-      .filter((l) => l.listId !== listId)
-      .map((l, i) => ({ ...l, order: i })); // normalize orders
-    await persistBoard({ ...board, lists: nextLists, updatedAt: Date.now() });
-  };
-
-  const handleClone = async () => {
-    const t = cloneTitle.trim() || `${board.title} (Copy)`;
-    setCloneOpen(false);
-    handleCloseMenu();
-    if (onCloneBoard) {
-      await onCloneBoard(t);
-    } else {
-      // Stub: you can wire your clone API here
-      console.log('[Q-Deck] clone requested with title:', t);
-    }
-  };
-
   const handleDelete = async () => {
     setConfirmDeleteOpen(false);
     // choose cascade options
     await deleteBoard({ cascadeCards: false, cascadeComments: false });
   };
+
+  const handleSaveLists = useCallback(
+    async (nextLists: typeof lists) => {
+      if (!board) return;
+      await persistBoard({ ...board, lists: nextLists, updatedAt: Date.now() });
+    },
+    [board, persistBoard]
+  );
+
+  if (!board) return <Typography>Loading board…</Typography>;
 
   // layout vars
   const listCount = board.lists.length;
@@ -1080,12 +1065,17 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
           >
             Clear queue
           </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={() => setQueueEditorOpen(true)}
+            disabled={publishMode !== 'batch' || queuedCount === 0 || queuePublishing}
+          >
+            Edit queue
+          </Button>
         </Box>
 
         {/* Quick actions */}
-        {/* <Button size="small" variant="outlined" startIcon={<PlaylistAddIcon />} onClick={addList}>
-          Add list
-        </Button> */}
         <Button
           size="small"
           variant="outlined"
@@ -1094,6 +1084,14 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
           sx={{ width: { xs: '100%', sm: 'auto' } }}
         >
           View: {isMinimalView ? 'Minimal' : 'Full'}
+        </Button>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => setCalendarOpen(true)}
+          sx={{ width: { xs: '100%', sm: 'auto' } }}
+        >
+          Calendar
         </Button>
         <Button
           size="small"
@@ -1147,7 +1145,7 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
         <Menu anchorEl={menuEl} open={menuOpen} onClose={handleCloseMenu}>
           <MenuItem
             onClick={() => {
-              setManageListsOpen(true);
+              manageListsRef.current?.open();
               handleCloseMenu();
             }}
           >
@@ -1176,15 +1174,6 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
               <SecurityIcon fontSize="small" />
             </ListItemIcon>
             Permissions panel…
-          </MenuItem>
-          <MenuItem
-            onClick={() => {
-              setCloneTitle(`${board.title} (Copy)`);
-              setCloneOpen(true);
-            }}
-          >
-            <ContentCopyIcon fontSize="small" style={{ marginRight: '0.75rem' }} />
-            Clone board…
           </MenuItem>
           <Divider />
           <MenuItem
@@ -1219,162 +1208,155 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
             overflowY: 'auto',
           }}
         >
-          {sortedLists
-            .slice()
-            .sort((a, b) => a.order - b.order)
-            .map((list) => {
-              const listCardIds = cardsByList[list.listId] ?? [];
-              return (
-                <Paper
-                  key={list.listId}
-                  elevation={2}
+          {sortedLists.map((list) => {
+            const listCardIds = cardsByList[list.listId] ?? [];
+            return (
+              <Paper
+                key={list.listId}
+                elevation={2}
+                sx={{
+                  // 100% width on phones; multi-column only at md+
+                  flex: { xs: '1 1 100%', md: '0 1 19%' },
+                  // maxWidth: { xs: '100%', md: '28rem' },
+                  // minWidth: { xs: '100%', md: '50%', lg: '20%' },
+                  minWidth: { xs: '100%', md: '24rem' },
+                  // maxWidth: { xs: '100%', md: '28rem' },
+                  display: 'flex',
+                  flexDirection: 'column',
+                  // maxHeight: '100%',
+                  bgcolor: list.faintColor ?? 'background.paper',
+                  overflowY: 'hidden',
+                  minInlineSize: 0,
+                }}
+              >
+                <Box
                   sx={{
-                    // 100% width on phones; multi-column only at md+
-                    flex: { xs: '1 1 100%', md: '0 1 19%' },
-                    // maxWidth: { xs: '100%', md: '28rem' },
-                    // minWidth: { xs: '100%', md: '50%', lg: '20%' },
-                    minWidth: { xs: '100%', md: '24rem' },
-                    // maxWidth: { xs: '100%', md: '28rem' },
                     display: 'flex',
-                    flexDirection: 'column',
-                    // maxHeight: '100%',
-                    bgcolor: list.faintColor ?? 'background.paper',
-                    overflowY: 'hidden',
-                    minInlineSize: 0,
+                    alignItems: 'center',
+                    gap: 0.5,
+                    px: '0.75rem',
+                    py: '0.5rem',
                   }}
                 >
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 0.5,
-                      px: '0.75rem',
-                      py: '0.5rem',
-                    }}
-                  >
-                    {editingListId === list.listId ? (
-                      <>
-                        <TextField
-                          size="small"
-                          value={editingListTitle}
-                          onChange={(e) => {
-                            setEditingListTitle(e.target.value);
-                            handleListTitleDraftChange(list.listId, e.target.value);
-                          }}
-                          onKeyDown={(e) => handleListTitleKeyDown(e, list.listId, list.title)}
-                          onBlur={() => handleListTitleBlur(list.listId, list.title)}
-                          autoFocus
-                          sx={{ flex: 1, minWidth: 0 }}
-                        />
-                        <Button
-                          size="small"
-                          variant="contained"
-                          onClick={() => handleListTitleSave(list.listId, list.title)}
-                        >
-                          Save
-                        </Button>
-                        <Button size="small" onClick={handleCancelListEdit}>
-                          Cancel
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        <Box sx={{ flex: 1, minWidth: 0 }}>
-                          <Typography
-                            variant="h6"
-                            sx={{ lineHeight: 1.3, userSelect: 'none' }}
-                            onDoubleClick={() => startEditingList(list)}
-                            title="Double-click to rename"
-                          >
-                            {list.title}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {`${listCardIds.length} ${listCardIds.length === 1 ? 'card' : 'cards'}`}
-                          </Typography>
-                        </Box>
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          onClick={() => setAddingForList({ listId: list.listId, position: 'top' })}
-                          disabled={
-                            addingForList?.listId === list.listId &&
-                            addingForList.position === 'top'
-                          }
-                          sx={{ textTransform: 'none' }}
-                        >
-                          Add card
-                        </Button>
-                        <Tooltip title="List options">
-                          <IconButton
-                            size="small"
-                            onClick={(event) => handleOpenListMenu(event, list.listId)}
-                          >
-                            <MoreVertIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      </>
-                    )}
-                  </Box>
-
-                  {addingForList?.listId === list.listId && addingForList.position === 'top' && (
-                    <Box sx={{ px: '0.75rem', pb: '0.5rem' }}>
-                      <AddCardInline
-                        listId={list.listId}
-                        onCancel={() => setAddingForList(null)}
-                        onSubmit={(draft) => handleCreateCard(list.listId, 'top', draft)}
-                      />
-                    </Box>
-                  )}
-                  <ListDroppable id={`list::${list.listId}`}>
-                    <SortableContext
-                      items={listCardIds.map((cid) => `${cid}::${list.listId}`)}
-                      strategy={verticalListSortingStrategy}
-                    >
-                      <Box
-                        sx={{
-                          px: '0.5rem',
-                          pb: '0.5rem',
-                          flex: 1,
-                          minHeight: 0,
-                          // IMPORTANT: allow children to overflow INSIDE, but the Paper can still clip
-                          overflowY: 'auto', // was 'hidden' — let the list scroll; clipping can break hit-testing
-                          pr: '0.25rem',
+                  {editingListId === list.listId ? (
+                    <>
+                      <TextField
+                        size="small"
+                        value={editingListTitle}
+                        onChange={(e) => {
+                          setEditingListTitle(e.target.value);
+                          handleListTitleDraftChange(list.listId, e.target.value);
                         }}
-                      >
-                        <ListColumn
-                          issuerName={issuerName}
-                          list={list}
-                          cardIds={listCardIds}
-                          onCardClick={openCard}
-                          onManualReorder={markManualReorder}
-                          forceMinimized={isMinimalView}
-                        />
-                      </Box>
-                    </SortableContext>
-                  </ListDroppable>
-                  <Box sx={{ p: '0.5rem', borderTop: (t) => `1px solid ${t.palette.divider}` }}>
-                    {addingForList?.listId === list.listId &&
-                    addingForList.position === 'bottom' ? (
-                      <AddCardInline
-                        listId={list.listId}
-                        onCancel={() => setAddingForList(null)}
-                        onSubmit={(draft) => handleCreateCard(list.listId, 'bottom', draft)}
+                        onKeyDown={(e) => handleListTitleKeyDown(e, list.listId, list.title)}
+                        onBlur={() => handleListTitleBlur(list.listId, list.title)}
+                        autoFocus
+                        sx={{ flex: 1, minWidth: 0 }}
                       />
-                    ) : (
+                      <Button
+                        size="small"
+                        variant="contained"
+                        onClick={() => handleListTitleSave(list.listId, list.title)}
+                      >
+                        Save
+                      </Button>
+                      <Button size="small" onClick={handleCancelListEdit}>
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Typography
+                          variant="h6"
+                          sx={{ lineHeight: 1.3, userSelect: 'none' }}
+                          onDoubleClick={() => startEditingList(list)}
+                          title="Double-click to rename"
+                        >
+                          {list.title}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {`${listCardIds.length} ${listCardIds.length === 1 ? 'card' : 'cards'}`}
+                        </Typography>
+                      </Box>
                       <Button
                         size="small"
                         variant="outlined"
-                        onClick={() =>
-                          setAddingForList({ listId: list.listId, position: 'bottom' })
+                        onClick={() => setAddingForList({ listId: list.listId, position: 'top' })}
+                        disabled={
+                          addingForList?.listId === list.listId && addingForList.position === 'top'
                         }
+                        sx={{ textTransform: 'none' }}
                       >
                         Add card
                       </Button>
-                    )}
+                      <Tooltip title="List options">
+                        <IconButton
+                          size="small"
+                          onClick={(event) => handleOpenListMenu(event, list.listId)}
+                        >
+                          <MoreVertIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </>
+                  )}
+                </Box>
+
+                {addingForList?.listId === list.listId && addingForList.position === 'top' && (
+                  <Box sx={{ px: '0.75rem', pb: '0.5rem' }}>
+                    <AddCardInline
+                      listId={list.listId}
+                      onCancel={() => setAddingForList(null)}
+                      onSubmit={(draft) => handleCreateCard(list.listId, 'top', draft)}
+                    />
                   </Box>
-                </Paper>
-              );
-            })}
+                )}
+                <ListDroppable id={`list::${list.listId}`}>
+                  <SortableContext
+                    items={listCardIds.map((cid) => `${cid}::${list.listId}`)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <Box
+                      sx={{
+                        px: '0.5rem',
+                        pb: '0.5rem',
+                        flex: 1,
+                        minHeight: 0,
+                        // IMPORTANT: allow children to overflow INSIDE, but the Paper can still clip
+                        overflowY: 'auto', // was 'hidden' — let the list scroll; clipping can break hit-testing
+                        pr: '0.25rem',
+                      }}
+                    >
+                      <ListColumn
+                        issuerName={issuerName}
+                        list={list}
+                        cardIds={listCardIds}
+                        onCardClick={openCard}
+                        onManualReorder={markManualReorder}
+                        forceMinimized={isMinimalView}
+                      />
+                    </Box>
+                  </SortableContext>
+                </ListDroppable>
+                <Box sx={{ p: '0.5rem', borderTop: (t) => `1px solid ${t.palette.divider}` }}>
+                  {addingForList?.listId === list.listId && addingForList.position === 'bottom' ? (
+                    <AddCardInline
+                      listId={list.listId}
+                      onCancel={() => setAddingForList(null)}
+                      onSubmit={(draft) => handleCreateCard(list.listId, 'bottom', draft)}
+                    />
+                  ) : (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => setAddingForList({ listId: list.listId, position: 'bottom' })}
+                    >
+                      Add card
+                    </Button>
+                  )}
+                </Box>
+              </Paper>
+            );
+          })}
         </Box>
       </DndContext>
 
@@ -1452,105 +1434,42 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName, onCloneBoard }) => {
         </Paper>
       )}
 
-      {/* ===== Manage Lists Dialog ===== */}
+      <PublishQueueEditor
+        open={queueEditorOpen}
+        onClose={() => setQueueEditorOpen(false)}
+        boardId={currentBoardId}
+      />
+
+      <ManageListsDialog
+        ref={manageListsRef}
+        board={board}
+        onSave={handleSaveLists}
+      />
+
       <Dialog
-        open={manageListsOpen}
-        onClose={() => setManageListsOpen(false)}
+        open={calendarOpen}
+        onClose={() => setCalendarOpen(false)}
         fullWidth
-        maxWidth="sm"
+        maxWidth="lg"
         fullScreen={isXs}
       >
-        <DialogTitle>Manage lists</DialogTitle>
+        <DialogTitle>Board calendar</DialogTitle>
         <DialogContent dividers>
-          <MList dense>
-            {sortedLists
-              .slice()
-              .sort((a, b) => a.order - b.order)
-              .map((l) => (
-                <ListItem
-                  key={l.listId}
-                  secondaryAction={
-                    <Stack direction="row" spacing={1}>
-                      <Button
-                        size="small"
-                        color="error"
-                        onClick={() => removeList(l.listId)}
-                        disabled={board.lists.length <= 1}
-                      >
-                        Remove
-                      </Button>
-                    </Stack>
-                  }
-                  sx={{ alignItems: 'flex-start', gap: 1 }}
-                >
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      label="List title"
-                      value={listTitleDrafts[l.listId] ?? l.title}
-                      onChange={(e) =>
-                        setListTitleDrafts((d) => ({ ...d, [l.listId]: e.target.value }))
-                      }
-                      onBlur={async () => {
-                        // commit single field on blur (optional)
-                        const newTitle = (listTitleDrafts[l.listId] ?? l.title).trim();
-                        if (newTitle && newTitle !== l.title) {
-                          await renameList(l.listId, newTitle);
-                        }
-                      }}
-                    />
-                    <Typography variant="caption" sx={{ opacity: 0.7 }}>
-                      Order: {l.order}
-                    </Typography>
-                  </Box>
-                </ListItem>
-              ))}
-          </MList>
-
-          <Box sx={{ mt: '1rem', display: 'flex', gap: 1 }}>
-            <Button variant="outlined" startIcon={<PlaylistAddIcon />} onClick={addList}>
-              Add list
-            </Button>
-            <Box sx={{ flex: 1 }} />
-            <Button variant="contained" onClick={saveManageListTitles}>
-              Save changes
-            </Button>
-          </Box>
-        </DialogContent>
-
-        <DialogActions>
-          <Button onClick={() => setManageListsOpen(false)}>Close</Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* ===== Clone Board Dialog ===== */}
-      <Dialog
-        open={cloneOpen}
-        onClose={() => setCloneOpen(false)}
-        fullWidth
-        maxWidth="sm"
-        fullScreen={isXs}
-      >
-        <DialogTitle>Clone board</DialogTitle>
-        <DialogContent dividers>
-          <TextField
-            fullWidth
-            label="New board title"
-            value={cloneTitle}
-            onChange={(e) => setCloneTitle(e.target.value)}
-            sx={{ mt: '0.5rem' }}
-          />
-          <Typography variant="body2" sx={{ mt: '0.75rem' }}>
-            This will duplicate the board structure. (Wire your clone logic to{' '}
-            <code>onCloneBoard</code>.)
-          </Typography>
+          <Stack spacing={2}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={calendarIncludeDone}
+                  onChange={(e) => setCalendarIncludeDone(e.target.checked)}
+                />
+              }
+              label="Include completed cards without schedules"
+            />
+            <CalendarView events={calendarEvents} />
+          </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setCloneOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleClone}>
-            Clone
-          </Button>
+          <Button onClick={() => setCalendarOpen(false)}>Close</Button>
         </DialogActions>
       </Dialog>
 

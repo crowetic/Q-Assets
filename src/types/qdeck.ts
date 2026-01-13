@@ -9,8 +9,9 @@ export type QDeckVisibility = 'public' | 'private';
 
 export type QDeckTombstone = {
   _type: 'QDECK_TOMBSTONE';
-  entity: 'BOARD' | 'CARD' | 'COMMENTS';
-  boardId: string;
+  entity: 'BOARD' | 'CARD' | 'COMMENTS' | 'PROJECT';
+  boardId?: string;
+  projectId?: string;
   cardId?: string;
   deletedAt: number;
   deletedBy: string; // issuer or address
@@ -38,6 +39,11 @@ export interface BoardsIndexDoc {
   seq: number;
 }
 
+export type QDeckAssetLink = {
+  assetId: string; // asset id or name
+  issuerName?: string;
+};
+
 export type AnyBoard = {
   name: string; // issuer
   shortId: string; // boardId
@@ -47,6 +53,34 @@ export type AnyBoard = {
   service: 'DOCUMENT' | 'DOCUMENT_PRIVATE';
   accessible: boolean; // can the current user open now
   privMode?: 'group' | 'direct'; // only when private & accessible
+};
+
+export interface ProjectsIndexDoc {
+  _type: 'QDECK_PROJECTS_INDEX';
+  version: 1;
+  issuerName: string;
+  projects: Array<{
+    projectId: string;
+    title: string;
+    createdAt: number;
+    updatedAt: number;
+    visibility?: 'public' | 'private';
+    service?: 'DOCUMENT' | 'DOCUMENT_PRIVATE';
+    mode?: 'group' | 'direct';
+  }>;
+  updatedAt: number;
+  seq: number;
+}
+
+export type AnyProject = {
+  name: string; // issuer
+  shortId: string; // projectId
+  title: string;
+  updatedAt?: number;
+  visibility: 'public' | 'private';
+  service: 'DOCUMENT' | 'DOCUMENT_PRIVATE';
+  accessible: boolean;
+  privMode?: 'group' | 'direct';
 };
 
 export type CardsIndexDoc = {
@@ -99,6 +133,37 @@ export interface QDeckBoard {
     groupId?: number; // Qortal groupId used for encryption
     isAdmins?: boolean; // encrypt to admins only if true
     mode?: 'group' | 'direct'; // which encryption mode to use NOTE - direct mode does NOT allow easily adding/removing members in the future. It utilizes direct public keys.
+    recipients?: string[];
+  };
+  assetIds?: QDeckAssetLink[];
+}
+
+export interface QDeckProject {
+  _type: 'QDECK_PROJECT';
+  version: QDeckVersion;
+  projectId: string;
+  title: string;
+  description?: string;
+  createdBy: string; // primary Qortal name (issuer/admin)
+  creatorAddress?: string;
+  createdAt: number;
+  updatedAt: number;
+  groupsAllowed: number[];
+  usersAllowed?: string[];
+  owners?: string[];
+  ownerGroups?: number[];
+  editors?: string[];
+  editorGroups?: number[];
+  adminOverride?: boolean;
+  boards?: Array<{ boardId: string; issuerName: string; colorHex?: string }>;
+  assetIds?: QDeckAssetLink[];
+  seq: number;
+  visibility: QDeckVisibility;
+  service: 'DOCUMENT' | 'DOCUMENT_PRIVATE';
+  privateMeta?: {
+    groupId?: number;
+    isAdmins?: boolean;
+    mode?: 'group' | 'direct';
     recipients?: string[];
   };
 }
@@ -155,6 +220,9 @@ export interface QDeckCard {
   collapsedWhenDone?: boolean; // old field kept for compatibility
   isCollapsed?: boolean;
   completedAt?: number;
+  scheduledStart?: number;
+  scheduledEnd?: number;
+  scheduledAllDay?: boolean;
   hasBounty?: boolean;
   bountyInfo?: BountyInfo;
   upvotes?: UpvoteSummary;
