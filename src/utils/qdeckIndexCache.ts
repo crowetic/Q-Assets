@@ -45,7 +45,7 @@ export function mergeIndexDocs<T extends Record<string, any>>(
       const id = String(it[idKey] ?? '');
       if (!id) continue;
       const prev = map.get(id);
-      if (!prev || (Number(it[updatedKey] ?? 0) > Number(prev[updatedKey] ?? 0))) {
+      if (!prev || Number(it[updatedKey] ?? 0) > Number(prev[updatedKey] ?? 0)) {
         map.set(id, it);
       }
     }
@@ -94,21 +94,25 @@ export function getLocalIndex(issuerName: string): BoardsIndexDoc | null {
     if (!s) return null;
     const doc = JSON.parse(s);
     if (doc?._type === 'QDECK_BOARDS_INDEX') return doc;
-  } catch {}
+  } catch {
+    /* empty */
+  }
   return null;
 }
 
 export function setLocalIndex(issuerName: string, doc: BoardsIndexDoc) {
   try {
     localStorage.setItem(keyFor(issuerName), JSON.stringify(doc));
-  } catch {}
+  } catch {
+    /* empty */
+  }
 }
 
 export function mergeIndices(
   a?: BoardsIndexDoc | null,
   b?: BoardsIndexDoc | null
 ): BoardsIndexDoc | null {
-  return mergeIndexDocs(a, b, {
+  return mergeIndexDocs(a as any, b as any, {
     itemsKey: 'boards',
     idKey: 'boardId',
     updatedKey: 'updatedAt',
@@ -121,7 +125,9 @@ export async function loadBoardsIndexMerged(issuer: string): Promise<BoardsIndex
   try {
     const net = await loadBoardsIndex(issuer);
     remote = normalizeIndexDoc(net, issuer);
-  } catch {}
+  } catch {
+    /* empty */
+  }
   const merged = mergeIndices(local, remote);
   if (merged) setLocalIndex(issuer, merged);
   return merged;
