@@ -7,7 +7,7 @@ import { ASSETS_KEY, Q_ASSET_APP_VERSION } from '../constants/qdnConstants';
 export type AssetsIndex = Record<number, Asset>;
 
 interface CacheShape {
-  v: number; // schema version
+  v: string; // schema version
   t: number; // updatedAt (ms)
   index: AssetsIndex;
 }
