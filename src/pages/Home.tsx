@@ -47,8 +47,8 @@ const Home = () => {
       observer.observe(target);
       return () => observer.disconnect();
     }
-    const timer = window.setTimeout(() => setShowNews(true), 600);
-    return () => window.clearTimeout(timer);
+    const timer = setTimeout(() => setShowNews(true), 600);
+    return () => clearTimeout(timer);
   }, [showNews]);
 
   const panels = [
