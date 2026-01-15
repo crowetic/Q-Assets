@@ -1,12 +1,55 @@
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import HoverPanel from '../components/HoverPanel';
-import { Box } from '@mui/material';
-import QAssetsNewsSection from '../components/news/QAssetsNewsSection';
+import { Box, Skeleton } from '@mui/material';
 // import { Grid } from '@mui/material';
+
+const LazyNewsSection = lazy(() => import('../components/news/QAssetsNewsSection'));
+
+const NewsLoadingPlaceholder = () => (
+  <Box sx={{ width: '100%', maxWidth: '95%', mt: 4 }}>
+    <Skeleton variant="text" width="30%" sx={{ mx: 'auto', mb: 1 }} />
+    <Skeleton variant="text" width="60%" sx={{ mx: 'auto', mb: 2 }} />
+    <Box
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: { xs: '1fr', md: 'repeat(3, 1fr)' },
+        gap: 2,
+      }}
+    >
+      {[0, 1, 2].map((i) => (
+        <Skeleton key={i} variant="rounded" height={160} />
+      ))}
+    </Box>
+  </Box>
+);
 
 const Home = () => {
   // const theme = useTheme();
   const navigate = useNavigate();
+  const newsAnchorRef = useRef<HTMLDivElement | null>(null);
+  const [showNews, setShowNews] = useState(false);
+
+  useEffect(() => {
+    if (showNews) return;
+    const target = newsAnchorRef.current;
+    if (!target) return;
+    if ('IntersectionObserver' in window) {
+      const observer = new IntersectionObserver(
+        ([entry]) => {
+          if (entry.isIntersecting) {
+            setShowNews(true);
+            observer.disconnect();
+          }
+        },
+        { rootMargin: '200px 0px' }
+      );
+      observer.observe(target);
+      return () => observer.disconnect();
+    }
+    const timer = window.setTimeout(() => setShowNews(true), 600);
+    return () => window.clearTimeout(timer);
+  }, [showNews]);
 
   const panels = [
     { title: 'Issue Asset', path: '/issue', icon: '🧬', isEmoji: true },
@@ -50,7 +93,15 @@ const Home = () => {
       </Box>
 
       {/* Q-Assets News hub (list/detail toggles live inside this component) */}
-      <QAssetsNewsSection />
+      <Box ref={newsAnchorRef} sx={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
+        {showNews ? (
+          <Suspense fallback={<NewsLoadingPlaceholder />}>
+            <LazyNewsSection />
+          </Suspense>
+        ) : (
+          <NewsLoadingPlaceholder />
+        )}
+      </Box>
     </Box>
   );
 };

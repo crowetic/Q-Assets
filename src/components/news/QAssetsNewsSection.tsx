@@ -40,6 +40,9 @@ type SelectedState = NewsSummary & {
 
 const maxPerList = 5;
 
+const isAbortError = (error: unknown) =>
+  Boolean(error && typeof error === 'object' && (error as { name?: string }).name === 'AbortError');
+
 function NewsListColumn(props: {
   title: string;
   items: NewsSummary[];
@@ -214,118 +217,110 @@ export default function QAssetsNewsSection() {
   const { memberGroupIds, loading: groupsLoading } = useMemberGroupIds();
 
   const theme = useTheme();
-  const controllerRef = useRef<AbortController | null>(null);
+  const annControllerRef = useRef<AbortController | null>(null);
+  const newsControllerRef = useRef<AbortController | null>(null);
+  const promoControllerRef = useRef<AbortController | null>(null);
 
-  const createAbortController = useCallback(() => {
-    controllerRef.current?.abort();
+  const createAbortController = useCallback((ref: { current: AbortController | null }) => {
+    ref.current?.abort();
     const ctrl = new AbortController();
-    controllerRef.current = ctrl;
+    ref.current = ctrl;
     return ctrl;
   }, []);
 
-  const isSignalCurrent = useCallback(
-    (signal: AbortSignal) => controllerRef.current?.signal === signal,
-    []
-  );
+  const isSignalCurrent = (ref: { current: AbortController | null }, signal: AbortSignal) =>
+    ref.current?.signal === signal;
 
-  const isAbortError = (error: unknown) =>
-    Boolean(
-      error && typeof error === 'object' && (error as { name?: string }).name === 'AbortError'
-    );
-
-  // Initial load of lists
-  const loadNews = useCallback(
+  const loadAnnouncements = useCallback(
     (forceFresh = false) => {
-      const controller = createAbortController();
+      const controller = createAbortController(annControllerRef);
       const signal = controller.signal;
-
       setLoadingAnnouncements(true);
-      setLoadingAssetNews(true);
-      setLoadingPromotions(true);
 
       if (forceFresh) {
         invalidateAnnouncementCache();
       }
 
       const announcementLimit = showMoreAnnouncements ? 50 : 5;
-      const assetNewsLimit = showMoreNews ? 50 : 8;
 
-      const loadAnnouncements = async () => {
+      void (async () => {
         try {
           const results = await fetchAnnouncements(announcementLimit, {
             includeExpired: showArchivedAnnouncements,
             forceFresh,
             signal,
           });
-          if (!isSignalCurrent(signal)) return;
+          if (!isSignalCurrent(annControllerRef, signal)) return;
           setAnnouncements(results);
         } catch (err) {
           if (isAbortError(err)) return;
           console.error('Failed to load Q-Assets announcements', err);
-          if (isSignalCurrent(signal)) {
+          if (isSignalCurrent(annControllerRef, signal)) {
             setAnnouncements([]);
           }
         } finally {
-          if (isSignalCurrent(signal)) {
+          if (isSignalCurrent(annControllerRef, signal)) {
             setLoadingAnnouncements(false);
           }
         }
-      };
-
-      const loadAssetNews = async () => {
-        try {
-          const results = await fetchLatestAssetNews(assetNewsLimit, {
-            includeExpired: showArchivedNews,
-            allowedGroupIds: memberGroupIds,
-            signal,
-          });
-          if (!isSignalCurrent(signal)) return;
-          setAssetNews(results);
-        } catch (err) {
-          if (isAbortError(err)) return;
-          console.error('Failed to load asset news publications', err);
-          if (isSignalCurrent(signal)) {
-            setAssetNews([]);
-          }
-        } finally {
-          if (isSignalCurrent(signal)) {
-            setLoadingAssetNews(false);
-          }
-        }
-      };
-
-      const loadPromotions = async () => {
-        try {
-          const results = await fetchActivePromotions(Date.now(), { signal });
-          if (!isSignalCurrent(signal)) return;
-          setPromotions(results);
-        } catch (err) {
-          if (isAbortError(err)) return;
-          console.error('Failed to load promotions', err);
-          if (isSignalCurrent(signal)) {
-            setPromotions([]);
-          }
-        } finally {
-          if (isSignalCurrent(signal)) {
-            setLoadingPromotions(false);
-          }
-        }
-      };
-
-      void loadAnnouncements();
-      void loadAssetNews();
-      void loadPromotions();
+      })();
     },
-    [
-      createAbortController,
-      isSignalCurrent,
-      memberGroupIds,
-      showArchivedAnnouncements,
-      showArchivedNews,
-      showMoreAnnouncements,
-      showMoreNews,
-    ]
+    [createAbortController, showArchivedAnnouncements, showMoreAnnouncements]
   );
+
+  const loadAssetNews = useCallback(() => {
+    const controller = createAbortController(newsControllerRef);
+    const signal = controller.signal;
+    setLoadingAssetNews(true);
+
+    const assetNewsLimit = showMoreNews ? 50 : 8;
+
+    void (async () => {
+      try {
+        const results = await fetchLatestAssetNews(assetNewsLimit, {
+          includeExpired: showArchivedNews,
+          allowedGroupIds: memberGroupIds,
+          signal,
+        });
+        if (!isSignalCurrent(newsControllerRef, signal)) return;
+        setAssetNews(results);
+      } catch (err) {
+        if (isAbortError(err)) return;
+        console.error('Failed to load asset news publications', err);
+        if (isSignalCurrent(newsControllerRef, signal)) {
+          setAssetNews([]);
+        }
+      } finally {
+        if (isSignalCurrent(newsControllerRef, signal)) {
+          setLoadingAssetNews(false);
+        }
+      }
+    })();
+  }, [createAbortController, memberGroupIds, showArchivedNews, showMoreNews]);
+
+  const loadPromotions = useCallback(() => {
+    const controller = createAbortController(promoControllerRef);
+    const signal = controller.signal;
+    setLoadingPromotions(true);
+
+    void (async () => {
+      try {
+        const results = await fetchActivePromotions(Date.now(), { signal });
+        if (!isSignalCurrent(promoControllerRef, signal)) return;
+        setPromotions(results);
+      } catch (err) {
+        if (isAbortError(err)) return;
+        console.error('Failed to load promotions', err);
+        if (isSignalCurrent(promoControllerRef, signal)) {
+          setPromotions([]);
+        }
+      } finally {
+        if (isSignalCurrent(promoControllerRef, signal)) {
+          setLoadingPromotions(false);
+        }
+      }
+    })();
+  }, [createAbortController]);
 
   const handleClickItem = (item: NewsSummary) => {
     setSelected(item);
@@ -338,24 +333,51 @@ export default function QAssetsNewsSection() {
   };
 
   useEffect(() => {
-    if (groupsLoading) return;
-    loadNews(true);
+    loadAnnouncements();
     return () => {
-      controllerRef.current?.abort();
-      controllerRef.current = null;
+      annControllerRef.current?.abort();
+      annControllerRef.current = null;
     };
-  }, [groupsLoading, loadNews]);
+  }, [loadAnnouncements]);
+
+  useEffect(() => {
+    loadPromotions();
+    return () => {
+      promoControllerRef.current?.abort();
+      promoControllerRef.current = null;
+    };
+  }, [loadPromotions]);
+
+  useEffect(() => {
+    if (groupsLoading) return;
+    loadAssetNews();
+    return () => {
+      newsControllerRef.current?.abort();
+      newsControllerRef.current = null;
+    };
+  }, [groupsLoading, loadAssetNews]);
 
   useEffect(() => {
     const handler = () => {
-      if (groupsLoading) return;
-      loadNews(true);
+      loadAnnouncements(true);
+      loadPromotions();
+      if (!groupsLoading) {
+        loadAssetNews();
+      }
     };
     window.addEventListener(NEWS_REFRESH_EVENT, handler);
     return () => {
       window.removeEventListener(NEWS_REFRESH_EVENT, handler);
     };
-  }, [groupsLoading, loadNews]);
+  }, [groupsLoading, loadAnnouncements, loadAssetNews, loadPromotions]);
+
+  useEffect(() => {
+    return () => {
+      annControllerRef.current?.abort();
+      newsControllerRef.current?.abort();
+      promoControllerRef.current?.abort();
+    };
+  }, []);
 
   const announcementList = announcements ?? [];
 
@@ -609,7 +631,7 @@ export default function QAssetsNewsSection() {
                 emptyText={
                   showArchivedNews
                     ? 'No archived asset news.'
-                    : 'No Assets have not published news yet.'
+                    : 'No Asset news published by issuers recently... '
                 }
                 onClickItem={handleClickItem}
                 variant="news"

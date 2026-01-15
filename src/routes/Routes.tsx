@@ -25,6 +25,7 @@ import QDeckHome from '../pages/QDeckHome';
 import QDeckLanding from '../pages/QDeckLanding';
 import QDeckMyBoards from '../pages/QDeckMyBoards';
 import QDeckPage from '../pages/QDeckPage';
+import QDeckAllProjects from '../pages/QDeckAllProjects';
 import QDeckProjects from '../pages/QDeckProjects';
 import QDeckProjectPage from '../pages/QDeckProjectPage';
 import { QDeckProvider } from '../components/qdeck/QDeckProvider';
@@ -143,6 +144,7 @@ export function Routes() {
             { path: 'my', element: <QDeckMyBoards /> },
             { path: 'public', element: <QDeckAllBoards /> },
             { path: 'projects', element: <QDeckProjects /> },
+            { path: 'projects/all', element: <QDeckAllProjects /> },
             { path: 'projects/:issuer/:projectId', element: <QDeckProjectPage /> },
             { path: ':issuer/:boardId', element: <QDeckPage /> },
           ],

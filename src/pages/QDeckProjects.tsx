@@ -71,7 +71,9 @@ export default function QDeckProjects() {
   const [open, setOpen] = React.useState(false);
   const [title, setTitle] = React.useState('');
   const [description, setDescription] = React.useState('');
-  const [projectDetails, setProjectDetails] = React.useState<Record<string, OwnedProjectDetail>>({});
+  const [projectDetails, setProjectDetails] = React.useState<Record<string, OwnedProjectDetail>>(
+    {}
+  );
 
   const [groupOptions, setGroupOptions] = React.useState<GroupSummary[]>([]);
   const [groupsAllowedIds, setGroupsAllowedIds] = React.useState<number[]>([]);
@@ -180,7 +182,9 @@ export default function QDeckProjects() {
             status: 'error',
             identifier: head.identifier,
             statusMessage:
-              typeof error?.message === 'string' ? error.message : 'Unable to load project metadata.',
+              typeof error?.message === 'string'
+                ? error.message
+                : 'Unable to load project metadata.',
           },
         }));
       }
@@ -209,7 +213,7 @@ export default function QDeckProjects() {
         const isPrivate = h.identifier.startsWith(QDeckId.prefixPrivateProjects);
         const parsed = isPrivate ? parsePrivateProjectIdentV2(h.identifier) : null;
         const shortId = isPrivate
-          ? parsed?.projectId ?? h.identifier
+          ? (parsed?.projectId ?? h.identifier)
           : h.identifier.replace(QDeckId.prefixPublicProjects, '');
         if (!shortId) return;
         try {
@@ -368,9 +372,22 @@ export default function QDeckProjects() {
         spacing={{ xs: 1, sm: 2 }}
         sx={{ mb: { xs: 1.25, sm: 2 } }}
       >
-        <Typography variant="h5" sx={{ lineHeight: 1.2 }}>
-          Q-Deck Projects
-        </Typography>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems="center">
+          <Typography variant="h5" sx={{ lineHeight: 1.2 }}>
+            My Projects
+          </Typography>
+          <Stack direction="row" spacing={1} sx={{ ml: { sm: 1 } }}>
+            <Chip label="My projects" color="primary" />
+            <Chip
+              label="All projects"
+              component={RouterLink}
+              to="/qdeck/projects/all"
+              variant="outlined"
+              clickable
+              color="primary"
+            />
+          </Stack>
+        </Stack>
         <Button variant="contained" onClick={() => setOpen(true)}>
           New project
         </Button>
@@ -417,7 +434,9 @@ export default function QDeckProjects() {
                   borderRadius: 1.5,
                   transition: 'transform 120ms ease, box-shadow 120ms ease',
                   cursor: 'pointer',
-                  ...(isTouch ? {} : { '&:hover': { transform: 'translateY(-1px)', boxShadow: 2 } }),
+                  ...(isTouch
+                    ? {}
+                    : { '&:hover': { transform: 'translateY(-1px)', boxShadow: 2 } }),
                   '&:focus-visible': { outlineOffset: 2 },
                 }}
               >

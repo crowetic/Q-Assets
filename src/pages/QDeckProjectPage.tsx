@@ -18,6 +18,8 @@ import {
   MenuItem,
   Divider,
   Alert,
+  Autocomplete,
+  Avatar,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import PublicIcon from '@mui/icons-material/Public';
@@ -33,15 +35,17 @@ import {
   loadNewestCardsIndex,
   loadCardDoc,
 } from '../utils/qdeckApi';
-import { loadBoardsIndexMerged } from '../utils/qdeckIndexCache';
 import { boardUrl } from '../utils/qdeckApi';
+import { QDeckId } from '../constants/qdeckIdentifiers';
+import { searchSimpleByIdPrefixOnly } from '../utils/searchSimple';
 import { useAlert } from '../components/alerts';
+import { getGroupNameById, getPrimaryAccountName } from '../utils/qortalApi';
 import CalendarView from '../components/qdeck/CalendarView';
 import type { QDeckCard } from '../types/qdeck';
 import pLimit from 'p-limit';
 import { pastelHexFromId } from '../utils/qdeckColors';
-import { getAssetInfo } from '../utils/qortalAssetRequests';
-import { readAssetsIndexSync } from '../bootstrap/assetsBootstrap';
+import { ensureAssetsIndexLoaded, readAssetsIndexSync } from '../bootstrap/assetsBootstrap';
+import { fetchAssetAvatar } from '../utils/fetchAssetAvatar';
 import { useFetchTracker } from '../state/global/fetchTracker';
 import type { BatchPublishResource } from '../utils/useQdnBatchPublisher';
 import { useQdnBatchPublisher } from '../utils/useQdnBatchPublisher';
@@ -121,16 +125,14 @@ const applyBoardPermissions = (project: QDeckProject, board: QDeckBoard): QDeckP
   adminOverride: board.adminOverride,
 });
 
-const formatList = (items?: Array<string | number>) => {
-  const list = (items ?? []).map((v) => String(v)).filter(Boolean);
-  return list.length ? list.join(', ') : 'None';
-};
-
 const normalizeHex = (value: string) => {
   const trimmed = value.trim().toLowerCase();
   if (/^#[0-9a-f]{6}$/.test(trimmed)) return trimmed;
   return null;
 };
+
+const isCoreAssetName = (name?: string) =>
+  !!name && ['QORT', 'QORT-from-QORA', 'Legacy-QORA'].includes(name);
 
 export default function QDeckProjectPage() {
   const { issuer, projectId } = useParams();
@@ -151,13 +153,21 @@ export default function QDeckProjectPage() {
   const [addBoardOpen, setAddBoardOpen] = React.useState(false);
   const [boardIssuer, setBoardIssuer] = React.useState(auth?.name ?? '');
   const [boardIdInput, setBoardIdInput] = React.useState('');
-  const [boardOptions, setBoardOptions] = React.useState<Array<{ boardId: string; title: string }>>(
-    []
-  );
+  const [boardOptions, setBoardOptions] = React.useState<
+    Array<{ boardId: string; title: string; issuerName: string }>
+  >([]);
+  const [boardOptionsLoading, setBoardOptionsLoading] = React.useState(false);
 
   const [pendingBoardAdd, setPendingBoardAdd] = React.useState<PendingBoardAdd | null>(null);
 
-  const [assetInput, setAssetInput] = React.useState('');
+  const [assetSelection, setAssetSelection] = React.useState<{
+    assetId: number;
+    name: string;
+  } | null>(null);
+  const [assetOptions, setAssetOptions] = React.useState<Array<{ assetId: number; name: string }>>(
+    []
+  );
+  const [assetOptionsLoading, setAssetOptionsLoading] = React.useState(false);
   const [calendarIncludeDone, setCalendarIncludeDone] = React.useState(false);
   const [calendarLoading, setCalendarLoading] = React.useState(false);
   const [projectCards, setProjectCards] = React.useState<
@@ -168,8 +178,19 @@ export default function QDeckProjectPage() {
     }>
   >([]);
   const [boardDetails, setBoardDetails] = React.useState<Record<string, QDeckBoard>>({});
+  const [groupNameMap, setGroupNameMap] = React.useState<Record<number, string>>({});
   const [assetDetails, setAssetDetails] = React.useState<
-    Record<string, { status: 'loading' | 'loaded' | 'error'; name?: string; assetId?: number }>
+    Record<
+      string,
+      {
+        status: 'loading' | 'loaded' | 'error';
+        name?: string;
+        assetId?: number;
+        owner?: string;
+        issuerName?: string;
+        avatarUrl?: string | null;
+      }
+    >
   >({});
   const loadTokenRef = React.useRef(0);
   const assetTokenRef = React.useRef(0);
@@ -214,16 +235,69 @@ export default function QDeckProjectPage() {
   }, [projectId, pendingPublishes]);
 
   React.useEffect(() => {
-    const issuerName = auth?.name ?? '';
-    if (!addBoardOpen || !issuerName) return;
+    if (!addBoardOpen) return;
     let alive = true;
     (async () => {
       try {
-        const idx = await loadBoardsIndexMerged(issuerName);
+        setBoardOptionsLoading(true);
+        const [pubHeads, privHeads] = await Promise.all([
+          searchSimpleByIdPrefixOnly(QDeckId.prefixPublicBoards, false),
+          searchSimpleByIdPrefixOnly(QDeckId.prefixPrivateBoards, true),
+        ]);
         if (!alive) return;
-        setBoardOptions((idx?.boards ?? []).map((b) => ({ boardId: b.boardId, title: b.title })));
+
+        const limit = pLimit(4);
+        const options: Array<{ boardId: string; title: string; issuerName: string }> = [];
+        const seen = new Set<string>();
+        const isTombstone = (size?: number) =>
+          typeof size === 'number' && size >= 175 && size <= 177;
+
+        const hydrate = async (
+          head: { identifier: string; name: string; size?: number },
+          hint: 'public' | 'private'
+        ) => {
+          const key = `${head.name}::${head.identifier}`;
+          if (!head?.identifier || !head?.name || seen.has(key)) return;
+          if (isTombstone(head.size)) return;
+          seen.add(key);
+          try {
+            const res = await resolveBoardForReadWithMeta(head.name, head.identifier, hint);
+            const board = res?.doc;
+            if (!board || (board as any)?._type === 'QDECK_TOMBSTONE') {
+              if (hint === 'public') {
+                const shortId = head.identifier.replace(QDeckId.prefixPublicBoards, '');
+                if (shortId) {
+                  options.push({ boardId: shortId, title: shortId, issuerName: head.name });
+                }
+              }
+              return;
+            }
+            options.push({ boardId: board.boardId, title: board.title, issuerName: head.name });
+          } catch {
+            if (hint === 'public') {
+              const shortId = head.identifier.replace(QDeckId.prefixPublicBoards, '');
+              if (shortId) {
+                options.push({ boardId: shortId, title: shortId, issuerName: head.name });
+              }
+            }
+          }
+        };
+
+        await Promise.all([
+          ...pubHeads.map((head) => limit(() => hydrate(head, 'public'))),
+          ...privHeads.map((head) => limit(() => hydrate(head, 'private'))),
+        ]);
+
+        if (!alive) return;
+        const deduped = new Map<string, { boardId: string; title: string; issuerName: string }>();
+        options.forEach((opt) => deduped.set(`${opt.issuerName}:${opt.boardId}`, opt));
+        setBoardOptions(
+          Array.from(deduped.values()).sort((a, b) => a.title.localeCompare(b.title))
+        );
       } catch {
         if (alive) setBoardOptions([]);
+      } finally {
+        if (alive) setBoardOptionsLoading(false);
       }
     })();
     return () => {
@@ -374,10 +448,10 @@ export default function QDeckProjectPage() {
       }
       return;
     }
-    const token = ++assetTokenRef.current;
     const ids = project.assetIds.map((a) => String(a.assetId ?? '').trim()).filter(Boolean);
     const missing = ids.filter((id) => !assetDetails[id]);
     if (!missing.length) return;
+    const token = ++assetTokenRef.current;
     setAssetDetails((prev) => {
       const next = { ...prev };
       for (const id of missing) {
@@ -387,46 +461,210 @@ export default function QDeckProjectPage() {
     });
 
     (async () => {
-      await Promise.all(
-        missing.map(async (id) => {
-          const idKey = String(id ?? '').trim();
-          const isNumeric = /^\d+$/.test(idKey);
-          const numericId = isNumeric ? Number(idKey) : null;
-          if (numericId != null) {
-            const cached = readAssetsIndexSync()?.[numericId];
-            if (cached?.name && assetTokenRef.current === token) {
-              setAssetDetails((prev) => ({
-                ...prev,
-                [idKey]: { status: 'loaded', name: cached.name, assetId: cached.assetId },
-              }));
-              return;
+      const fillFromIndex = (
+        index?: Record<number, { assetId: number; name: string; owner?: string }> | null
+      ) => {
+        if (!index || assetTokenRef.current !== token) return;
+        setAssetDetails((prev) => {
+          const next = { ...prev };
+          let changed = false;
+          for (const id of missing) {
+            const idKey = String(id ?? '').trim();
+            if (next[idKey]?.status === 'loaded') continue;
+            if (!/^\d+$/.test(idKey)) continue;
+            const numericId = Number(idKey);
+            const cached = index[numericId];
+            if (cached?.name) {
+              next[idKey] = {
+                status: 'loaded',
+                name: cached.name,
+                assetId: cached.assetId,
+                owner: cached.owner,
+              };
+              changed = true;
             }
           }
-          try {
-            const info =
-              numericId != null
-                ? await getAssetInfo({ assetId: numericId })
-                : await getAssetInfo({ assetName: idKey });
-            if (assetTokenRef.current !== token) return;
-            setAssetDetails((prev) => ({
-              ...prev,
-              [idKey]: {
-                status: 'loaded',
-                name: info?.name ?? info?.assetName ?? idKey,
-                assetId: info?.assetId ?? numericId ?? undefined,
-              },
-            }));
-          } catch {
-            if (assetTokenRef.current !== token) return;
-            setAssetDetails((prev) => ({
-              ...prev,
-              [idKey]: { status: 'error' },
-            }));
-          }
-        })
-      );
+          return changed ? next : prev;
+        });
+      };
+
+      fillFromIndex(readAssetsIndexSync());
+
+      try {
+        const idx = await ensureAssetsIndexLoaded();
+        fillFromIndex(idx);
+      } catch {
+        /* ignore */
+      }
+
+      if (assetTokenRef.current !== token) return;
+      setAssetDetails((prev) => {
+        const next = { ...prev };
+        let changed = false;
+        for (const id of missing) {
+          const idKey = String(id ?? '').trim();
+          if (next[idKey]?.status === 'loaded') continue;
+          next[idKey] = { status: 'error' };
+          changed = true;
+        }
+        return changed ? next : prev;
+      });
     })();
   }, [project?.assetIds, assetDetails]);
+
+  React.useEffect(() => {
+    if (!project?.assetIds?.length) return;
+    const targets = project.assetIds
+      .map((asset) => String(asset.assetId ?? '').trim())
+      .filter(Boolean)
+      .filter((idKey) => {
+        const detail = assetDetails[idKey];
+        return (
+          detail?.status === 'loaded' && detail?.name && typeof detail.avatarUrl === 'undefined'
+        );
+      });
+    if (!targets.length) return;
+
+    let alive = true;
+    const limit = pLimit(4);
+
+    (async () => {
+      await Promise.all(
+        targets.map((idKey) =>
+          limit(async () => {
+            if (!alive) return;
+            const detail = assetDetails[idKey];
+            if (!detail?.name) return;
+            let issuerName = detail.issuerName;
+            if (!issuerName) {
+              if (isCoreAssetName(detail.name)) {
+                issuerName = 'Q-Assets';
+              } else if (detail.owner) {
+                issuerName = await getPrimaryAccountName(detail.owner).catch(() => '');
+              }
+              if (issuerName) {
+                setAssetDetails((prev) => {
+                  const current = prev[idKey];
+                  if (!current || current.issuerName) return prev;
+                  return { ...prev, [idKey]: { ...current, issuerName } };
+                });
+              }
+            }
+            if (!issuerName) return;
+            const url = await fetchAssetAvatar(issuerName, detail.name).catch(() => null);
+            if (!alive) return;
+            setAssetDetails((prev) => {
+              const current = prev[idKey];
+              if (!current || typeof current.avatarUrl !== 'undefined') return prev;
+              return { ...prev, [idKey]: { ...current, avatarUrl: url } };
+            });
+          })
+        )
+      );
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [project?.assetIds, assetDetails]);
+
+  React.useEffect(() => {
+    if (!project?.projectId) return;
+    const cached = readAssetsIndexSync();
+    if (cached) {
+      const options = Object.values(cached)
+        .map((asset) => ({ assetId: asset.assetId, name: asset.name }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      setAssetOptions(options);
+    }
+
+    let alive = true;
+    setAssetOptionsLoading(true);
+    ensureAssetsIndexLoaded()
+      .then((idx) => {
+        if (!alive) return;
+        const options = Object.values(idx)
+          .map((asset) => ({ assetId: asset.assetId, name: asset.name }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setAssetOptions(options);
+      })
+      .catch(() => {
+        /* ignore */
+      })
+      .finally(() => {
+        if (alive) setAssetOptionsLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [project?.projectId]);
+
+  React.useEffect(() => {
+    const ids = new Set<number>();
+    Object.values(boardDetails).forEach((detail) => {
+      (detail.editorGroups ?? []).forEach((gid) => ids.add(Number(gid)));
+      (detail.ownerGroups ?? []).forEach((gid) => ids.add(Number(gid)));
+      (detail.groupsAllowed ?? []).forEach((gid) => ids.add(Number(gid)));
+    });
+    const missing = Array.from(ids).filter((gid) => Number.isFinite(gid) && !groupNameMap[gid]);
+    if (!missing.length) return;
+    let alive = true;
+    (async () => {
+      const rows = await Promise.all(
+        missing.map(async (gid) => ({
+          gid,
+          name: await getGroupNameById(gid).catch(() => null),
+        }))
+      );
+      if (!alive) return;
+      setGroupNameMap((prev) => {
+        const next = { ...prev };
+        let changed = false;
+        for (const row of rows) {
+          if (row.name && !next[row.gid]) {
+            next[row.gid] = row.name;
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [boardDetails, groupNameMap]);
+
+  const formatGroupLabel = React.useCallback(
+    (gid: number) => {
+      const name = groupNameMap[gid];
+      return name ? `${name} (#${gid})` : `Group #${gid}`;
+    },
+    [groupNameMap]
+  );
+
+  const renderValueChips = React.useCallback(
+    (items?: Array<string | number>, opts?: { group?: boolean }) => {
+      const list = (items ?? [])
+        .map((v) => (opts?.group ? Number(v) : String(v)))
+        .filter((v) => (opts?.group ? Number.isFinite(v as number) : String(v).trim()))
+        .map((v) => (opts?.group ? formatGroupLabel(v as number) : String(v)));
+      if (!list.length) {
+        return (
+          <Typography variant="body2" color="text.secondary">
+            None
+          </Typography>
+        );
+      }
+      return (
+        <Stack direction="row" spacing={0.5} flexWrap="wrap">
+          {list.map((label) => (
+            <Chip key={label} size="small" label={label} variant="outlined" />
+          ))}
+        </Stack>
+      );
+    },
+    [formatGroupLabel]
+  );
 
   const calendarEvents = React.useMemo(() => {
     const hourMs = 60 * 60 * 1000;
@@ -568,8 +806,8 @@ export default function QDeckProjectPage() {
 
   const addAsset = async () => {
     if (!project) return;
-    const assetId = assetInput.trim();
-    if (!assetId) return;
+    if (!assetSelection) return;
+    const assetId = String(assetSelection.assetId).trim();
     const existing = project.assetIds ?? [];
     if (existing.some((a) => a.assetId === assetId)) {
       await alert('That asset is already linked.', 'Add asset', { severity: 'info' });
@@ -580,7 +818,7 @@ export default function QDeckProjectPage() {
       assetIds: [...existing, { assetId }],
     };
     await persistProject(next);
-    setAssetInput('');
+    setAssetSelection(null);
   };
 
   const removeAsset = async (assetId: string) => {
@@ -666,16 +904,27 @@ export default function QDeckProjectPage() {
           >
             Clear queue
           </Button>
-          <Button variant="contained" onClick={() => setAddBoardOpen(true)} disabled={saving}>
-            Add board
-          </Button>
         </Stack>
       </Stack>
 
       <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-        <Typography variant="subtitle1" sx={{ mb: 1 }}>
-          Boards
-        </Typography>
+        <Stack
+          direction={{ xs: 'column', sm: 'row' }}
+          alignItems={{ xs: 'stretch', sm: 'center' }}
+          justifyContent="space-between"
+          spacing={1}
+          sx={{ mb: 1 }}
+        >
+          <Typography variant="subtitle1">Boards</Typography>
+          <Button
+            variant="contained"
+            size="small"
+            onClick={() => setAddBoardOpen(true)}
+            disabled={saving}
+          >
+            Add board
+          </Button>
+        </Stack>
         {!project.boards?.length ? (
           <Typography variant="body2" color="text.secondary">
             No boards attached to this project yet.
@@ -735,27 +984,70 @@ export default function QDeckProjectPage() {
                       Remove
                     </Button>
                   </Stack>
-                  {detail && (
-                    <Stack spacing={0.25}>
-                      <Typography variant="caption" color="text.secondary">
-                        Visibility: {detail.visibility}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Editors: {formatList(detail.editors ?? detail.usersAllowed)}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Editor groups: {formatList(detail.editorGroups ?? detail.groupsAllowed)}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Owners: {formatList(detail.owners)}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Owner groups: {formatList(detail.ownerGroups)}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Admin override: {detail.adminOverride ? 'Yes' : 'No'}
-                      </Typography>
-                    </Stack>
+                  {detail ? (
+                    <Box
+                      sx={{
+                        display: 'grid',
+                        gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
+                        gap: 1,
+                      }}
+                    >
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">
+                          Visibility
+                        </Typography>
+                        <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                          <Chip
+                            size="small"
+                            label={detail.visibility === 'private' ? 'Private' : 'Public'}
+                            color={detail.visibility === 'private' ? 'warning' : 'success'}
+                            variant="outlined"
+                          />
+                        </Stack>
+                      </Box>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">
+                          Editors
+                        </Typography>
+                        {renderValueChips(detail.editors ?? detail.usersAllowed)}
+                      </Box>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">
+                          Editor groups
+                        </Typography>
+                        {renderValueChips(detail.editorGroups ?? detail.groupsAllowed, {
+                          group: true,
+                        })}
+                      </Box>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">
+                          Owners
+                        </Typography>
+                        {renderValueChips(detail.owners)}
+                      </Box>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">
+                          Owner groups
+                        </Typography>
+                        {renderValueChips(detail.ownerGroups, { group: true })}
+                      </Box>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">
+                          Admin override
+                        </Typography>
+                        <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                          <Chip
+                            size="small"
+                            label={detail.adminOverride ? 'Enabled' : 'Off'}
+                            variant="outlined"
+                          />
+                        </Stack>
+                      </Box>
+                    </Box>
+                  ) : (
+                    <Typography variant="caption" color="text.secondary">
+                      Loading board details…
+                    </Typography>
                   )}
                 </Paper>
               );
@@ -769,14 +1061,26 @@ export default function QDeckProjectPage() {
           Assets
         </Typography>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mb: 1.5 }}>
-          <TextField
-            label="Asset ID"
-            value={assetInput}
-            onChange={(e) => setAssetInput(e.target.value)}
-            size="small"
-            fullWidth
+          <Autocomplete
+            options={assetOptions}
+            loading={assetOptionsLoading}
+            getOptionLabel={(option) => `${option.name} (#${option.assetId})`}
+            isOptionEqualToValue={(option, value) => option.assetId === value.assetId}
+            value={assetSelection}
+            onChange={(_, value) => {
+              setAssetSelection(value);
+            }}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="Select asset"
+                size="small"
+                helperText="Select from the Q-Assets index."
+              />
+            )}
+            sx={{ minWidth: { xs: '100%', sm: 240 }, flex: 1 }}
           />
-          <Button variant="outlined" onClick={addAsset} disabled={!assetInput.trim() || saving}>
+          <Button variant="outlined" onClick={addAsset} disabled={!assetSelection || saving}>
             Add asset
           </Button>
         </Stack>
@@ -800,6 +1104,13 @@ export default function QDeckProjectPage() {
                   variant="outlined"
                   sx={{ p: 1, display: 'flex', alignItems: 'center', gap: 1 }}
                 >
+                  <Avatar
+                    src={detail?.avatarUrl ?? undefined}
+                    sx={{ width: 32, height: 32 }}
+                    variant="rounded"
+                  >
+                    {(detail?.name || String(asset.assetId)).slice(0, 1).toUpperCase()}
+                  </Avatar>
                   <Box sx={{ flex: 1, minWidth: 0 }}>
                     <Typography variant="body2" noWrap>
                       {detail?.name ||
@@ -881,28 +1192,34 @@ export default function QDeckProjectPage() {
       <Dialog open={addBoardOpen} onClose={() => setAddBoardOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Add board to project</DialogTitle>
         <DialogContent dividers sx={{ display: 'grid', gap: 1.5 }}>
-          {boardOptions.length ? (
+          {boardOptionsLoading ? (
+            <Alert severity="info">Loading accessible boards…</Alert>
+          ) : boardOptions.length ? (
             <FormControl size="small" fullWidth>
-              <InputLabel id="board-pick">Pick from your boards</InputLabel>
+              <InputLabel id="board-pick">Pick from accessible boards</InputLabel>
               <Select
                 labelId="board-pick"
-                label="Pick from your boards"
-                value={boardIdInput}
+                label="Pick from accessible boards"
+                value={boardIdInput && boardIssuer ? `${boardIssuer}::${boardIdInput}` : ''}
                 onChange={(e) => {
                   const val = e.target.value as string;
-                  setBoardIdInput(val);
-                  setBoardIssuer(auth?.name ?? boardIssuer);
+                  const [issuerName, boardId] = val.split('::');
+                  setBoardIdInput(boardId ?? '');
+                  setBoardIssuer(issuerName ?? '');
                 }}
               >
                 {boardOptions.map((b) => (
-                  <MenuItem key={b.boardId} value={b.boardId}>
-                    {b.title} — {b.boardId}
+                  <MenuItem
+                    key={`${b.issuerName}:${b.boardId}`}
+                    value={`${b.issuerName}::${b.boardId}`}
+                  >
+                    {b.title} — {b.issuerName}/{b.boardId}
                   </MenuItem>
                 ))}
               </Select>
             </FormControl>
           ) : (
-            <Alert severity="info">No boards found in your index.</Alert>
+            <Alert severity="info">No accessible boards found.</Alert>
           )}
 
           <Divider />

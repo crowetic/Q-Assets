@@ -113,6 +113,19 @@ export async function getGroupById(
   };
 }
 
+const groupNameCache = new Map<number, string>();
+
+export async function getGroupNameById(groupId: number): Promise<string | null> {
+  const id = Number(groupId);
+  if (!Number.isFinite(id)) throw new Error('groupId must be a number');
+  const cached = groupNameCache.get(id);
+  if (cached) return cached;
+  const group = await getGroupById(id);
+  const name = group?.groupName?.trim();
+  if (name) groupNameCache.set(id, name);
+  return name || null;
+}
+
 /* ---------- Convenience helpers for Q-Deck ACLs ---------- */
 
 // just the ids

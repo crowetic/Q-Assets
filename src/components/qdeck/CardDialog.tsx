@@ -24,10 +24,15 @@ import {
 } from '@mui/material';
 import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import FlagIcon from '@mui/icons-material/Flag';
 import { useTheme } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import { useQDeck } from '../../components/qdeck/QDeckProvider';
 import { QDeckCard, Priority } from '../../types/qdeck';
 import { upvoteCard, contributeBounty } from '../../components/qdeck/logic';
+import { priorityMeta } from './ui';
 import TiptapEditor from '../TipTapEditor';
 import { resolvePrimaryImageDataUrl, publishPrimaryImageForCard } from '../../utils/qdeckApi';
 import { useAuth } from 'qapp-core';
@@ -71,6 +76,10 @@ export default function CardDialog(props: Props) {
   const { board, cards, updateCard, publishCardAttachment } = useQDeck();
   const card = cards[cardId];
   const { address: userAddress, name: userName } = useAuth();
+  const pMeta = React.useMemo(
+    () => priorityMeta(theme, card?.priority ?? 'NORMAL'),
+    [theme, card?.priority]
+  );
 
   // --- edit rights ---
   const [isInAllowedGroup, setIsInAllowedGroup] = React.useState(false);
@@ -364,6 +373,87 @@ export default function CardDialog(props: Props) {
     backgroundColor: theme.palette.action.hover,
   };
 
+  const updateCardWithRetry = React.useCallback(
+    async (nextCard: QDeckCard, contextLabel: string) => {
+      try {
+        await updateCard(nextCard);
+      } catch (err: any) {
+        if (err?.message?.includes('Stale write')) {
+          console.warn(`Retrying ${contextLabel} after stale seq`, err);
+          const retry = { ...nextCard, seq: nextCard.seq + 1 };
+          try {
+            await updateCard(retry);
+          } catch (retryErr) {
+            console.error(`Failed to ${contextLabel} on retry`, retryErr);
+          }
+        } else {
+          console.error(`Failed to ${contextLabel}`, err);
+        }
+      }
+    },
+    [updateCard]
+  );
+
+  const taskButtonLabel = React.useMemo(() => {
+    if (!card) return 'Start task';
+    if (card.isDone) return 'Completed';
+    const me = userName?.trim();
+    const startedByMe = Boolean(me && card.scheduledStart && card.assignees?.includes(me));
+    return startedByMe ? 'Complete task' : 'Start task';
+  }, [card, userName]);
+
+  const canUseTaskAction = Boolean(card && canEdit && userName?.trim() && !card.isDone);
+  const isTaskCompleted = Boolean(card?.isDone);
+  const isTaskInProgress =
+    Boolean(userName?.trim() && card?.scheduledStart && card?.assignees?.includes(userName));
+  const taskIcon = isTaskCompleted ? (
+    <CheckCircleIcon fontSize="small" />
+  ) : isTaskInProgress ? (
+    <FlagIcon fontSize="small" />
+  ) : (
+    <PlayArrowIcon fontSize="small" />
+  );
+
+  const handleTaskAction = async () => {
+    if (!card) return;
+    const me = userName?.trim();
+    if (!me || !canEdit) return;
+    const now = Date.now();
+    const assignees = Array.from(new Set([...(card.assignees ?? []), me]));
+    const startedByMe = Boolean(card.scheduledStart && assignees.includes(me));
+    const shouldComplete = startedByMe && !card.isDone;
+    const nextCard: QDeckCard = {
+      ...card,
+      assignees,
+      scheduledStart: card.scheduledStart ?? now,
+      scheduledEnd: shouldComplete ? card.scheduledEnd ?? now : card.scheduledEnd,
+      isDone: shouldComplete ? true : card.isDone,
+      completedAt: shouldComplete ? now : card.completedAt,
+      isCollapsed: shouldComplete ? true : card.isCollapsed,
+      collapsedWhenDone: shouldComplete ? true : card.collapsedWhenDone,
+      updatedAt: now,
+      seq: card.seq + 1,
+    };
+    if (shouldComplete && board) {
+      const doneList = board.lists.find((l) => l.title?.toLowerCase().includes('done'));
+      if (doneList && doneList.listId !== card.statusListId) {
+        nextCard.statusListId = doneList.listId;
+      }
+    } else if (board) {
+      const inProgressList = board.lists.find((l) => {
+        const normalized = (l.title ?? '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim();
+        return normalized.includes('in progress');
+      });
+      if (inProgressList && inProgressList.listId !== card.statusListId) {
+        nextCard.statusListId = inProgressList.listId;
+      }
+    }
+    await updateCardWithRetry(nextCard, shouldComplete ? 'complete task' : 'start task');
+  };
+
   return (
     <Dialog
       open={open}
@@ -576,6 +666,43 @@ export default function CardDialog(props: Props) {
             <Typography variant="caption" sx={{ opacity: 0.7 }}>
               If no end time is set, the calendar defaults to a 1-hour block.
             </Typography>
+          </Stack>
+        </Box>
+
+        <Box sx={sectionSx}>
+          <Typography variant="subtitle1" sx={{ mb: 1, fontWeight: 600 }}>
+            Actions
+          </Typography>
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+            <Button
+              size="small"
+              variant={isTaskCompleted ? 'contained' : 'outlined'}
+              color={isTaskCompleted || isTaskInProgress ? 'success' : 'primary'}
+              startIcon={taskIcon}
+              onClick={handleTaskAction}
+              disabled={!canUseTaskAction}
+              sx={{
+                textTransform: 'none',
+                borderRadius: '999px',
+                color: !isTaskCompleted && !isTaskInProgress ? pMeta.border : undefined,
+                borderColor: !isTaskCompleted && !isTaskInProgress ? pMeta.border : undefined,
+                '&:hover': !isTaskCompleted && !isTaskInProgress
+                  ? { borderColor: pMeta.border, backgroundColor: alpha(pMeta.border, 0.08) }
+                  : undefined,
+                '&.Mui-disabled': {
+                  opacity: 1,
+                  color: (t) =>
+                    isTaskCompleted ? t.palette.common.white : t.palette.text.disabled,
+                },
+              }}
+            >
+              {taskButtonLabel}
+            </Button>
+            {!userName?.trim() && (
+              <Typography variant="caption" color="text.secondary">
+                Sign in with a name to start tasks.
+              </Typography>
+            )}
           </Stack>
         </Box>
 

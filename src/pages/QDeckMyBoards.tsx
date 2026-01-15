@@ -511,9 +511,22 @@ export default function MyBoards() {
         spacing={{ xs: 1, sm: 2 }}
         sx={{ mb: { xs: 1.25, sm: 2 } }}
       >
-        <Typography variant="h5" sx={{ lineHeight: 1.2 }}>
-          Q-Deck Boards
-        </Typography>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems="center">
+          <Typography variant="h5" sx={{ lineHeight: 1.2 }}>
+            My Boards
+          </Typography>
+          <Stack direction="row" spacing={1} sx={{ ml: { sm: 1 } }}>
+            <Chip label="My boards" color="primary" />
+            <Chip
+              label="All boards"
+              component={RouterLink}
+              to="/qdeck/public"
+              variant="outlined"
+              clickable
+              color="primary"
+            />
+          </Stack>
+        </Stack>
 
         <Stack
           direction="row"

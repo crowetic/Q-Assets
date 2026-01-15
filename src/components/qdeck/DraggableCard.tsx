@@ -1,7 +1,17 @@
 import { useQDeck } from './QDeckProvider';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Paper, Box, Typography, IconButton, Avatar, Chip, Stack, Tooltip } from '@mui/material';
+import {
+  Paper,
+  Box,
+  Typography,
+  IconButton,
+  Avatar,
+  Chip,
+  Stack,
+  Tooltip,
+  Button,
+} from '@mui/material';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
@@ -11,11 +21,14 @@ import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import ArchiveIcon from '@mui/icons-material/Archive';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import FlagIcon from '@mui/icons-material/Flag';
 import { fetchAccountAvatarDataUrl } from '../../utils/qdnAvatar';
 import { resolvePrimaryImageDataUrl } from '../../utils/qdeckApi';
 import { priorityMeta, formatMinutes } from './ui';
 import { useTheme } from '@mui/material';
 import { alpha } from '@mui/material/styles';
+import { useAuth } from 'qapp-core';
 import {
   CSSProperties,
   FC,
@@ -58,6 +71,7 @@ const DraggableCardInner: FC<DraggableProps> = ({
     comments,
     loadCommentsForCard,
   } = useQDeck();
+  const { name: userName } = useAuth();
   const card = cards[cardId];
   const commentThread = comments[cardId];
   const commentCount = commentThread?.comments?.length ?? 0;
@@ -82,8 +96,18 @@ const DraggableCardInner: FC<DraggableProps> = ({
   const pMeta = priorityMeta(theme, card.priority);
   const PriIcon = pMeta.icon;
   const isDone = Boolean(card?.isDone);
-  const cardBorder = isDone ? theme.palette.success.main : pMeta.border;
-  const cardBg = isDone ? alpha(theme.palette.success.light, 0.25) : pMeta.bg;
+  const isCardInProgress = Boolean(card?.scheduledStart && !card?.isDone);
+  const baseTint = alpha(pMeta.border, 0.08);
+  const cardBorder = isDone
+    ? theme.palette.grey[500]
+    : isCardInProgress
+      ? theme.palette.success.main
+      : 'transparent';
+  const cardBg = isDone
+    ? alpha(theme.palette.grey[600], 0.18)
+    : isCardInProgress
+      ? alpha(theme.palette.success.main, 0.04)
+      : baseTint;
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -128,6 +152,20 @@ const DraggableCardInner: FC<DraggableProps> = ({
     return doneList?.listId;
   }, [board?.lists]);
 
+  const isInProgressTitle = useCallback((title?: string) => {
+    const normalized = (title ?? '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+    return normalized.includes('in progress');
+  }, []);
+
+  const inProgressListId = useMemo(() => {
+    const lists = board?.lists ?? [];
+    const hit = lists.find((l) => isInProgressTitle(l.title));
+    return hit?.listId;
+  }, [board?.lists, isInProgressTitle]);
+
   const handleArchive = useCallback(
     async (event: MouseEvent<HTMLButtonElement>) => {
       event.stopPropagation();
@@ -138,6 +176,27 @@ const DraggableCardInner: FC<DraggableProps> = ({
       }
     },
     [archiveCard, cardId]
+  );
+
+  const updateCardWithRetry = useCallback(
+    async (nextCard: typeof card, contextLabel: string) => {
+      try {
+        await updateCard(nextCard);
+      } catch (err: any) {
+        if (err?.message?.includes('Stale write')) {
+          console.warn(`Retrying ${contextLabel} after stale seq`, err);
+          const retry = { ...nextCard, seq: nextCard.seq + 1 };
+          try {
+            await updateCard(retry);
+          } catch (retryErr) {
+            console.error(`Failed to ${contextLabel} on retry`, retryErr);
+          }
+        } else {
+          console.error(`Failed to ${contextLabel}`, err);
+        }
+      }
+    },
+    [updateCard]
   );
 
   const handleToggleComplete = useCallback(
@@ -159,23 +218,68 @@ const DraggableCardInner: FC<DraggableProps> = ({
         nextCard.statusListId = doneListId;
         nextCard.order = doneOrder;
       }
-      try {
-        await updateCard(nextCard);
-      } catch (err: any) {
-        if (err?.message?.includes('Stale write')) {
-          console.warn('Retrying complete toggle after stale seq', err);
-          nextCard.seq += 1;
-          try {
-            await updateCard(nextCard);
-          } catch (retryErr) {
-            console.error('Failed to toggle complete on retry', retryErr);
-          }
-        } else {
-          console.error('Failed to toggle complete', err);
-        }
-      }
+      await updateCardWithRetry(nextCard, 'toggle complete');
     },
-    [card, cards, doneListId, updateCard]
+    [card, cards, doneListId, updateCardWithRetry]
+  );
+
+  const taskButtonLabel = useMemo(() => {
+    if (!card) return 'Start task';
+    if (card.isDone) return 'Completed';
+    const me = userName?.trim();
+    const startedByMe = Boolean(me && card.scheduledStart && card.assignees?.includes(me));
+    return startedByMe ? 'Complete task' : 'Start task';
+  }, [card, userName]);
+
+  const canUseTaskAction = Boolean(card && !card.isDone && userName?.trim());
+  const isTaskCompleted = Boolean(card?.isDone);
+  const isTaskInProgress = Boolean(
+    userName?.trim() && card?.scheduledStart && card?.assignees?.includes(userName)
+  );
+  const taskIcon = isTaskCompleted ? (
+    <CheckCircleIcon fontSize="small" />
+  ) : isTaskInProgress ? (
+    <FlagIcon fontSize="small" />
+  ) : (
+    <PlayArrowIcon fontSize="small" />
+  );
+
+  const handleTaskAction = useCallback(
+    async (event: MouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation();
+      if (!card) return;
+      const me = userName?.trim();
+      if (!me) return;
+      const now = Date.now();
+      const assignees = Array.from(new Set([...(card.assignees ?? []), me]));
+      const startedByMe = Boolean(card.scheduledStart && assignees.includes(me));
+      const shouldComplete = startedByMe && !card.isDone;
+      const nextCard: typeof card = {
+        ...card,
+        assignees,
+        scheduledStart: card.scheduledStart ?? now,
+        scheduledEnd: shouldComplete ? (card.scheduledEnd ?? now) : card.scheduledEnd,
+        isDone: shouldComplete ? true : card.isDone,
+        completedAt: shouldComplete ? now : card.completedAt,
+        isCollapsed: shouldComplete ? true : card.isCollapsed,
+        collapsedWhenDone: shouldComplete ? true : card.collapsedWhenDone,
+        updatedAt: now,
+      };
+      nextCard.seq = card.seq + 1;
+      if (shouldComplete && doneListId && doneListId !== card.statusListId) {
+        const doneOrder = Object.values(cards).filter((c) => c.statusListId === doneListId).length;
+        nextCard.statusListId = doneListId;
+        nextCard.order = doneOrder;
+      } else if (!shouldComplete && inProgressListId && inProgressListId !== card.statusListId) {
+        const inProgressOrder = Object.values(cards).filter(
+          (c) => c.statusListId === inProgressListId
+        ).length;
+        nextCard.statusListId = inProgressListId;
+        nextCard.order = inProgressOrder;
+      }
+      await updateCardWithRetry(nextCard, shouldComplete ? 'complete task' : 'start task');
+    },
+    [card, cards, doneListId, inProgressListId, updateCardWithRetry, userName]
   );
 
   const author = card?.createdBy ?? 'U';
@@ -266,9 +370,11 @@ const DraggableCardInner: FC<DraggableProps> = ({
         position: 'relative',
         minHeight: minimized ? '3.5rem' : '5.75rem',
         height: '100%',
-        borderLeft: `0.42rem solid ${cardBorder}`,
-        bgColor: cardBg,
-        '&:hover': { boxShadow: 4, border: '0.1rem', borderColor: 'primary.main.contrastText' },
+        border: '1px solid',
+        borderColor: cardBorder,
+        bgcolor: cardBg,
+        color: isDone ? theme.palette.text.secondary : theme.palette.text.primary,
+        '&:hover': { boxShadow: 4, borderColor: cardBorder || theme.palette.divider },
         cursor: 'pointer',
       }}
       style={style}
@@ -524,6 +630,39 @@ const DraggableCardInner: FC<DraggableProps> = ({
             ))}
           </Stack>
         ) : null}
+
+        <Box sx={{ display: 'flex', justifyContent: 'center', mt: minimized ? 0.25 : 0.6 }}>
+          <Button
+            size="small"
+            variant={isTaskCompleted ? 'contained' : 'outlined'}
+            color={isTaskCompleted || isTaskInProgress ? 'success' : 'primary'}
+            startIcon={taskIcon}
+            onClick={handleTaskAction}
+            disabled={isTaskCompleted ? true : !canUseTaskAction}
+            sx={{
+              height: '1.6rem',
+              minWidth: '6.2rem',
+              px: '0.6rem',
+              textTransform: 'none',
+              fontSize: '0.75rem',
+              lineHeight: 1,
+              borderRadius: '999px',
+              boxShadow: 'none',
+              color: !isTaskCompleted && !isTaskInProgress ? pMeta.border : undefined,
+              borderColor: !isTaskCompleted && !isTaskInProgress ? pMeta.border : undefined,
+              '&:hover':
+                !isTaskCompleted && !isTaskInProgress
+                  ? { borderColor: pMeta.border, backgroundColor: alpha(pMeta.border, 0.08) }
+                  : undefined,
+              '&.Mui-disabled': {
+                opacity: 1,
+                color: (t) => (isTaskCompleted ? t.palette.common.white : t.palette.text.disabled),
+              },
+            }}
+          >
+            {taskButtonLabel}
+          </Button>
+        </Box>
       </Box>
     </Paper>
   );

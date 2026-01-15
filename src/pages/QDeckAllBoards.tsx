@@ -286,7 +286,20 @@ export default function QDeckAllBoards() {
         spacing={{ xs: 1, sm: 2 }}
         sx={{ mb: { xs: 1.25, sm: 2 } }}
       >
-        <Typography variant="h5">All Boards</Typography>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems="center">
+          <Typography variant="h5">All Boards</Typography>
+          <Stack direction="row" spacing={1} sx={{ ml: { sm: 1 } }}>
+            <Chip
+              label="My boards"
+              component={RouterLink}
+              to="/qdeck/my"
+              variant="outlined"
+              clickable
+              color="primary"
+            />
+            <Chip label="All boards" color="primary" />
+          </Stack>
+        </Stack>
         <TextField
           size="small"
           label="Filter"

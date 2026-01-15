@@ -6,6 +6,7 @@ import {
   FC,
   useEffect,
   useMemo,
+  useDeferredValue,
   ReactNode,
   CSSProperties,
   MouseEvent,
@@ -57,6 +58,7 @@ import {
   ToggleButtonGroup,
   useTheme,
   useMediaQuery,
+  InputAdornment,
 } from '@mui/material';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 // import EditIcon from '@mui/icons-material/Edit';
@@ -84,6 +86,7 @@ import SecurityIcon from '@mui/icons-material/Security';
 import { useAlert } from '../alerts';
 import { useNavigate } from 'react-router-dom';
 import { publishScopedNotification } from '../../utils/notificationPublisher';
+import ClearIcon from '@mui/icons-material/Clear';
 
 type NewCardDraft = {
   title: string;
@@ -91,12 +94,14 @@ type NewCardDraft = {
   priority: Priority;
   estimatedMinutes?: number;
   tags: string[];
+  startInProgress?: boolean;
 };
 
 type AddCardInlineProps = {
   listId: string;
   onCancel: () => void;
   onSubmit: (draft: NewCardDraft) => void;
+  canStartInProgress?: boolean;
 };
 
 type AddPosition = 'top' | 'bottom';
@@ -125,12 +130,14 @@ export const AddCardInline = memo(function AddCardInline({
   listId,
   onCancel,
   onSubmit,
+  canStartInProgress,
 }: AddCardInlineProps) {
   const [title, setTitle] = useState('');
   const [quick, setQuick] = useState('');
   const [priority, setPriority] = useState<Priority>('NORMAL');
   const [eta, setEta] = useState<number | ''>('');
   const [tagsCsv, setTagsCsv] = useState('');
+  const [startInProgress, setStartInProgress] = useState(false);
 
   const submit = useCallback(() => {
     const t = title.trim();
@@ -145,8 +152,9 @@ export const AddCardInline = memo(function AddCardInline({
       priority,
       estimatedMinutes: typeof eta === 'number' ? eta : undefined,
       tags,
+      startInProgress,
     });
-  }, [title, quick, priority, eta, tagsCsv, onSubmit]);
+  }, [title, quick, priority, eta, tagsCsv, onSubmit, startInProgress]);
 
   return (
     <Box
@@ -208,6 +216,16 @@ export const AddCardInline = memo(function AddCardInline({
         placeholder="ui, qortal, v1"
         value={tagsCsv}
         onChange={(e) => setTagsCsv(e.target.value)}
+      />
+      <FormControlLabel
+        control={
+          <Checkbox
+            checked={startInProgress}
+            onChange={(e) => setStartInProgress(e.target.checked)}
+            disabled={!canStartInProgress}
+          />
+        }
+        label="Create this card already in progress"
       />
       <Stack direction="row" spacing={1} alignItems="center" justifyContent="flex-end">
         <Button size="small" onClick={onCancel}>
@@ -461,6 +479,8 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
 
   const [viewMode, setViewMode] = useState<'full' | 'minimal'>('full');
   const [viewMenuAnchor, setViewMenuAnchor] = useState<null | HTMLElement>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const isMinimalView = viewMode === 'minimal';
   const openViewMenu = (event: MouseEvent<HTMLElement>) => setViewMenuAnchor(event.currentTarget);
   const closeViewMenu = () => setViewMenuAnchor(null);
@@ -724,9 +744,34 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
     resetBoardChangeLog,
   ]);
 
+  const searchIndex = useMemo(() => {
+    const index = new Map<string, string>();
+    Object.values(cards).forEach((c) => {
+      const listTitle = listTitleById.get(c.statusListId) ?? '';
+      const haystack = [
+        c.title,
+        c.quickDescription,
+        c.cardId,
+        listTitle,
+        ...(c.tags ?? []),
+        ...(c.assignees ?? []),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      index.set(c.cardId, haystack);
+    });
+    return index;
+  }, [cards, listTitleById]);
+
   const cardsByList = useMemo(() => {
+    const needle = deferredSearchQuery.trim().toLowerCase();
     const byList: Record<string, string[]> = {};
     for (const c of Object.values(cards)) {
+      if (needle) {
+        const text = searchIndex.get(c.cardId) ?? '';
+        if (!text.includes(needle)) continue;
+      }
       (byList[c.statusListId] ||= []).push(c.cardId);
     }
     const comparator = (a: string, b: string) => {
@@ -740,7 +785,7 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
       byList[listId].sort(comparator);
     }
     return byList;
-  }, [cards, sortByPriority]);
+  }, [cards, deferredSearchQuery, searchIndex, sortByPriority]);
 
   const calendarEvents = useMemo(() => {
     const hourMs = 60 * 60 * 1000;
@@ -786,6 +831,8 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
   const handleCreateCard = useCallback(
     async (listId: string, position: AddPosition, draft: NewCardDraft) => {
       const order = getOrderForPosition(listId, position);
+      const assignees = draft.startInProgress && identity?.name ? [identity.name] : undefined;
+      const scheduledStart = draft.startInProgress && identity?.name ? Date.now() : undefined;
       try {
         await createCard({
           title: draft.title,
@@ -795,6 +842,8 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
           tags: draft.tags,
           statusListId: listId,
           order,
+          assignees,
+          scheduledStart,
         });
         setAddingForList(null);
       } catch (e: any) {
@@ -855,6 +904,7 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
       getOrderForPosition,
       handleJoinGroup,
       markManualReorder,
+      identity?.name,
     ]
   );
 
@@ -885,12 +935,10 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
       const newIndex = over.data?.current?.sortable?.index ?? oldIndex;
       if (oldIndex !== newIndex) {
         await moveCard(cardId, dstListId, newIndex);
-        markManualReorder();
       }
     } else {
       const newIndex = cardsByList[dstListId]?.length ?? 0;
       await moveCard(cardId, dstListId, newIndex);
-      markManualReorder();
     }
   };
 
@@ -1037,6 +1085,26 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
             flexWrap: 'wrap',
           }}
         >
+          <TextField
+            size="small"
+            label="Search cards"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            sx={{ minWidth: { xs: '100%', sm: '16rem' } }}
+            InputProps={{
+              endAdornment: searchQuery ? (
+                <InputAdornment position="end">
+                  <IconButton
+                    size="small"
+                    aria-label="Clear search"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    <ClearIcon fontSize="small" />
+                  </IconButton>
+                </InputAdornment>
+              ) : null,
+            }}
+          />
           <ToggleButtonGroup
             size="small"
             value={publishMode}
@@ -1192,7 +1260,7 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
         sensors={sensors}
         // More forgiving than closestCenter when columns vary in width/overflow
         collisionDetection={pointerWithin} // or rectIntersection
-        measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+        measuring={{ droppable: { strategy: MeasuringStrategy.WhileDragging } }}
         onDragEnd={onDragEnd}
       >
         <Box
@@ -1307,6 +1375,7 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
                       listId={list.listId}
                       onCancel={() => setAddingForList(null)}
                       onSubmit={(draft) => handleCreateCard(list.listId, 'top', draft)}
+                      canStartInProgress={Boolean(identity?.name)}
                     />
                   </Box>
                 )}
@@ -1343,6 +1412,7 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
                       listId={list.listId}
                       onCancel={() => setAddingForList(null)}
                       onSubmit={(draft) => handleCreateCard(list.listId, 'bottom', draft)}
+                      canStartInProgress={Boolean(identity?.name)}
                     />
                   ) : (
                     <Button
@@ -1440,11 +1510,7 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
         boardId={currentBoardId}
       />
 
-      <ManageListsDialog
-        ref={manageListsRef}
-        board={board}
-        onSave={handleSaveLists}
-      />
+      <ManageListsDialog ref={manageListsRef} board={board} onSave={handleSaveLists} />
 
       <Dialog
         open={calendarOpen}

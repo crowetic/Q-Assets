@@ -36,9 +36,9 @@ export function priorityMeta(theme: Theme, p: Priority) {
     default:
       return {
         icon: LowPriorityIcon,
-        bg: theme.palette.success.dark,
-        fg: theme.palette.success.contrastText,
-        border: theme.palette.success.main,
+        bg: theme.palette.secondary.dark,
+        fg: theme.palette.secondary.contrastText,
+        border: theme.palette.secondary.main,
         label: 'low',
       };
   }

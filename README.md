@@ -2,6 +2,12 @@
 
 Q-Assets is an asset issuance, management, trading, and information Q-App for the Qortal Blockchain.
 
+## News & Notifications
+
+- Browse announcements, asset news, and promotions from the home page.
+- Load the news feed on demand so the home page stays snappy.
+- Join the Q-Assets notifications group from the prompt below the header to receive updates.
+
 ## QDN Data Explorer
 
 - Browse published QDN data by service, name, and folder structure.
@@ -11,10 +17,18 @@ Q-Assets is an asset issuance, management, trading, and information Q-App for th
 ## Q-Deck Boards
 
 - Create and manage collaborative boards with cards, comments, and attachments.
+- Switch between My Boards and All Boards with quick links on the boards page.
 - Queue publishes in batch mode and review/remove queued items before publishing.
+- Start tasks and complete them directly from cards to set start/end dates and mark work done.
+- Optionally create cards already in progress to prefill the start task status.
+- Search within a board to quickly find cards by title, tags, assignees, or list name.
 - Reorder lists and customize list colors from the board manager to match your workflow.
 - Use a cleaner comment view with avatars, quick add buttons, and comment counts at a glance.
 - Organize boards into projects, view board permissions and asset links, display scheduled cards in project calendars with per-board colors, and queue project edits for batch publishing.
+- Add boards to projects from all accessible boards (not just ones you created).
+- Pick assets from the Q-Assets index when linking them to projects, with non-blocking metadata hydration.
+- Show asset avatars alongside project asset links for quicker scanning.
+- Switch between My Projects and All Projects to discover public projects (and accessible private ones).
 - Use the Q-Deck overview page for quick navigation to boards and projects.
 
 ## Asset Issuance
