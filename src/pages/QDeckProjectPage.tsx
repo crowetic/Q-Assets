@@ -34,6 +34,8 @@ import {
   buildProjectsIndexPublishPayload,
   loadNewestCardsIndex,
   loadCardDoc,
+  createBoardAndIndex,
+  canEncryptToGroup,
 } from '../utils/qdeckApi';
 import { boardUrl } from '../utils/qdeckApi';
 import { QDeckId } from '../constants/qdeckIdentifiers';
@@ -41,6 +43,7 @@ import { searchSimpleByIdPrefixOnly } from '../utils/searchSimple';
 import { useAlert } from '../components/alerts';
 import { getGroupNameById, getPrimaryAccountName } from '../utils/qortalApi';
 import CalendarView from '../components/qdeck/CalendarView';
+import { CreateBoardDialog } from '../components/qdeck/CreateBoardDialog';
 import type { QDeckCard } from '../types/qdeck';
 import pLimit from 'p-limit';
 import { pastelHexFromId } from '../utils/qdeckColors';
@@ -56,6 +59,14 @@ type PendingBoardAdd = {
   board: QDeckBoard;
   issuerName: string;
   mismatchFields: string[];
+};
+
+type CreateBoardPayload = {
+  title: string;
+  visibility: 'public' | 'private';
+  privateMeta?: { groupId?: number; isAdmins?: boolean };
+  groupsAllowed: number[];
+  usersAllowed?: string[];
 };
 
 const PROJECT_QUEUE_STORAGE_KEY = 'qdeck_project_publish_queue_v1';
@@ -151,7 +162,9 @@ export default function QDeckProjectPage() {
   const [publishingQueue, setPublishingQueue] = React.useState(false);
 
   const [addBoardOpen, setAddBoardOpen] = React.useState(false);
-  const [boardIssuer, setBoardIssuer] = React.useState(auth?.name ?? '');
+  const [createBoardOpen, setCreateBoardOpen] = React.useState(false);
+  const [createBoardBusy, setCreateBoardBusy] = React.useState(false);
+  const [boardIssuer, setBoardIssuer] = React.useState('');
   const [boardIdInput, setBoardIdInput] = React.useState('');
   const [boardOptions, setBoardOptions] = React.useState<
     Array<{ boardId: string; title: string; issuerName: string }>
@@ -263,23 +276,10 @@ export default function QDeckProjectPage() {
           try {
             const res = await resolveBoardForReadWithMeta(head.name, head.identifier, hint);
             const board = res?.doc;
-            if (!board || (board as any)?._type === 'QDECK_TOMBSTONE') {
-              if (hint === 'public') {
-                const shortId = head.identifier.replace(QDeckId.prefixPublicBoards, '');
-                if (shortId) {
-                  options.push({ boardId: shortId, title: shortId, issuerName: head.name });
-                }
-              }
-              return;
-            }
+            if (!board || (board as any)?._type === 'QDECK_TOMBSTONE') return;
             options.push({ boardId: board.boardId, title: board.title, issuerName: head.name });
           } catch {
-            if (hint === 'public') {
-              const shortId = head.identifier.replace(QDeckId.prefixPublicBoards, '');
-              if (shortId) {
-                options.push({ boardId: shortId, title: shortId, issuerName: head.name });
-              }
-            }
+            /* ignore */
           }
         };
 
@@ -722,6 +722,66 @@ export default function QDeckProjectPage() {
     await persistProject(next);
   };
 
+  const createBoardForProject = async (opts: CreateBoardPayload) => {
+    if (!project) return false;
+    setCreateBoardBusy(true);
+    try {
+      if (opts.visibility === 'private') {
+        const groupId = opts.privateMeta?.groupId;
+        if (groupId == null) {
+          await alert('Private boards require a group to encrypt to.', 'Create board', {
+            severity: 'warning',
+          });
+          return false;
+        }
+        const ok = await canEncryptToGroup(groupId, opts.privateMeta?.isAdmins);
+        if (!ok) {
+          await alert(
+            'Missing group encryption key for this private board. Create the key in Qortal or switch to a public board.',
+            'Create board',
+            { severity: 'error' }
+          );
+          return false;
+        }
+      }
+
+      const board = await createBoardAndIndex({
+        issuerName: auth?.name ?? '',
+        title: opts.title,
+        groupsAllowed: opts.groupsAllowed ?? [],
+        usersAllowed: opts.usersAllowed,
+        visibility: opts.visibility,
+        privateOpts:
+          opts.visibility === 'private'
+            ? {
+                groupId: opts.privateMeta?.groupId,
+                isAdmins: opts.privateMeta?.isAdmins,
+                mode: 'group',
+              }
+            : undefined,
+        adminOverride: project.adminOverride,
+      });
+
+      const boardIssuerName = board.createdBy || auth?.name || issuer || '';
+      if (!boardIssuerName) {
+        await alert('Could not resolve the new board issuer.', 'Create board', {
+          severity: 'error',
+        });
+        return false;
+      }
+
+      await handleAddBoard(false, board, boardIssuerName);
+      return true;
+    } catch (e: any) {
+      await alert(e?.message || 'Failed to create board.', 'Create board', {
+        severity: 'error',
+      });
+      return false;
+    } finally {
+      setCreateBoardBusy(false);
+    }
+  };
+
   const submitAddBoard = async () => {
     if (!project) return;
     const issuerName = boardIssuer.trim();
@@ -916,14 +976,24 @@ export default function QDeckProjectPage() {
           sx={{ mb: 1 }}
         >
           <Typography variant="subtitle1">Boards</Typography>
-          <Button
-            variant="contained"
-            size="small"
-            onClick={() => setAddBoardOpen(true)}
-            disabled={saving}
-          >
-            Add board
-          </Button>
+          <Stack direction="row" spacing={1}>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setCreateBoardOpen(true)}
+              disabled={saving || createBoardBusy}
+            >
+              Create board
+            </Button>
+            <Button
+              variant="contained"
+              size="small"
+              onClick={() => setAddBoardOpen(true)}
+              disabled={saving || createBoardBusy}
+            >
+              Add board
+            </Button>
+          </Stack>
         </Stack>
         {!project.boards?.length ? (
           <Typography variant="body2" color="text.secondary">
@@ -1189,6 +1259,13 @@ export default function QDeckProjectPage() {
         )}
       </Paper>
 
+      <CreateBoardDialog
+        open={createBoardOpen}
+        onClose={() => setCreateBoardOpen(false)}
+        onCreate={createBoardForProject}
+        busy={createBoardBusy}
+      />
+
       <Dialog open={addBoardOpen} onClose={() => setAddBoardOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>Add board to project</DialogTitle>
         <DialogContent dividers sx={{ display: 'grid', gap: 1.5 }}>
@@ -1226,17 +1303,18 @@ export default function QDeckProjectPage() {
 
           <TextField
             label="Board issuer"
-            value={boardIssuer}
-            onChange={(e) => setBoardIssuer(e.target.value)}
+            value={boardIdInput ? boardIssuer : ''}
             size="small"
             fullWidth
+            InputProps={{ readOnly: true }}
+            helperText="Selected from the board picker."
           />
           <TextField
             label="Board ID"
             value={boardIdInput}
-            onChange={(e) => setBoardIdInput(e.target.value)}
             size="small"
             fullWidth
+            InputProps={{ readOnly: true }}
           />
         </DialogContent>
         <DialogActions>

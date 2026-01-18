@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.6 - 2026-1-17
+
+- Adjusted Data Explorer tombstone filtering to only apply deletion heuristics to small files and rely on explicit markers.
+- Added the Xqlore explorer design with live activity layout, tag matrix, and app attribution panels.
+- Wired Xqlore to live transaction searches with real activity data, click-through details, and a left-header link.
+- Added Xqlore account/app/minting/trading pages plus an admin console for managing the app identifier registry.
+- Added Xqlore index loaders and a new Xqlore-themed transaction details dialog.
+- Added a Create board action on project pages that creates and attaches a board in one step.
+- Updated project calendars to render tasks spanning multiple days across each day in the range.
+- Hid deleted boards from the project add-board picker by requiring resolvable board metadata.
+
 ## 0.8.5 - 2026-1-14
 
 - Added an All Projects view in Q-Deck to browse public projects alongside accessible private ones.

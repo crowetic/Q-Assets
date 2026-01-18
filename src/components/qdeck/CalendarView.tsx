@@ -52,12 +52,42 @@ export default function CalendarView({ events, initialDate, onEventClick }: Cale
   }, [gridStart]);
 
   const eventsByDay = React.useMemo(() => {
-    const map = new Map<string, CalendarEvent[]>();
+    type CalendarEventSlice = CalendarEvent & { source?: CalendarEvent };
+    const map = new Map<string, CalendarEventSlice[]>();
     for (const ev of events) {
-      const key = dateKey(new Date(ev.start));
-      const arr = map.get(key) ?? [];
-      arr.push(ev);
-      map.set(key, arr);
+      if (!Number.isFinite(ev.start) || !Number.isFinite(ev.end)) continue;
+      const startMs = Math.min(ev.start, ev.end);
+      const endMs = Math.max(ev.start, ev.end);
+      const startDate = new Date(startMs);
+      const endDate = new Date(endMs);
+      const startKey = dateKey(startDate);
+      const endKey = dateKey(endDate);
+      const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+      const last = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+
+      while (cursor <= last) {
+        const key = dateKey(cursor);
+        const dayStart = new Date(cursor);
+        dayStart.setHours(0, 0, 0, 0);
+        const dayEnd = new Date(cursor);
+        dayEnd.setHours(23, 59, 59, 999);
+        const sliceStart = key === startKey ? startMs : dayStart.getTime();
+        const sliceEnd = key === endKey ? endMs : dayEnd.getTime();
+        const sliceAllDay =
+          !!ev.allDay || (sliceStart <= dayStart.getTime() && sliceEnd >= dayEnd.getTime());
+
+        const arr = map.get(key) ?? [];
+        arr.push({
+          ...ev,
+          id: `${ev.id}:${key}`,
+          start: sliceStart,
+          end: sliceEnd,
+          allDay: sliceAllDay,
+          source: ev,
+        });
+        map.set(key, arr);
+        cursor.setDate(cursor.getDate() + 1);
+      }
     }
     for (const list of map.values()) {
       list.sort((a, b) => a.start - b.start);
@@ -130,7 +160,7 @@ export default function CalendarView({ events, initialDate, onEventClick }: Cale
                 {dayEvents.slice(0, 4).map((ev) => (
                   <Box
                     key={ev.id}
-                    onClick={() => onEventClick?.(ev)}
+                    onClick={() => onEventClick?.(ev.source ?? ev)}
                     sx={{
                       p: 0.5,
                       borderRadius: 1,

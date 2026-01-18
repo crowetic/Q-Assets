@@ -493,13 +493,24 @@ const isShareResource = (resource: QdnResource) => {
 };
 
 const TOMBSTONE_SIZE_THRESHOLD = 300;
-const GROUP_KEY_IDENTIFIER_PREFIX = /^grp-\d+-anc/i;
+const TOMBSTONE_STATUS_HINTS = [
+  'tombstone',
+  'resource removed by publisher',
+  'removed by publisher',
+  'deleted',
+];
 
 const isTombstoneResource = (resource: QdnResource): boolean => {
-  const identifier = resource.identifier || '';
-  const metadata = resource.metadata || {};
+  const metadata = getResourceMetadata(resource);
   const tags = getMetadataTags(metadata);
   const description = (metadata as any).description;
+  const title = (metadata as any).title;
+  const size = resource.size;
+  const isSmallResource =
+    typeof size === 'number' &&
+    Number.isFinite(size) &&
+    size > 0 &&
+    size <= TOMBSTONE_SIZE_THRESHOLD;
   const hasStructuredMetadata =
     tags.some(
       (tag) => tag === 'qassets-fs' || tag.startsWith('fs-path:') || tag.startsWith('fs-name:')
@@ -510,25 +521,22 @@ const isTombstoneResource = (resource: QdnResource): boolean => {
         (metadata as any).qassetsFile ||
         decodePrivateStructuredMetadata(description)
     );
-  if (
-    typeof resource.size === 'number' &&
-    resource.size > 0 &&
-    resource.size < TOMBSTONE_SIZE_THRESHOLD &&
-    !GROUP_KEY_IDENTIFIER_PREFIX.test(identifier) &&
-    !hasStructuredMetadata
-  )
-    return true;
-  if ((metadata as any).qassetsTombstone?.deleted) return true;
-  if ((metadata as any).qassets?.tombstone) return true;
-  const title = (metadata as any).title;
-  if (typeof title === 'string' && title.toUpperCase() === 'TOMBSTONE') return true;
-  if (
-    typeof description === 'string' &&
-    description.toLowerCase().includes('resource removed by publisher')
-  )
-    return true;
-  if (tags.some((tag) => typeof tag === 'string' && tag.toLowerCase() === 'qassets-tombstone'))
-    return true;
+  const hasExplicitTombstone =
+    (metadata as any).qassetsTombstone?.deleted ||
+    (metadata as any).qassets?.tombstone ||
+    (typeof title === 'string' && title.toUpperCase() === 'TOMBSTONE') ||
+    (typeof description === 'string' &&
+      description.toLowerCase().includes('resource removed by publisher')) ||
+    tags.some((tag) => typeof tag === 'string' && tag.toLowerCase() === 'qassets-tombstone');
+  if (hasExplicitTombstone) return true;
+  if (!isSmallResource) return false;
+  const statusText = [resource.status?.status, resource.status?.title, resource.status?.description]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .join(' ')
+    .toLowerCase();
+  if (statusText && TOMBSTONE_STATUS_HINTS.some((hint) => statusText.includes(hint))) {
+    return !hasStructuredMetadata;
+  }
   return false;
 };
 

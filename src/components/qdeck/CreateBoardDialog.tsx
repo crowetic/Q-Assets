@@ -28,13 +28,15 @@ type CreateBoardDialogProps = {
     privateMeta?: { groupId?: number; isAdmins?: boolean };
     groupsAllowed: number[]; // normalized to numbers
     usersAllowed?: string[];
-  }) => Promise<void> | void;
+  }) => Promise<boolean | void> | boolean | void;
+  busy?: boolean;
 };
 
 export const CreateBoardDialog: React.FC<CreateBoardDialogProps> = ({
   open,
   onClose,
   onCreate,
+  busy = false,
 }) => {
   const [title, setTitle] = React.useState('');
   const [visibility, setVisibility] = React.useState<QDeckVisibility>('public');
@@ -77,7 +79,8 @@ export const CreateBoardDialog: React.FC<CreateBoardDialogProps> = ({
   );
 
   const isPrivate = visibility === 'private';
-  const createDisabled = !title.trim() || (isPrivate && (groupId == null || Number.isNaN(groupId)));
+  const createDisabled =
+    busy || !title.trim() || (isPrivate && (groupId == null || Number.isNaN(groupId)));
 
   const handleSubmit = async () => {
     const payload = {
@@ -87,8 +90,8 @@ export const CreateBoardDialog: React.FC<CreateBoardDialogProps> = ({
       groupsAllowed,
       usersAllowed: usersAllowedList.length ? usersAllowedList : undefined,
     };
-    await onCreate(payload);
-    onClose();
+    const shouldClose = await onCreate(payload);
+    if (shouldClose !== false) onClose();
   };
 
   return (

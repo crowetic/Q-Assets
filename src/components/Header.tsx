@@ -28,7 +28,8 @@ const Header = () => {
   const compact =
     pathname.startsWith('/trade') ||
     pathname.startsWith('/qdeck/') ||
-    pathname.startsWith('/manage/');
+    pathname.startsWith('/manage/') ||
+    pathname.startsWith('/xqlore');
 
   const navLinks = [
     { label: 'Home', to: '/' },
@@ -51,6 +52,8 @@ const Header = () => {
         return pathname === '/';
       case '/assets':
         return pathname.startsWith('/assets') || pathname.startsWith('/asset');
+      case '/xqlore':
+        return pathname.startsWith('/xqlore');
       case '/issue':
         return pathname.startsWith('/issue');
       case '/portfolio':
@@ -131,6 +134,28 @@ const Header = () => {
       </Button>
     );
   };
+
+  const XqloreButton = ({ size = 'medium' as 'small' | 'medium' }) => {
+    const active = isActiveLink('/xqlore');
+    return (
+      <Button
+        component={Link}
+        to="/xqlore"
+        variant={active ? 'contained' : 'outlined'}
+        size={size}
+        sx={size === 'small' ? smallButtonStyles(active) : buttonStyles(active)}
+      >
+        Xqlore
+      </Button>
+    );
+  };
+
+  const LeftButtons = ({ size = 'medium' as 'small' | 'medium' }) => (
+    <Box sx={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+      <ManageButton size={size} />
+      <XqloreButton size={size} />
+    </Box>
+  );
 
   const Nav = (
     <Box
@@ -241,9 +266,7 @@ const Header = () => {
               <Logo mode="compact" />
             </Box>
             {/* Manage sits to the right of the logo in compact mode */}
-            <Box sx={{ flex: '0 0 auto' }}>
-              <ManageButton size="small" />
-            </Box>
+            <LeftButtons size="small" />
             <Box sx={{ ml: 'auto' }}>{Utilities}</Box>
           </Box>
 
@@ -270,7 +293,7 @@ const Header = () => {
             }}
           >
             <Box sx={{ flex: '0 0 auto' }}>
-              <ManageButton />
+              <LeftButtons />
             </Box>
             <Box sx={{ ml: 'auto' }}>{Utilities}</Box>
           </Box>

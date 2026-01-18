@@ -13,6 +13,16 @@ Q-Assets is an asset issuance, management, trading, and information Q-App for th
 - Browse published QDN data by service, name, and folder structure.
 - Preview images, text, audio, and video; audio/video stream when available with chunked-file fallback.
 - Manage files and sharing without leaving the app.
+- Show small QDN files that are not deleted tombstones.
+
+## Xqlore Explorer
+
+- Scan a live, full-spectrum overview of Qortal activity across assets, names, and QDN data.
+- See ARBITRARY activity with identifiers and app attribution for fast context.
+- Track active apps, tags, and identifiers to understand where chain activity is coming from.
+- Follow a live transaction stream with search, time-range filtering, and click-through details.
+- Jump into dedicated Xqlore pages for accounts, apps, minting, and trading insights.
+- Manage the Xqlore app-identifier registry from the admin console when you have access.
 
 ## Q-Deck Boards
 
@@ -24,8 +34,9 @@ Q-Assets is an asset issuance, management, trading, and information Q-App for th
 - Search within a board to quickly find cards by title, tags, assignees, or list name.
 - Reorder lists and customize list colors from the board manager to match your workflow.
 - Use a cleaner comment view with avatars, quick add buttons, and comment counts at a glance.
-- Organize boards into projects, view board permissions and asset links, display scheduled cards in project calendars with per-board colors, and queue project edits for batch publishing.
+- Organize boards into projects, view board permissions and asset links, display scheduled cards across multi-day spans in project calendars with per-board colors, and queue project edits for batch publishing.
 - Add boards to projects from all accessible boards (not just ones you created).
+- Create new boards directly from a project and auto-attach them.
 - Pick assets from the Q-Assets index when linking them to projects, with non-blocking metadata hydration.
 - Show asset avatars alongside project asset links for quicker scanning.
 - Switch between My Projects and All Projects to discover public projects (and accessible private ones).

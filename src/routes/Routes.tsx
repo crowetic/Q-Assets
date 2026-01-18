@@ -14,6 +14,12 @@ import IssueAsset from '../pages/IssueAsset';
 import TradeMarkets from '../pages/TradeMarkets';
 import TradePair from '../pages/TradePair';
 import Information from '../pages/Information';
+import XqloreExplorer from '../pages/XqloreExplorer';
+import XqloreAccountPage from '../pages/xqlore/XqloreAccountPage';
+import XqloreAppPage from '../pages/xqlore/XqloreAppPage';
+import XqloreMintingPage from '../pages/xqlore/XqloreMintingPage';
+import XqloreTradingPage from '../pages/xqlore/XqloreTradingPage';
+import XqloreAdminPage from '../pages/xqlore/XqloreAdminPage';
 import { PortfolioProvider } from '../portfolio/PortfolioProvider';
 
 import { QortalLinkProvider } from '../components/qortal-links/QortalLinkProvider';
@@ -91,6 +97,12 @@ export function Routes() {
       children: [
         { index: true, element: <Home /> },
         { path: 'assets', element: <AssetExplorer /> },
+        { path: 'xqlore', element: <XqloreExplorer /> },
+        { path: 'xqlore/accounts/:address', element: <XqloreAccountPage /> },
+        { path: 'xqlore/apps/:appName', element: <XqloreAppPage /> },
+        { path: 'xqlore/minting', element: <XqloreMintingPage /> },
+        { path: 'xqlore/trading', element: <XqloreTradingPage /> },
+        { path: 'xqlore/admin', element: <XqloreAdminPage /> },
         { path: 'assets/:assetId', element: <AssetDetail /> },
         { path: 'assetdata/:assetId', element: <AssetDataPage /> },
 

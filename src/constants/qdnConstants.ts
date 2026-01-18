@@ -33,6 +33,13 @@ export const qaPaidPromoHeadId = 'qa_paid_promo_head';
 export const qaPromoRequestPrefix = 'qa_promo_req__'; // user-submitted requests
 export const qaManagementManifestId = 'qassets_management_manifest';
 
+// Xqlore indexes
+export const XQLORE_TX_INDEX_PREFIX = 'xqlore_tx_index__';
+export const XQLORE_TX_INDEX_HEAD_ID = 'xqlore_tx_index_head';
+export const XQLORE_APP_INDEX_PREFIX = 'xqlore_app_index__';
+export const XQLORE_APP_INDEX_HEAD_ID = 'xqlore_app_index_head';
+export const XQLORE_APP_INDEX_WHITELIST_ID = 'xqlore_app_index_whitelist';
+
 // Optional: base prefix for asset news across *all* assets, for global search
 export const assetNewsGlobalPrefix = 'asset_news_pub__';
 export const assetPrivacyPrefix = 'asset_privacy__';
