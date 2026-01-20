@@ -22,7 +22,9 @@ Q-Assets is an asset issuance, management, trading, and information Q-App for th
 - Track active apps, tags, and identifiers to understand where chain activity is coming from.
 - Follow a live transaction stream with search, time-range filtering, and click-through details.
 - Jump into dedicated Xqlore pages for accounts, apps, minting, and trading insights.
+- Use the long-term stats page to build and publish block-range transaction indexes.
 - Manage the Xqlore app-identifier registry from the admin console when you have access.
+- Highlight the Qortal Null Account with an explainer and balance lookup on account pages.
 
 ## Q-Deck Boards
 

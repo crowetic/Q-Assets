@@ -37,7 +37,7 @@ export async function resolveNotificationRecipients(
   const rows = await fetchGroupMembers(false, groupId).catch(() => []);
   if (!rows?.length) return [];
 
-  const limit = pLimit(4);
+  const limit = pLimit(10);
   const seen = new Set<string>();
   const recipients: NotificationRecipient[] = [];
 

@@ -232,7 +232,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
       } catch {
         const assetIds = Object.keys(state.assetsIndex).map(Number);
-        const limit = pLimit(4);
+        const limit = pLimit(10);
         const chunkSize = 400;
         const chunks: number[][] = [];
         for (let i = 0; i < assetIds.length; i += chunkSize)
@@ -269,7 +269,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         .map(Number)
         .filter((id) => !state.assetsIndex[id]);
       if (missingIds.length) {
-        const limit = pLimit(4);
+        const limit = pLimit(10);
         const fetched = await Promise.all(
           missingIds.map((id) =>
             limit(async () => {

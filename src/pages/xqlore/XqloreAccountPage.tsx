@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Button,
-  ButtonBase,
   Chip,
   Divider,
   Paper,
@@ -13,10 +12,13 @@ import {
 import { alpha, useTheme } from '@mui/material/styles';
 import { Link, useParams } from 'react-router-dom';
 import { getAccount, getAllAccountNames } from '../../utils/qortalApi';
+import { getAssetBalances } from '../../utils/qortalAssetRequests';
 import { useQortTransactions } from '../../portfolio/useQortTransactions';
 import { useXqloreAppIndex } from '../../hooks/useXqloreAppIndex';
-import { formatRelativeTime, normalizeTx } from '../../utils/xqloreTx';
+import { formatNumber, formatRelativeTime, normalizeTx } from '../../utils/xqloreTx';
 import XqloreTxDetailsDialog from '../../components/xqlore/XqloreTxDetailsDialog';
+
+const NULL_ACCOUNT_ADDRESS = 'QdSnUy6sUiEnaN87dWmE92g1uQjrvPgrWG';
 
 const XqloreAccountPage = () => {
   const theme = useTheme();
@@ -25,7 +27,10 @@ const XqloreAccountPage = () => {
   const [names, setNames] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loadingAccount, setLoadingAccount] = useState(false);
+  const [qortBalance, setQortBalance] = useState<number | null>(null);
+  const [loadingBalance, setLoadingBalance] = useState(false);
   const [selectedTx, setSelectedTx] = useState<any | null>(null);
+  const isNullAccount = address === NULL_ACCOUNT_ADDRESS;
 
   const { registry } = useXqloreAppIndex();
   const txState = useQortTransactions(address, 30);
@@ -51,6 +56,31 @@ const XqloreAccountPage = () => {
         setNames([]);
       } finally {
         if (active) setLoadingAccount(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [address]);
+
+  useEffect(() => {
+    if (!address) return;
+    let active = true;
+    (async () => {
+      setLoadingBalance(true);
+      try {
+        const rows = await getAssetBalances({ addresses: [address], assetIds: [0] });
+        if (!active) return;
+        const qortRow = Array.isArray(rows)
+          ? rows.find((row: any) => Number(row?.assetId) === 0)
+          : null;
+        const amount = qortRow?.balance ?? qortRow?.amount ?? qortRow?.confirmedBalance;
+        const parsed = Number(amount);
+        setQortBalance(Number.isFinite(parsed) ? parsed : null);
+      } catch {
+        if (active) setQortBalance(null);
+      } finally {
+        if (active) setLoadingBalance(false);
       }
     })();
     return () => {
@@ -100,7 +130,7 @@ const XqloreAccountPage = () => {
         )} 0%, ${alpha(theme.palette.background.paper, 0.92)} 100%)`,
       }}
     >
-      <Box sx={{ maxWidth: 1200, mx: 'auto' }}>
+      <Box sx={{ width: '85vw', maxWidth: 1600, mx: 'auto' }}>
         <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 3, md: 4 }, mb: 3 }}>
           <Stack spacing={1.5}>
             <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2}>
@@ -123,6 +153,24 @@ const XqloreAccountPage = () => {
                 </Button>
               </Stack>
             </Stack>
+            {isNullAccount && (
+              <Paper elevation={0} sx={{ p: 2, borderRadius: 2, backgroundColor: alpha(theme.palette.warning.light, 0.1), border: `1px solid ${alpha(theme.palette.warning.main, 0.4)}` }}>
+                <Stack spacing={1}>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <Chip label="Null Account" color="warning" variant="outlined" />
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                      Qortal Null Account
+                    </Typography>
+                  </Stack>
+                  <Typography variant="body2" color="text.secondary">
+                    The Null Account is an account leveraged by ATs on Qortal and is a burn address
+                    for any assets sent to it. The Null account is owned by no one and has no
+                    private key. Null-owned groups are forced GROUP_APPROVAL controlled, such as
+                    the MINTER group and Dev groups of Qortal.
+                  </Typography>
+                </Stack>
+              </Paper>
+            )}
             {error && (
               <Typography variant="body2" color="error">
                 {error}
@@ -151,17 +199,35 @@ const XqloreAccountPage = () => {
           }}
         >
           {[
-            { label: 'Balance', value: account?.balance ?? account?.confirmedBalance ?? '—' },
+            {
+              label: 'Balance',
+              value: loadingBalance
+                ? 'Loading...'
+                : formatNumber(
+                    qortBalance ?? account?.balance ?? account?.confirmedBalance ?? '—',
+                    8
+                  ),
+            },
             { label: 'Level', value: account?.level ?? '—' },
             { label: 'Blocks Minted', value: account?.blocksMinted ?? '—' },
           ].map((item) => (
             <Paper key={item.label} elevation={0} sx={{ ...surfaceSx, p: 0 }}>
-              <ButtonBase
+              <Box
+                role="button"
+                tabIndex={0}
                 onClick={() =>
                   setSelectedTx({
                     raw: { title: item.label, value: item.value },
                   })
                 }
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setSelectedTx({
+                      raw: { title: item.label, value: item.value },
+                    });
+                  }
+                }}
                 sx={{
                   width: '100%',
                   textAlign: 'left',
@@ -169,6 +235,7 @@ const XqloreAccountPage = () => {
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'flex-start',
+                  cursor: 'pointer',
                 }}
               >
                 <Typography variant="overline" sx={{ letterSpacing: '0.16em' }}>
@@ -177,7 +244,7 @@ const XqloreAccountPage = () => {
                 <Typography variant="h5" sx={{ fontFamily: 'Orbitron' }}>
                   {item.value}
                 </Typography>
-              </ButtonBase>
+              </Box>
             </Paper>
           ))}
         </Box>
@@ -205,9 +272,17 @@ const XqloreAccountPage = () => {
           ) : (
             <Stack spacing={2}>
               {normalizedTxs.map((item) => (
-                <ButtonBase
+                <Box
                   key={item.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setSelectedTx(item.raw)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      setSelectedTx(item.raw);
+                    }
+                  }}
                   sx={{
                     width: '100%',
                     textAlign: 'left',
@@ -218,6 +293,7 @@ const XqloreAccountPage = () => {
                     gap: 2,
                     backgroundColor: alpha(theme.palette.background.default, 0.6),
                     border: `1px solid ${alpha(theme.palette.divider, 0.5)}`,
+                    cursor: 'pointer',
                   }}
                 >
                   <Stack spacing={0.5}>
@@ -247,7 +323,7 @@ const XqloreAccountPage = () => {
                       {item.origin}
                     </Typography>
                   </Stack>
-                </ButtonBase>
+                </Box>
               ))}
               {txState.hasMore && (
                 <Button variant="outlined" onClick={() => txState.loadMore()}>

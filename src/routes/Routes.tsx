@@ -20,6 +20,7 @@ import XqloreAppPage from '../pages/xqlore/XqloreAppPage';
 import XqloreMintingPage from '../pages/xqlore/XqloreMintingPage';
 import XqloreTradingPage from '../pages/xqlore/XqloreTradingPage';
 import XqloreAdminPage from '../pages/xqlore/XqloreAdminPage';
+import XqloreStatsPage from '../pages/xqlore/XqloreStatsPage';
 import { PortfolioProvider } from '../portfolio/PortfolioProvider';
 
 import { QortalLinkProvider } from '../components/qortal-links/QortalLinkProvider';
@@ -103,6 +104,7 @@ export function Routes() {
         { path: 'xqlore/minting', element: <XqloreMintingPage /> },
         { path: 'xqlore/trading', element: <XqloreTradingPage /> },
         { path: 'xqlore/admin', element: <XqloreAdminPage /> },
+        { path: 'xqlore/stats', element: <XqloreStatsPage /> },
         { path: 'assets/:assetId', element: <AssetDetail /> },
         { path: 'assetdata/:assetId', element: <AssetDataPage /> },
 

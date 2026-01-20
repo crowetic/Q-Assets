@@ -13,6 +13,7 @@ import {
   type SimpleHit,
 } from './searchSimple';
 import { listManagementGroupNames } from './access';
+import { getTransactionInfoBySignature } from './qortalApi';
 
 export type XqlorePublisher = {
   name?: string;
@@ -33,6 +34,7 @@ export type XqloreTxIndexEntry = {
   assetId?: number;
   service?: string;
   identifier?: string;
+  tx?: Record<string, any>;
 };
 
 export type XqloreTxIndex = {
@@ -55,6 +57,13 @@ export type XqloreTxIndexHead = {
   blockStart: number;
   blockEnd: number;
   entryCount: number;
+};
+
+export type XqloreTxIndexValidation = {
+  ok: boolean;
+  errors: string[];
+  warnings: string[];
+  checkedSignatures: string[];
 };
 
 export type XqloreAppRegistryEntry = {
@@ -106,6 +115,7 @@ const normalizePublisher = (raw: any): XqlorePublisher | undefined => {
 
 const normalizeTxIndexEntry = (raw: any): XqloreTxIndexEntry | null => {
   if (!raw || typeof raw !== 'object') return null;
+  const rawTx = raw.tx && typeof raw.tx === 'object' ? (raw.tx as Record<string, any>) : null;
   const signature = typeof raw.signature === 'string' ? raw.signature.trim() : '';
   if (!signature) return null;
   const entry: XqloreTxIndexEntry = {
@@ -116,16 +126,25 @@ const normalizeTxIndexEntry = (raw: any): XqloreTxIndexEntry | null => {
   const optNum = (value: any) => (Number.isFinite(Number(value)) ? Number(value) : undefined);
   const optStr = (value: any) =>
     typeof value === 'string' && value.trim() ? value.trim() : undefined;
-  entry.blockHeight = optNum(raw.blockHeight);
-  entry.txGroupId = optNum(raw.txGroupId);
-  entry.creatorAddress = optStr(raw.creatorAddress);
-  entry.creatorName = optStr(raw.creatorName);
-  entry.recipient = optStr(raw.recipient);
-  entry.amount = optNum(raw.amount);
-  entry.fee = optNum(raw.fee);
-  entry.assetId = optNum(raw.assetId);
-  entry.service = optStr(raw.service);
-  entry.identifier = optStr(raw.identifier);
+  entry.blockHeight = optNum(raw.blockHeight ?? rawTx?.blockHeight ?? rawTx?.height);
+  entry.txGroupId = optNum(raw.txGroupId ?? rawTx?.txGroupId ?? rawTx?.groupId);
+  entry.creatorAddress = optStr(
+    raw.creatorAddress ?? rawTx?.creatorAddress ?? rawTx?.creator ?? rawTx?.sender
+  );
+  entry.creatorName = optStr(raw.creatorName ?? rawTx?.creatorName);
+  entry.recipient = optStr(raw.recipient ?? rawTx?.recipient ?? rawTx?.recipientAddress);
+  entry.amount = optNum(raw.amount ?? rawTx?.amount ?? rawTx?.amountAsset ?? rawTx?.total);
+  entry.fee = optNum(raw.fee ?? rawTx?.fee ?? rawTx?.feeAmount);
+  entry.assetId = optNum(raw.assetId ?? rawTx?.assetId);
+  entry.service = optStr(raw.service ?? rawTx?.service ?? rawTx?.data?.service);
+  entry.identifier = optStr(raw.identifier ?? rawTx?.identifier ?? rawTx?.data?.identifier);
+  if (rawTx) entry.tx = rawTx;
+  if (!entry.timestamp && rawTx?.timestamp != null) {
+    entry.timestamp = Number(rawTx.timestamp) || entry.timestamp;
+  }
+  if (entry.type === 'UNKNOWN' && rawTx?.type) {
+    entry.type = String(rawTx.type);
+  }
   return entry;
 };
 
@@ -452,4 +471,148 @@ export async function fetchTxIndexDoc(hit: SimpleHit): Promise<XqloreTxIndex | n
 
 export function decodeIndexPayload(base64: string) {
   return base64ToObject(base64);
+}
+
+export async function buildTxIndexPublishResources(params: {
+  publisherName: string;
+  publisherAddress?: string;
+  blockStart: number;
+  blockEnd: number;
+  entries: XqloreTxIndexEntry[];
+}): Promise<Array<{ name: string; service: Service; identifier: string; base64: string }>> {
+  const { publisherName, publisherAddress, blockStart, blockEnd, entries } = params;
+  const now = Date.now();
+  const identifier = buildTxIndexIdentifier(blockStart, blockEnd);
+  const payload: XqloreTxIndex = {
+    version: 1,
+    createdAt: now,
+    updatedAt: now,
+    publisher: { name: publisherName, address: publisherAddress },
+    blockStart,
+    blockEnd,
+    blockCount: Math.max(0, blockEnd - blockStart + 1),
+    entryCount: entries.length,
+    entries,
+  };
+  const head: XqloreTxIndexHead = {
+    version: 1,
+    updatedAt: now,
+    publisher: { name: publisherName, address: publisherAddress },
+    latestIdentifier: identifier,
+    blockStart,
+    blockEnd,
+    entryCount: entries.length,
+  };
+  const [body64, head64] = await Promise.all([objectToBase64(payload), objectToBase64(head)]);
+  return [
+    {
+      name: publisherName,
+      service: 'DOCUMENT',
+      identifier,
+      base64: body64,
+    },
+    {
+      name: publisherName,
+      service: 'DOCUMENT',
+      identifier: XQLORE_TX_INDEX_HEAD_ID,
+      base64: head64,
+    },
+  ];
+}
+
+const normalizeSig = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+
+export async function validateTxIndexEntries(params: {
+  blockStart: number;
+  blockEnd: number;
+  entries: XqloreTxIndexEntry[];
+  sampleSize?: number;
+}): Promise<XqloreTxIndexValidation> {
+  const { blockStart, blockEnd, entries } = params;
+  const sampleSize = Math.max(1, params.sampleSize ?? 5);
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  if (!Number.isFinite(blockStart) || !Number.isFinite(blockEnd) || blockStart > blockEnd) {
+    errors.push('Invalid block range.');
+  }
+
+  const signatures = new Set<string>();
+  let minHeight = Number.POSITIVE_INFINITY;
+  let maxHeight = 0;
+  let lastHeight = 0;
+  let hasUnsortedHeights = false;
+
+  entries.forEach((entry) => {
+    const sig = normalizeSig(entry.signature);
+    if (!sig) return;
+    if (signatures.has(sig)) errors.push(`Duplicate signature detected: ${sig}`);
+    signatures.add(sig);
+    const height = Number(entry.blockHeight ?? 0);
+    if (Number.isFinite(height) && height > 0) {
+      minHeight = Math.min(minHeight, height);
+      maxHeight = Math.max(maxHeight, height);
+      if (lastHeight && height < lastHeight) hasUnsortedHeights = true;
+      lastHeight = height;
+    }
+  });
+
+  if (entries.length === 0) {
+    warnings.push('No transactions returned for this block range.');
+  }
+
+  if (Number.isFinite(minHeight) && minHeight < blockStart) {
+    errors.push(`Entry block height ${minHeight} is before start block ${blockStart}.`);
+  }
+  if (maxHeight > blockEnd) {
+    errors.push(`Entry block height ${maxHeight} exceeds end block ${blockEnd}.`);
+  }
+  if (hasUnsortedHeights) {
+    warnings.push('Transaction heights are not sorted; consider sorting before publish.');
+  }
+
+  const sigArray = Array.from(signatures);
+  if (!sigArray.length) {
+    errors.push('No signatures available for validation.');
+  }
+
+  const sampled: string[] = [];
+  for (let i = 0; i < Math.min(sampleSize, sigArray.length); i += 1) {
+    const idx = Math.floor(Math.random() * sigArray.length);
+    sampled.push(sigArray[idx]);
+  }
+
+  for (const sig of sampled) {
+    try {
+      const tx = await getTransactionInfoBySignature(sig);
+      if (!tx) {
+        warnings.push(`Signature ${sig} could not be resolved.`);
+        continue;
+      }
+      const match = entries.find((entry) => normalizeSig(entry.signature) === sig);
+      if (!match) {
+        errors.push(`Signature ${sig} missing from index entries.`);
+        continue;
+      }
+      const expectedType = String(match.type || '').toUpperCase();
+      const actualType = String((tx as any)?.type || '').toUpperCase();
+      if (expectedType && actualType && expectedType !== actualType) {
+        errors.push(`Type mismatch for ${sig}: ${expectedType} vs ${actualType}.`);
+      }
+      const expectedHeight = Number(match.blockHeight ?? 0);
+      const actualHeight = Number((tx as any)?.blockHeight ?? 0);
+      if (expectedHeight && actualHeight && expectedHeight !== actualHeight) {
+        errors.push(`Block height mismatch for ${sig}: ${expectedHeight} vs ${actualHeight}.`);
+      }
+      const expectedTs = Number(match.timestamp ?? 0);
+      const actualTs = Number((tx as any)?.timestamp ?? 0);
+      if (expectedTs && actualTs && expectedTs !== actualTs) {
+        warnings.push(`Timestamp mismatch for ${sig}.`);
+      }
+    } catch {
+      warnings.push(`Failed to validate signature ${sig}.`);
+    }
+  }
+
+  return { ok: errors.length === 0, errors, warnings, checkedSignatures: sampled };
 }

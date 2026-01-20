@@ -162,13 +162,11 @@ export default function QDeckCommentsSection({ cardId, canComment }: Props) {
 
   React.useEffect(() => {
     if (!items.length) return;
-    const authors = Array.from(
-      new Set(items.map((c) => (c.author || '').trim()).filter(Boolean))
-    );
+    const authors = Array.from(new Set(items.map((c) => (c.author || '').trim()).filter(Boolean)));
     if (!authors.length) return;
 
     let cancelled = false;
-    const limit = pLimit(4);
+    const limit = pLimit(10);
 
     void Promise.all(
       authors.map((author) =>
@@ -238,9 +236,7 @@ export default function QDeckCommentsSection({ cardId, canComment }: Props) {
               sx={{ mb: 2 }}
             >
               <Box>
-                <Typography variant="h6">
-                  Comments ({commentCount})
-                </Typography>
+                <Typography variant="h6">Comments ({commentCount})</Typography>
                 <Typography variant="body2" color="text.secondary">
                   Share updates, feedback, and follow-ups.
                 </Typography>
@@ -278,9 +274,7 @@ export default function QDeckCommentsSection({ cardId, canComment }: Props) {
 
             <Divider sx={{ my: 2 }} />
 
-            <Box sx={{ display: 'flex', justifyContent: 'center' }}>
-              {addCommentButton}
-            </Box>
+            <Box sx={{ display: 'flex', justifyContent: 'center' }}>{addCommentButton}</Box>
           </CardContent>
         </Card>
 

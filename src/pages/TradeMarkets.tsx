@@ -80,7 +80,7 @@ export default function TradeMarkets() {
           .map((a) => ({ ...a, avatar: null }));
 
         // parallel avatar hints (best-effort)
-        const limit = pLimit(4);
+        const limit = pLimit(10);
         const withAvatars = await Promise.all(
           baseRows.map((r) =>
             limit(async () => {
@@ -124,7 +124,7 @@ export default function TradeMarkets() {
     const missing = rows.filter((r) => r.assetId > 2 && !privacyMap[r.assetId]);
     if (!missing.length) return;
     let cancelled = false;
-    const limit = pLimit(4);
+    const limit = pLimit(10);
     (async () => {
       const results = await Promise.all(
         missing.map((r) =>
@@ -155,7 +155,7 @@ export default function TradeMarkets() {
     (async () => {
       const cache = readVolCache();
       const now = Date.now();
-      const limit = pLimit(4);
+      const limit = pLimit(10);
 
       // Which assets actually need fetching?
       const pending = rows

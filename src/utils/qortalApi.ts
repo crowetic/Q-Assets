@@ -312,7 +312,7 @@ export interface SignatureResponse {
 
 export const getTransactionInfoBySignature = async (txSig: string): Promise<SignatureResponse> => {
   // Call fetch and parse JSON
-  const res = await fetch(`/names/transactions/signature/${txSig}`, {
+  const res = await fetch(`/transactions/signature/${txSig}`, {
     headers: { accept: 'application/json' },
   });
 

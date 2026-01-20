@@ -33,23 +33,22 @@ const XqloreMintingPage = () => {
         )} 0%, ${alpha(theme.palette.background.paper, 0.92)} 100%)`,
       }}
     >
-      <Box sx={{ maxWidth: 900, mx: 'auto' }}>
+      <Box sx={{ width: '85vw', maxWidth: 1600, mx: 'auto' }}>
         <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 3, md: 4 } }}>
           <Stack spacing={2}>
             <Typography variant="h4" sx={{ fontFamily: 'Orbitron' }}>
               Minting Overview
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Minting analytics are being indexed for Xqlore. This page will surface block ranges,
-              top minters, and real-time minting health.
+              Minting analytics page coming soon!
             </Typography>
             <Stack direction="row" spacing={1}>
               <Button component={Link} to="/xqlore" variant="outlined">
                 Back to Xqlore
               </Button>
-              <Button variant="contained" component={Link} to="/trade">
+              {/* <Button variant="contained" component={Link} to="/trade">
                 Go to Trading
-              </Button>
+              </Button> */}
             </Stack>
           </Stack>
         </Paper>

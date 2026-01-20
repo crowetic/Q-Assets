@@ -33,7 +33,7 @@ const XqloreTradingPage = () => {
         )} 0%, ${alpha(theme.palette.background.paper, 0.92)} 100%)`,
       }}
     >
-      <Box sx={{ maxWidth: 900, mx: 'auto' }}>
+      <Box sx={{ width: '85vw', maxWidth: 1600, mx: 'auto' }}>
         <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 3, md: 4 } }}>
           <Stack spacing={2}>
             <Typography variant="h4" sx={{ fontFamily: 'Orbitron' }}>

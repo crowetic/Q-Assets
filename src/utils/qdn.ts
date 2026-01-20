@@ -3,7 +3,7 @@
 import pLimit from 'p-limit';
 import { listManagementGroupNames } from './access';
 
-const limit = pLimit(4);
+const limit = pLimit(10);
 export type Role = 'admin' | 'member';
 
 type Hit = {

@@ -1,8 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Button,
-  ButtonBase,
   Chip,
   Dialog,
   DialogActions,
@@ -20,6 +19,7 @@ import { useXqloreAppIndex } from '../../hooks/useXqloreAppIndex';
 import { useXqloreTxIndex } from '../../hooks/useXqloreTxIndex';
 import { formatRelativeTime } from '../../utils/xqloreTx';
 import XqloreTxDetailsDialog from '../../components/xqlore/XqloreTxDetailsDialog';
+import { fetchAccountAvatarDataUrl } from '../../utils/qdnAvatar';
 
 const matchesAppEntry = (identifier: string | undefined, entryPrefixes: string[], identifiers: string[]) => {
   if (!identifier) return false;
@@ -33,6 +33,7 @@ const XqloreAppPage = () => {
   const { appName = '' } = useParams();
   const [selectedTx, setSelectedTx] = useState<any | null>(null);
   const [placeholder, setPlaceholder] = useState<string | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
   const { index, registry } = useXqloreAppIndex();
   const { entries: indexEntries } = useXqloreTxIndex(registry);
@@ -45,6 +46,21 @@ const XqloreAppPage = () => {
   const prefixes = appEntry?.prefixes ?? [];
   const identifiers = appEntry?.identifiers ?? [];
   const hasEntry = Boolean(appEntry);
+
+  useEffect(() => {
+    let active = true;
+    if (!appEntry?.name || appEntry.iconUrl) {
+      setAvatarUrl(appEntry?.iconUrl ?? null);
+      return undefined;
+    }
+    (async () => {
+      const fetched = await fetchAccountAvatarDataUrl(appEntry.name);
+      if (active) setAvatarUrl(fetched);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [appEntry?.name, appEntry?.iconUrl]);
 
   const recentActivity = useMemo(() => {
     if (!appEntry) return [];
@@ -81,18 +97,42 @@ const XqloreAppPage = () => {
         )} 0%, ${alpha(theme.palette.background.paper, 0.92)} 100%)`,
       }}
     >
-      <Box sx={{ maxWidth: 1200, mx: 'auto' }}>
+      <Box sx={{ width: '85vw', maxWidth: 1600, mx: 'auto' }}>
         <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 3, md: 4 }, mb: 3 }}>
           <Stack spacing={1.5}>
             <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2}>
-              <Box>
-                <Typography variant="h4" sx={{ fontFamily: 'Orbitron' }}>
-                  {appEntry?.label || appName}
-                </Typography>
-                <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
-                  {appEntry?.description || 'This app is not yet registered in the Xqlore index.'}
-                </Typography>
-              </Box>
+              <Stack direction="row" spacing={2} alignItems="center">
+                <Box
+                  sx={{
+                    width: 64,
+                    height: 64,
+                    borderRadius: '16px',
+                    overflow: 'hidden',
+                    backgroundColor: alpha(theme.palette.background.default, 0.6),
+                    border: `1px solid ${alpha(theme.palette.divider, 0.6)}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontFamily: 'Orbitron',
+                    fontWeight: 700,
+                    color: theme.palette.text.secondary,
+                  }}
+                >
+                  {avatarUrl ? (
+                    <Box component="img" src={avatarUrl} alt={`${appEntry?.name || appName} avatar`} sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    <span>{(appEntry?.label || appName || '?').slice(0, 1).toUpperCase()}</span>
+                  )}
+                </Box>
+                <Box>
+                  <Typography variant="h4" sx={{ fontFamily: 'Orbitron' }}>
+                    {appEntry?.label || appName}
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
+                    {appEntry?.description || 'This app is not yet registered in the Xqlore index.'}
+                  </Typography>
+                </Box>
+              </Stack>
               <Stack direction="row" spacing={1} alignItems="center">
                 <Button component={Link} to="/xqlore" variant="outlined">
                   Back to Xqlore
@@ -149,9 +189,17 @@ const XqloreAppPage = () => {
           ) : (
             <Stack spacing={2}>
               {recentActivity.map((item) => (
-                <ButtonBase
+                <Box
                   key={item.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setSelectedTx(item.raw)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      setSelectedTx(item.raw);
+                    }
+                  }}
                   sx={{
                     width: '100%',
                     textAlign: 'left',
@@ -162,6 +210,7 @@ const XqloreAppPage = () => {
                     gap: 2,
                     backgroundColor: alpha(theme.palette.background.default, 0.6),
                     border: `1px solid ${alpha(theme.palette.divider, 0.5)}`,
+                    cursor: 'pointer',
                   }}
                 >
                   <Stack spacing={0.5}>
@@ -197,7 +246,7 @@ const XqloreAppPage = () => {
                       {item.identifier || '—'}
                     </Typography>
                   </Stack>
-                </ButtonBase>
+                </Box>
               ))}
             </Stack>
           )}

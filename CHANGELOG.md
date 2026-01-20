@@ -7,6 +7,30 @@
 - Wired Xqlore to live transaction searches with real activity data, click-through details, and a left-header link.
 - Added Xqlore account/app/minting/trading pages plus an admin console for managing the app identifier registry.
 - Added Xqlore index loaders and a new Xqlore-themed transaction details dialog.
+- Switched Xqlore live activity searches to use block-range queries for deeper results.
+- Tuned Xqlore live block ranges to align with time-window selections (24h uses ~1400 blocks).
+- Simplified Xqlore live searches to avoid start-block offsets when scanning recent activity.
+- Expanded Xqlore live-search fallback to page through larger batches until the selected timeframe is covered.
+- Fixed current block height detection for Xqlore index builds and made long-term indexing start from genesis or the latest published range.
+- Switched Xqlore long-term index builds to confirmed-only searches across all transaction types, storing raw tx payloads with optional creator names.
+- Added build progress feedback while Xqlore long-term indexes are assembled.
+- Centralized the Xqlore transaction type list so the main explorer and long-term indexing stay aligned.
+- Re-normalized Xqlore live activity on app-index changes so app attribution updates immediately.
+- Re-normalized Xqlore indexed entries on app-index updates to refresh attribution without refetching.
+- Re-derived Xqlore attribution and signal stats directly from registry-aware tx normalization.
+- Switched Xqlore activity list and identifier panels to render registry-updated tx data immediately.
+- Added a loading indicator for the Xqlore app registry in the attribution panel.
+- Stabilized Xqlore admin form updates to prevent update-depth errors and reduce input lag.
+- Switched Xqlore long-term index builds to configurable 100k-block batch counts with sequential processing.
+- Fixed Xqlore index batch publishing typing so the publish queue accepts batch resources.
+- Adjusted Xqlore activity labeling so only QDN publishes map to apps and other tx types show type-based details.
+- Labeled the Qortal Null Account with an explainer and added balance lookup on Xqlore account pages.
+- Defaulted Xqlore activity to 24h and moved identifier/tag panels under attribution on the right column.
+- Defaulted Xqlore activity to 6h and adjusted available time ranges to hourly and weekly presets.
+- Expanded Xqlore page layouts to use an 85vw responsive container with a soft max width.
+- Defaulted Xqlore long-term index builds to 100k blocks per publish batch.
+- Reduced Xqlore index validation noise and treat signature lookup failures as warnings to prevent false negatives.
+- Added a long-term stats page with tx index build, validation, and publish controls.
 - Added a Create board action on project pages that creates and attaches a board in one step.
 - Updated project calendars to render tasks spanning multiple days across each day in the range.
 - Hid deleted boards from the project add-board picker by requiring resolvable board metadata.

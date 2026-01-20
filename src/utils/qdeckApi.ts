@@ -101,7 +101,7 @@ export function requireName(u: QUserIdentity) {
   return u.name;
 }
 
-// const cardFetchLimit = pLimit(6);
+// const cardFetchLimit = pLimit(10);
 
 export async function loadCardsIndex(
   issuerName: string,
@@ -166,7 +166,7 @@ export async function loadNewestCardsIndex(
   }
   if (names.size === 0) return null;
 
-  const limit = pLimit(4);
+  const limit = pLimit(10);
   const candidates = (
     await Promise.all(
       Array.from(names).map((name) =>
@@ -287,7 +287,7 @@ export async function repairCardsIndex(
     seq: 0,
   };
   const refs = await discoverCardRefsBySearch(board);
-  const limit = opts?.concurrency ? pLimit(opts.concurrency) : pLimit(4);
+  const limit = opts?.concurrency ? pLimit(opts.concurrency) : pLimit(10);
   const seen = new Set<string>();
   const entries: Array<{ name: string; cardId: string }> = [];
   const cardIds = new Set<string>(current.cardIds ?? []);
@@ -1453,8 +1453,16 @@ export async function createBoardAndIndex(args: CreateBoardArgs) {
 }
 
 export async function createProjectAndIndex(args: CreateProjectArgs) {
-  const { issuerName, title, description, groupsAllowed, usersAllowed, visibility, privateOpts, adminOverride } =
-    args;
+  const {
+    issuerName,
+    title,
+    description,
+    groupsAllowed,
+    usersAllowed,
+    visibility,
+    privateOpts,
+    adminOverride,
+  } = args;
 
   let myName = issuerName;
   let my = await qortalRequest({ action: 'GET_USER_ACCOUNT' });

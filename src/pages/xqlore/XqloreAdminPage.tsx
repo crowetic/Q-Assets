@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Button,
@@ -28,6 +28,13 @@ import {
   type XqloreAppRegistryEntry,
 } from '../../utils/xqloreIndex';
 
+type AppRow = XqloreAppRegistryEntry & {
+  rowId: string;
+  rawPrefixes: string;
+  rawIdentifiers: string;
+  rawTags: string;
+};
+
 const splitList = (value: string) =>
   value
     .split(/[,\n]/)
@@ -35,6 +42,104 @@ const splitList = (value: string) =>
     .filter(Boolean);
 
 const joinList = (value?: string[]) => (value && value.length ? value.join(', ') : '');
+
+type AppEditorRowProps = {
+  app: AppRow;
+  index: number;
+  onChange: (
+    index: number,
+    key: keyof XqloreAppRegistryEntry | 'rawPrefixes' | 'rawIdentifiers' | 'rawTags',
+    value: string
+  ) => void;
+  onRemove: (index: number) => void;
+};
+
+const AppEditorRow = memo(function AppEditorRow({
+  app,
+  index,
+  onChange,
+  onRemove,
+}: AppEditorRowProps) {
+  const theme = useTheme();
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        p: 2,
+        borderRadius: 2,
+        border: `1px solid ${alpha(theme.palette.divider, 0.5)}`,
+      }}
+    >
+      <Stack spacing={1.5}>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+          <TextField
+            label="App name"
+            value={app.name ?? ''}
+            onChange={(event) => onChange(index, 'name', event.target.value)}
+            fullWidth
+            size="small"
+          />
+          <TextField
+            label="Display label"
+            value={app.label ?? ''}
+            onChange={(event) => onChange(index, 'label', event.target.value)}
+            fullWidth
+            size="small"
+          />
+        </Stack>
+        <TextField
+          label="Prefixes (comma or newline separated)"
+          value={app.rawPrefixes}
+          onChange={(event) => onChange(index, 'rawPrefixes', event.target.value)}
+          fullWidth
+          size="small"
+        />
+        <TextField
+          label="Associated identifiers"
+          value={app.rawIdentifiers}
+          onChange={(event) => onChange(index, 'rawIdentifiers', event.target.value)}
+          fullWidth
+          size="small"
+        />
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+          <TextField
+            label="Website"
+            value={app.website ?? ''}
+            onChange={(event) => onChange(index, 'website', event.target.value)}
+            fullWidth
+            size="small"
+          />
+          <TextField
+            label="Icon URL"
+            value={app.iconUrl ?? ''}
+            onChange={(event) => onChange(index, 'iconUrl', event.target.value)}
+            fullWidth
+            size="small"
+          />
+        </Stack>
+        <TextField
+          label="Description"
+          value={app.description ?? ''}
+          onChange={(event) => onChange(index, 'description', event.target.value)}
+          fullWidth
+          multiline
+          minRows={2}
+          size="small"
+        />
+        <TextField
+          label="Tags"
+          value={app.rawTags}
+          onChange={(event) => onChange(index, 'rawTags', event.target.value)}
+          fullWidth
+          size="small"
+        />
+        <Button variant="outlined" color="error" onClick={() => onRemove(index)}>
+          Remove app
+        </Button>
+      </Stack>
+    </Paper>
+  );
+});
 
 const XqloreAdminPage = () => {
   const theme = useTheme();
@@ -45,11 +150,17 @@ const XqloreAdminPage = () => {
 
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [apps, setApps] = useState<XqloreAppRegistryEntry[]>([]);
+  const [apps, setApps] = useState<AppRow[]>([]);
   const [whitelist, setWhitelist] = useState<string[]>([]);
   const [candidateHits, setCandidateHits] = useState<any[]>([]);
   const [candidatePreview, setCandidatePreview] = useState<XqloreAppRegistryEntry[] | null>(null);
   const [newWhitelistName, setNewWhitelistName] = useState('');
+  const rowCounter = useRef(0);
+
+  const makeRowId = () => {
+    rowCounter.current += 1;
+    return `app-row-${rowCounter.current}`;
+  };
 
   const surfaceSx = {
     borderRadius: '24px',
@@ -72,7 +183,14 @@ const XqloreAdminPage = () => {
         fetchAppIndexWhitelist(),
         fetchAppIndexCandidates(12),
       ]);
-      setApps(index?.apps ?? []);
+      const rows = (index?.apps ?? []).map((entry) => ({
+        ...entry,
+        rowId: makeRowId(),
+        rawPrefixes: joinList(entry.prefixes),
+        rawIdentifiers: joinList(entry.identifiers),
+        rawTags: joinList(entry.tags),
+      }));
+      setApps(rows);
       setWhitelist(whitelistDoc.publishers ?? []);
       setCandidateHits(candidates);
     } finally {
@@ -99,37 +217,45 @@ const XqloreAdminPage = () => {
     void load();
   }, [load]);
 
-  const handleAppChange = (index: number, key: keyof XqloreAppRegistryEntry, value: string) => {
-    setApps((prev) => {
-      const next = [...prev];
-      const current = { ...next[index] };
-      if (key === 'prefixes' || key === 'identifiers' || key === 'tags') {
-        current[key] = splitList(value);
-      } else {
-        (current as any)[key] = value;
-      }
-      next[index] = current;
-      return next;
-    });
-  };
+  const handleAppChange = useCallback(
+    (
+      index: number,
+      key: keyof XqloreAppRegistryEntry | 'rawPrefixes' | 'rawIdentifiers' | 'rawTags',
+      value: string
+    ) => {
+      setApps((prev) => {
+        const current = prev[index];
+        if (!current) return prev;
+        if ((current as any)[key] === value) return prev;
+        const next = [...prev];
+        next[index] = { ...current, [key]: value } as AppRow;
+        return next;
+      });
+    },
+    []
+  );
 
-  const addApp = () => {
+  const addApp = useCallback(() => {
     setApps((prev) => [
       ...prev,
       {
+        rowId: makeRowId(),
         name: '',
         label: '',
         description: '',
         prefixes: [],
         identifiers: [],
         tags: [],
+        rawPrefixes: '',
+        rawIdentifiers: '',
+        rawTags: '',
       },
     ]);
-  };
+  }, []);
 
-  const removeApp = (index: number) => {
+  const removeApp = useCallback((index: number) => {
     setApps((prev) => prev.filter((_, idx) => idx !== index));
-  };
+  }, []);
 
   const handlePublishApps = async () => {
     if (!activeName) {
@@ -140,15 +266,14 @@ const XqloreAdminPage = () => {
     }
     const cleaned = apps
       .map((entry) => ({
-        ...entry,
         name: entry.name.trim(),
         label: entry.label?.trim(),
         description: entry.description?.trim(),
         website: entry.website?.trim(),
         iconUrl: entry.iconUrl?.trim(),
-        prefixes: entry.prefixes?.map((p) => p.trim()).filter(Boolean) ?? [],
-        identifiers: entry.identifiers?.map((p) => p.trim()).filter(Boolean),
-        tags: entry.tags?.map((p) => p.trim()).filter(Boolean),
+        prefixes: splitList(entry.rawPrefixes),
+        identifiers: splitList(entry.rawIdentifiers),
+        tags: splitList(entry.rawTags),
       }))
       .filter((entry) => entry.name && entry.prefixes.length);
 
@@ -252,7 +377,7 @@ const XqloreAdminPage = () => {
         )} 0%, ${alpha(theme.palette.background.paper, 0.92)} 100%)`,
       }}
     >
-      <Box sx={{ maxWidth: 1200, mx: 'auto' }}>
+      <Box sx={{ width: '85vw', maxWidth: 1600, mx: 'auto' }}>
         <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 3, md: 4 }, mb: 3 }}>
           <Stack spacing={1.5}>
             <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2}>
@@ -299,75 +424,13 @@ const XqloreAdminPage = () => {
             )}
             <Stack spacing={2}>
               {apps.map((app, index) => (
-                <Paper key={`${app.name}-${index}`} elevation={0} sx={{ p: 2, borderRadius: 2, border: `1px solid ${alpha(theme.palette.divider, 0.5)}` }}>
-                  <Stack spacing={1.5}>
-                    <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-                      <TextField
-                        label="App name"
-                        value={app.name}
-                        onChange={(event) => handleAppChange(index, 'name', event.target.value)}
-                        fullWidth
-                        size="small"
-                      />
-                      <TextField
-                        label="Display label"
-                        value={app.label ?? ''}
-                        onChange={(event) => handleAppChange(index, 'label', event.target.value)}
-                        fullWidth
-                        size="small"
-                      />
-                    </Stack>
-                    <TextField
-                      label="Prefixes (comma or newline separated)"
-                      value={joinList(app.prefixes)}
-                      onChange={(event) => handleAppChange(index, 'prefixes', event.target.value)}
-                      fullWidth
-                      size="small"
-                    />
-                    <TextField
-                      label="Associated identifiers"
-                      value={joinList(app.identifiers)}
-                      onChange={(event) => handleAppChange(index, 'identifiers', event.target.value)}
-                      fullWidth
-                      size="small"
-                    />
-                    <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-                      <TextField
-                        label="Website"
-                        value={app.website ?? ''}
-                        onChange={(event) => handleAppChange(index, 'website', event.target.value)}
-                        fullWidth
-                        size="small"
-                      />
-                      <TextField
-                        label="Icon URL"
-                        value={app.iconUrl ?? ''}
-                        onChange={(event) => handleAppChange(index, 'iconUrl', event.target.value)}
-                        fullWidth
-                        size="small"
-                      />
-                    </Stack>
-                    <TextField
-                      label="Description"
-                      value={app.description ?? ''}
-                      onChange={(event) => handleAppChange(index, 'description', event.target.value)}
-                      fullWidth
-                      multiline
-                      minRows={2}
-                      size="small"
-                    />
-                    <TextField
-                      label="Tags"
-                      value={joinList(app.tags)}
-                      onChange={(event) => handleAppChange(index, 'tags', event.target.value)}
-                      fullWidth
-                      size="small"
-                    />
-                    <Button variant="outlined" color="error" onClick={() => removeApp(index)}>
-                      Remove app
-                    </Button>
-                  </Stack>
-                </Paper>
+                <AppEditorRow
+                  key={app.rowId}
+                  app={app}
+                  index={index}
+                  onChange={handleAppChange}
+                  onRemove={removeApp}
+                />
               ))}
             </Stack>
             <Stack direction="row" spacing={1} flexWrap="wrap">

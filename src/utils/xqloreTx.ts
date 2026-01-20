@@ -11,6 +11,7 @@ export type NormalizedTx = {
   type: string;
   timestampMs: number;
   identifier?: string;
+  displayIdentifier?: string;
   app: string;
   summary: string;
   context: string;
@@ -102,6 +103,11 @@ export const getIdentifier = (tx: any, type: string) => {
     const value = typeof raw === 'string' ? raw.trim() : '';
     return value || 'unknown identifier';
   }
+  return undefined;
+};
+
+export const getDisplayIdentifier = (tx: any, type: string) => {
+  if (type === 'ARBITRARY') return getIdentifier(tx, type);
   if (type.includes('NAME')) {
     const raw = tx?.name ?? tx?.newName ?? tx?.registeredName;
     const value = typeof raw === 'string' ? raw.trim() : '';
@@ -122,9 +128,17 @@ export const getIdentifier = (tx: any, type: string) => {
     const orderId = typeof tx?.orderId === 'string' ? tx.orderId.trim() : '';
     return orderId || undefined;
   }
+  if (type.includes('GROUP')) {
+    const groupId = tx?.groupId ?? tx?.txGroupId;
+    return Number.isFinite(groupId) ? `Group #${groupId}` : undefined;
+  }
   if (type === 'DEPLOY_AT' || type === 'AT') {
     const addr = typeof tx?.atAddress === 'string' ? tx.atAddress.trim() : '';
     return addr || undefined;
+  }
+  if (type === 'PAYMENT' || type === 'MULTI_PAYMENT') {
+    const amount = formatNumber(tx?.amount ?? tx?.total);
+    return amount !== '—' ? `${amount} QORT` : undefined;
   }
   return undefined;
 };
@@ -169,15 +183,10 @@ export function resolveAppFromTx(
   identifier?: string,
   registry?: XqloreAppRegistryLookup
 ) {
+  if (type !== 'ARBITRARY') return type || 'Qortal Core';
   const app = resolveAppFromRegistry(identifier, registry);
   if (app) return app;
-  if (type.includes('NAME')) return 'Name Service';
-  if (type.includes('ASSET')) return 'Asset Layer';
-  if (type.includes('GROUP')) return 'Groups';
-  if (type === 'PAYMENT' || type === 'MULTI_PAYMENT') return 'Payments';
-  if (type.includes('AT')) return 'Automated Transactions';
-  if (type === 'ARBITRARY') return 'Unmapped';
-  return 'Qortal Core';
+  return 'Unmapped';
 }
 
 export function buildTags(tx: any, type: string, service?: string) {
@@ -259,6 +268,7 @@ export function normalizeTx(tx: any, registry?: XqloreAppRegistryLookup): Normal
   const type = getTxType(tx);
   const tsMs = toMs(tx?.timestamp ?? tx?.time ?? tx?.created ?? tx?.createdAt) ?? Date.now();
   const identifier = getIdentifier(tx, type);
+  const displayIdentifier = getDisplayIdentifier(tx, type);
   const service = getService(tx);
   const app = resolveAppFromTx(type, identifier, registry);
   const summary = TYPE_SUMMARY[type] ?? (type || 'Transaction');
@@ -273,6 +283,7 @@ export function normalizeTx(tx: any, registry?: XqloreAppRegistryLookup): Normal
     type,
     timestampMs: tsMs,
     identifier,
+    displayIdentifier,
     app,
     summary,
     context,

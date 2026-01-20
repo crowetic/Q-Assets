@@ -9,6 +9,7 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
+  IconButton,
   LinearProgress,
   Link as MuiLink,
   Paper,
@@ -19,12 +20,16 @@ import {
   Typography,
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
+import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import { Link } from 'react-router-dom';
 import { useAuth } from 'qapp-core';
 import XqloreTxDetailsDialog from '../components/xqlore/XqloreTxDetailsDialog';
 import { useXqloreAppIndex } from '../hooks/useXqloreAppIndex';
 import { useXqloreTxIndex } from '../hooks/useXqloreTxIndex';
+import { XQLORE_TX_TYPES } from '../constants/xqloreTxTypes';
 import { isAddressAdminInManagementGroup } from '../utils/access';
+import { fetchCurrentBlockHeight } from '../utils/blockHeight';
+import { getTransactionInfoBySignature } from '../utils/qortalApi';
 import {
   formatRelativeTime,
   formatNumber,
@@ -33,31 +38,30 @@ import {
 } from '../utils/xqloreTx';
 
 const TIME_RANGE_MS: Record<string, number> = {
-  '15m': 15 * 60 * 1000,
   '1h': 60 * 60 * 1000,
+  '6h': 6 * 60 * 60 * 1000,
+  '12h': 12 * 60 * 60 * 1000,
   '24h': 24 * 60 * 60 * 1000,
-  '7d': 7 * 24 * 60 * 60 * 1000,
+  '1w': 7 * 24 * 60 * 60 * 1000,
+  '2w': 14 * 24 * 60 * 60 * 1000,
+  '3w': 21 * 24 * 60 * 60 * 1000,
 };
 
-const LIVE_POLL_MS = 15_000;
+const TIME_RANGE_BLOCK_LIMITS: Record<string, number> = {
+  '1h': 60,
+  '6h': 350,
+  '12h': 700,
+  '24h': 1400,
+  '1w': 9800,
+  '2w': 19_600,
+  '3w': 29_400,
+};
+const MIN_BLOCK_LIMIT = 20;
+const MAX_BLOCK_LIMIT = 20_000;
+const FALLBACK_LIMIT = 100;
+const FALLBACK_MAX_PAGES = 10;
 
-const TX_TYPES = [
-  'ARBITRARY',
-  'PAYMENT',
-  'MULTI_PAYMENT',
-  'TRANSFER_ASSET',
-  'ISSUE_ASSET',
-  'CREATE_ASSET_ORDER',
-  'CANCEL_ASSET_ORDER',
-  'REGISTER_NAME',
-  'UPDATE_NAME',
-  'CREATE_GROUP',
-  'JOIN_GROUP',
-  'LEAVE_GROUP',
-  'DEPLOY_AT',
-  'AT',
-  'MESSAGE',
-] as const;
+const LIVE_POLL_MS = 15_000;
 
 const TYPE_COLORS: Record<string, 'info' | 'success' | 'warning' | 'error' | 'secondary'> = {
   ARBITRARY: 'info',
@@ -79,7 +83,7 @@ const sortByTimestamp = (a: NormalizedTx, b: NormalizedTx) => b.timestampMs - a.
 const XqloreExplorer = () => {
   const theme = useTheme();
   const { address } = useAuth();
-  const [timeRange, setTimeRange] = useState('1h');
+  const [timeRange, setTimeRange] = useState('6h');
   const [viewMode, setViewMode] = useState('pulse');
   const [live, setLive] = useState(true);
   const [query, setQuery] = useState('');
@@ -89,9 +93,19 @@ const XqloreExplorer = () => {
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [linkTarget, setLinkTarget] = useState<LinkTarget | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [showBackToTop, setShowBackToTop] = useState(false);
+  const [searchRawResults, setSearchRawResults] = useState<any[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [liveBlockRange, setLiveBlockRange] = useState<{
+    start: number;
+    end: number;
+    limit: number;
+  } | null>(null);
   const loadingRef = useRef(false);
+  const searchRef = useRef(0);
 
-  const { registry } = useXqloreAppIndex();
+  const { registry, loading: registryLoading } = useXqloreAppIndex();
   const {
     index: txIndex,
     entries: indexEntries,
@@ -137,14 +151,61 @@ const XqloreExplorer = () => {
       if (!silent) setLoading(true);
       setError(null);
       try {
-        const res = await qortalRequest({
-          action: 'SEARCH_TRANSACTIONS',
-          confirmationStatus: 'BOTH',
-          limit: 20,
-          offset: 0,
-          reverse: true,
-          txType: [...TX_TYPES],
-        });
+        let res: any = null;
+        try {
+          const height = await fetchCurrentBlockHeight();
+          const desiredLimit =
+            TIME_RANGE_BLOCK_LIMITS[timeRange] ??
+            Math.round((TIME_RANGE_MS[timeRange] ?? TIME_RANGE_MS['1h']) / 1000 / 60);
+          const blockLimit = Math.min(MAX_BLOCK_LIMIT, Math.max(MIN_BLOCK_LIMIT, desiredLimit));
+          const startBlock = Math.max(1, height - blockLimit);
+          setLiveBlockRange({ start: startBlock, end: height, limit: blockLimit });
+          res = await qortalRequest({
+            action: 'SEARCH_TRANSACTIONS',
+            confirmationStatus: 'CONFIRMED',
+            blockLimit,
+            limit: 0,
+            offset: 0,
+            reverse: true,
+            txType: [...XQLORE_TX_TYPES],
+          });
+        } catch {
+          setLiveBlockRange(null);
+          const timeWindowMs = TIME_RANGE_MS[timeRange] ?? TIME_RANGE_MS['1h'];
+          const cutoffMs = Date.now() - timeWindowMs;
+          const collected: any[] = [];
+          let offset = 0;
+          let keepFetching = true;
+          let page = 0;
+          while (keepFetching && page < FALLBACK_MAX_PAGES) {
+            const pageRes = await qortalRequest({
+              action: 'SEARCH_TRANSACTIONS',
+              confirmationStatus: 'BOTH',
+              limit: FALLBACK_LIMIT,
+              offset,
+              reverse: true,
+              txType: [...XQLORE_TX_TYPES],
+            });
+            const pageRows = Array.isArray(pageRes)
+              ? pageRes
+              : pageRes && typeof pageRes === 'object'
+                ? [pageRes]
+                : [];
+            if (pageRows.length === 0) break;
+            collected.push(...pageRows);
+            const oldest = pageRows
+              .map((tx) => normalizeTx(tx, registry))
+              .filter((tx): tx is NormalizedTx => Boolean(tx))
+              .reduce((min, tx) => Math.min(min, tx.timestampMs), Date.now());
+            if (oldest <= cutoffMs || pageRows.length < FALLBACK_LIMIT) {
+              keepFetching = false;
+            } else {
+              offset += FALLBACK_LIMIT;
+              page += 1;
+            }
+          }
+          res = collected;
+        }
         const rows = Array.isArray(res) ? res : res && typeof res === 'object' ? [res] : [];
         const normalized = rows
           .map((tx) => normalizeTx(tx, registry))
@@ -159,7 +220,7 @@ const XqloreExplorer = () => {
         setLoading(false);
       }
     },
-    [registry]
+    [registry, timeRange]
   );
 
   useEffect(() => {
@@ -173,6 +234,102 @@ const XqloreExplorer = () => {
     }, LIVE_POLL_MS);
     return () => window.clearInterval(id);
   }, [live, loadActivity]);
+
+  useEffect(() => {
+    setTransactions((prev) => {
+      if (!prev.length) return prev;
+      return prev
+        .map((tx) => normalizeTx(tx.raw ?? tx, registry))
+        .filter((tx): tx is NormalizedTx => Boolean(tx));
+    });
+  }, [registry]);
+
+  const runSearch = useCallback(async (term: string) => {
+    const requestId = searchRef.current + 1;
+    searchRef.current = requestId;
+    setSearchLoading(true);
+    setSearchError(null);
+    try {
+      const trimmed = term.trim();
+      const looksAddress = /^Q[0-9A-Za-z]{25,}$/.test(trimmed);
+      const looksSignature =
+        /^[1-9A-HJ-NP-Za-km-z]{40,}$/.test(trimmed) || /^[0-9a-fA-F]{64,}$/.test(trimmed);
+      let resolvedAddress: string | null = null;
+      if (looksAddress) {
+        resolvedAddress = trimmed;
+      } else {
+        try {
+          const nameData = await qortalRequest({ action: 'GET_NAME_DATA', name: trimmed });
+          const owner = nameData?.owner;
+          if (typeof owner === 'string' && owner.startsWith('Q')) {
+            resolvedAddress = owner;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
+      let results: any[] = [];
+      if (resolvedAddress) {
+        const res = await qortalRequest({
+          action: 'SEARCH_TRANSACTIONS',
+          address: resolvedAddress,
+          confirmationStatus: 'BOTH',
+          limit: 200,
+          offset: 0,
+          reverse: true,
+          txType: [...XQLORE_TX_TYPES],
+        });
+        results = Array.isArray(res) ? res : res && typeof res === 'object' ? [res] : [];
+      } else if (looksSignature) {
+        const tx = await getTransactionInfoBySignature(trimmed);
+        results = tx ? [tx] : [];
+      } else {
+        try {
+          const tx = await getTransactionInfoBySignature(trimmed);
+          results = tx ? [tx] : [];
+        } catch {
+          results = [];
+        }
+      }
+
+      if (searchRef.current !== requestId) return;
+      setSearchRawResults(results);
+      if (!results.length) {
+        setSearchError('No matching transactions found.');
+      }
+    } catch (err: any) {
+      if (searchRef.current !== requestId) return;
+      setSearchError(err?.message ?? 'Search failed.');
+      setSearchRawResults([]);
+    } finally {
+      if (searchRef.current === requestId) setSearchLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const term = query.trim();
+    if (!term) {
+      searchRef.current += 1;
+      setSearchRawResults([]);
+      setSearchLoading(false);
+      setSearchError(null);
+      return undefined;
+    }
+    const id = window.setTimeout(() => {
+      void runSearch(term);
+    }, 500);
+    return () => window.clearTimeout(id);
+  }, [query, runSearch]);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setShowBackToTop(window.scrollY > 420);
+    };
+    handleScroll();
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   const combinedTxs = useMemo(() => {
     const seen = new Set<string>();
@@ -188,60 +345,69 @@ const XqloreExplorer = () => {
 
   const timeWindowMs = TIME_RANGE_MS[timeRange] ?? TIME_RANGE_MS['1h'];
   const cutoff = Date.now() - timeWindowMs;
-  const queryLower = query.trim().toLowerCase();
+  const isSearchMode = query.trim().length > 0;
 
-  const filteredTxs = useMemo(() => {
-    return combinedTxs.filter((tx) => {
-      if (tx.timestampMs < cutoff) return false;
-      if (!queryLower) return true;
-      return (
-        tx.identifier?.toLowerCase().includes(queryLower) ||
-        tx.app.toLowerCase().includes(queryLower) ||
-        tx.summary.toLowerCase().includes(queryLower) ||
-        tx.originFull.toLowerCase().includes(queryLower) ||
-        tx.type.toLowerCase().includes(queryLower)
-      );
-    });
-  }, [combinedTxs, cutoff, queryLower]);
+  const searchResults = useMemo(() => {
+    return searchRawResults
+      .map((tx) => normalizeTx(tx, registry))
+      .filter((tx): tx is NormalizedTx => Boolean(tx));
+  }, [searchRawResults, registry]);
+
+  const liveTxs = useMemo(() => {
+    return combinedTxs.filter((tx) => tx.timestampMs >= cutoff);
+  }, [combinedTxs, cutoff]);
+
+  const displayedTxs = isSearchMode ? searchResults : liveTxs;
+
+  const attributedTxs = useMemo(() => {
+    return displayedTxs
+      .map((tx) => normalizeTx(tx.raw ?? tx, registry))
+      .filter((tx): tx is NormalizedTx => Boolean(tx));
+  }, [displayedTxs, registry]);
 
   const activityItems = useMemo(() => {
-    return filteredTxs.map((tx) => ({
+    return attributedTxs.map((tx) => ({
       ...tx,
       time: formatRelativeTime(tx.timestampMs),
     }));
-  }, [filteredTxs]);
+  }, [attributedTxs]);
 
   const metrics = useMemo(() => {
-    const total = filteredTxs.length;
-    const qdnPublishes = filteredTxs.filter((tx) => tx.type === 'ARBITRARY').length;
-    const assetMoves = filteredTxs.filter((tx) => tx.type.includes('ASSET')).length;
-    const apps = new Set(filteredTxs.map((tx) => tx.app));
+    const total = displayedTxs.length;
+    const qdnPublishes = displayedTxs.filter((tx) => tx.type === 'ARBITRARY').length;
+    const assetMoves = displayedTxs.filter((tx) => tx.type.includes('ASSET')).length;
+    const apps = new Set(attributedTxs.map((tx) => tx.app));
+    const rangeLabel = isSearchMode ? 'search' : timeRange;
     return [
-      { label: 'Tx Pulse', value: formatNumber(total, 0), detail: `${total} in range` },
       {
-        label: 'QDN Publishes',
+        label: `Tx Pulse (${rangeLabel})`,
+        value: formatNumber(total, 0),
+        detail: `${total} in range`,
+      },
+      {
+        label: `QDN Publishes (${rangeLabel})`,
         value: formatNumber(qdnPublishes, 0),
         detail: `${qdnPublishes} arbitrary publishes`,
       },
       {
-        label: 'Active Apps',
+        label: `Active Apps (${rangeLabel})`,
         value: formatNumber(apps.size, 0),
         detail: `${Math.max(apps.size - 1, 0)} mapped identifiers`,
       },
       {
-        label: 'Asset Moves',
+        label: `Asset Moves (${rangeLabel})`,
         value: formatNumber(assetMoves, 0),
         detail: `${assetMoves} asset-layer events`,
       },
     ];
-  }, [filteredTxs]);
+  }, [attributedTxs, displayedTxs, isSearchMode, timeRange]);
 
   const appAttribution = useMemo(() => {
     const counts = new Map<string, number>();
-    filteredTxs.forEach((tx) => {
+    attributedTxs.forEach((tx) => {
       counts.set(tx.app, (counts.get(tx.app) ?? 0) + 1);
     });
-    const total = filteredTxs.length || 1;
+    const total = attributedTxs.length || 1;
     return Array.from(counts.entries())
       .map(([name, count]) => ({
         name,
@@ -250,23 +416,23 @@ const XqloreExplorer = () => {
       }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
-  }, [filteredTxs]);
+  }, [attributedTxs]);
 
   const tagMatrix = useMemo(() => {
     const counts = new Map<string, number>();
-    filteredTxs.forEach((tx) => {
+    attributedTxs.forEach((tx) => {
       tx.tags.forEach((tag) => counts.set(tag, (counts.get(tag) ?? 0) + 1));
     });
     return Array.from(counts.entries())
       .map(([label, count]) => ({ label, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 8);
-  }, [filteredTxs]);
+  }, [attributedTxs]);
 
   const identifierRadar = useMemo(() => {
     const seen = new Set<string>();
     const items: Array<{ id: string; app: string; status: string; tx?: any }> = [];
-    for (const tx of filteredTxs) {
+    for (const tx of attributedTxs) {
       if (!tx.identifier) continue;
       if (seen.has(tx.identifier)) continue;
       seen.add(tx.identifier);
@@ -279,13 +445,13 @@ const XqloreExplorer = () => {
       if (items.length >= 5) break;
     }
     return items;
-  }, [filteredTxs]);
+  }, [attributedTxs]);
 
   const signalStats = useMemo(() => {
-    const total = Math.max(filteredTxs.length, 1);
-    const mapped = filteredTxs.filter((tx) => tx.app !== 'Unmapped').length;
-    const unmapped = filteredTxs.filter((tx) => tx.app === 'Unmapped').length;
-    const encrypted = filteredTxs.filter((tx) => tx.tags.includes('private')).length;
+    const total = Math.max(attributedTxs.length, 1);
+    const mapped = attributedTxs.filter((tx) => tx.app !== 'Unmapped').length;
+    const unmapped = attributedTxs.filter((tx) => tx.app === 'Unmapped').length;
+    const encrypted = attributedTxs.filter((tx) => tx.tags.includes('private')).length;
     return [
       { label: 'Identifier matches', value: mapped, pct: Math.round((mapped / total) * 100) },
       { label: 'Unmapped apps', value: unmapped, pct: Math.round((unmapped / total) * 100) },
@@ -295,7 +461,7 @@ const XqloreExplorer = () => {
         pct: Math.round((encrypted / total) * 100),
       },
     ];
-  }, [filteredTxs]);
+  }, [attributedTxs]);
 
   const openTxDetails = (tx: any, title: string) => {
     setLinkTarget({ kind: 'tx', tx, title });
@@ -346,7 +512,15 @@ const XqloreExplorer = () => {
           pointerEvents: 'none',
         }}
       />
-      <Box sx={{ maxWidth: 1400, mx: 'auto', position: 'relative', zIndex: 1 }}>
+      <Box
+        sx={{
+          width: '85vw',
+          maxWidth: 1600,
+          mx: 'auto',
+          position: 'relative',
+          zIndex: 1,
+        }}
+      >
         <Paper
           elevation={0}
           sx={{
@@ -400,6 +574,9 @@ const XqloreExplorer = () => {
                   {lastUpdated
                     ? `Last sync ${new Date(lastUpdated).toLocaleTimeString()}`
                     : 'Awaiting first sync'}
+                  {liveBlockRange
+                    ? ` · Live blocks ${liveBlockRange.start}-${liveBlockRange.end}`
+                    : ''}
                   {txIndex?.blockEnd
                     ? ` · Index blocks ${txIndex.blockStart}-${txIndex.blockEnd}`
                     : ''}
@@ -417,7 +594,7 @@ const XqloreExplorer = () => {
                     p: 0.5,
                   }}
                 >
-                  {['15m', '1h', '24h', '7d'].map((range) => (
+                  {['1h', '6h', '12h', '24h', '1w', '2w', '3w'].map((range) => (
                     <ToggleButton key={range} value={range} sx={{ textTransform: 'none' }}>
                       {range}
                     </ToggleButton>
@@ -492,9 +669,63 @@ const XqloreExplorer = () => {
                   sx={{ backgroundColor: alpha(theme.palette.primary.light, 0.15) }}
                 />
               ))}
-              <Chip component={Link} to="/xqlore/minting" label="Minting" clickable size="small" />
-              <Chip component={Link} to="/xqlore/trading" label="Trading" clickable size="small" />
             </Stack>
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' },
+                gap: 1.5,
+              }}
+            >
+              <Button
+                component={Link}
+                to="/xqlore/stats"
+                variant="outlined"
+                size="large"
+                sx={{
+                  borderRadius: '16px',
+                  textTransform: 'none',
+                  fontWeight: 700,
+                  py: 1.5,
+                  borderColor: alpha(theme.palette.divider, 0.8),
+                  color: theme.palette.text.primary,
+                }}
+              >
+                Long-term Stats
+              </Button>
+              <Button
+                component={Link}
+                to="/xqlore/minting"
+                variant="outlined"
+                size="large"
+                sx={{
+                  borderRadius: '16px',
+                  textTransform: 'none',
+                  fontWeight: 700,
+                  py: 1.5,
+                  borderColor: alpha(theme.palette.divider, 0.8),
+                  color: theme.palette.text.primary,
+                }}
+              >
+                Minting
+              </Button>
+              <Button
+                component={Link}
+                to="/xqlore/trading"
+                variant="outlined"
+                size="large"
+                sx={{
+                  borderRadius: '16px',
+                  textTransform: 'none',
+                  fontWeight: 700,
+                  py: 1.5,
+                  borderColor: alpha(theme.palette.divider, 0.8),
+                  color: theme.palette.text.primary,
+                }}
+              >
+                Trading
+              </Button>
+            </Box>
           </Stack>
         </Paper>
 
@@ -567,7 +798,7 @@ const XqloreExplorer = () => {
           <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 2.5, md: 3.5 } }}>
             <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between">
               <Typography variant="h5" sx={{ fontFamily: 'Orbitron' }}>
-                Activity stream
+                Activity stream ({isSearchMode ? 'search' : timeRange})
               </Typography>
               <ToggleButtonGroup
                 value={viewMode}
@@ -583,20 +814,38 @@ const XqloreExplorer = () => {
               </ToggleButtonGroup>
             </Stack>
             <Divider sx={{ my: 2 }} />
-            {loading && transactions.length === 0 ? (
+            {isSearchMode && searchLoading ? (
+              <Typography variant="body2" color="text.secondary">
+                Searching chain history...
+              </Typography>
+            ) : isSearchMode && searchError ? (
+              <Typography variant="body2" color="text.secondary">
+                {searchError}
+              </Typography>
+            ) : loading && transactions.length === 0 ? (
               <Typography variant="body2" color="text.secondary">
                 Loading live activity...
               </Typography>
             ) : activityItems.length === 0 ? (
               <Typography variant="body2" color="text.secondary">
-                No activity found for this window yet.
+                {isSearchMode
+                  ? 'No matching activity found.'
+                  : 'No activity found for this window yet.'}
               </Typography>
             ) : (
               <Stack spacing={2}>
                 {activityItems.map((item, index) => (
-                  <ButtonBase
+                  <Box
                     key={item.id}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => openTxDetails(item.raw, `Transaction ${item.id}`)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        openTxDetails(item.raw, `Transaction ${item.id}`);
+                      }
+                    }}
                     sx={{
                       width: '100%',
                       textAlign: 'left',
@@ -610,6 +859,7 @@ const XqloreExplorer = () => {
                       animation: 'xqlore-rise 700ms ease-out',
                       animationDelay: `${200 + index * 80}ms`,
                       animationFillMode: 'both',
+                      cursor: 'pointer',
                     }}
                   >
                     <Stack spacing={1}>
@@ -630,11 +880,13 @@ const XqloreExplorer = () => {
                         component="button"
                         onClick={(event) => {
                           event.stopPropagation();
-                          openComingSoon(
-                            'Identifier details',
-                            'Identifier drill-down is coming soon.',
-                            [['Identifier', item.identifier || '—']]
-                          );
+                          const label = item.identifier
+                            ? 'Identifier details'
+                            : 'Transaction detail';
+                          const value = item.displayIdentifier ?? item.identifier ?? '—';
+                          openComingSoon(label, 'Detailed drill-down is coming soon.', [
+                            ['Detail', value],
+                          ]);
                         }}
                         underline="hover"
                         sx={{
@@ -643,7 +895,7 @@ const XqloreExplorer = () => {
                           textAlign: 'left',
                         }}
                       >
-                        {item.identifier || '—'}
+                        {item.displayIdentifier ?? item.identifier ?? '—'}
                       </MuiLink>
                       <Typography variant="body2">{item.context}</Typography>
                       <Stack direction="row" spacing={1} flexWrap="wrap">
@@ -688,7 +940,7 @@ const XqloreExplorer = () => {
                         </Typography>
                       )}
                     </Stack>
-                  </ButtonBase>
+                  </Box>
                 ))}
               </Stack>
             )}
@@ -697,7 +949,7 @@ const XqloreExplorer = () => {
           <Stack spacing={2}>
             <Paper elevation={0} sx={{ ...surfaceSx, p: 2.5 }}>
               <Typography variant="h6" sx={{ fontFamily: 'Orbitron' }}>
-                Signal console
+                Signal console ({isSearchMode ? 'search' : timeRange})
               </Typography>
               <Typography variant="body2" sx={{ color: theme.palette.text.secondary, mt: 0.5 }}>
                 Watch the services that shape identifier context and routing.
@@ -738,9 +990,12 @@ const XqloreExplorer = () => {
             </Paper>
 
             <Paper elevation={0} sx={{ ...surfaceSx, p: 2.5 }}>
-              <Typography variant="h6" sx={{ fontFamily: 'Orbitron' }}>
-                App attribution
-              </Typography>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Typography variant="h6" sx={{ fontFamily: 'Orbitron' }}>
+                  App attribution ({isSearchMode ? 'search' : timeRange})
+                </Typography>
+                {registryLoading && <Chip size="small" label="Loading app registry" />}
+              </Stack>
               <Typography variant="body2" sx={{ color: theme.palette.text.secondary, mt: 0.5 }}>
                 Identify which apps are shaping the current chain narrative.
               </Typography>
@@ -782,108 +1037,100 @@ const XqloreExplorer = () => {
                 ))}
               </Stack>
             </Paper>
-          </Stack>
-        </Box>
 
-        <Box
-          sx={{
-            display: 'grid',
-            gridTemplateColumns: { xs: '1fr', md: '1.1fr 1fr' },
-            gap: 2,
-          }}
-        >
-          <Paper elevation={0} sx={{ ...surfaceSx, p: 2.5 }}>
-            <Typography variant="h6" sx={{ fontFamily: 'Orbitron' }}>
-              Tag matrix
-            </Typography>
-            <Typography variant="body2" sx={{ color: theme.palette.text.secondary, mt: 0.5 }}>
-              Surface emerging context across QDN, assets, and names.
-            </Typography>
-            <Box
-              sx={{
-                display: 'grid',
-                gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(4, 1fr)' },
-                gap: 1,
-                mt: 2,
-              }}
-            >
-              {tagMatrix.length === 0 && (
-                <Typography variant="body2" color="text.secondary">
-                  Tags will appear once activity flows in.
-                </Typography>
-              )}
-              {tagMatrix.map((tag) => (
-                <ButtonBase
-                  key={tag.label}
-                  onClick={() =>
-                    openComingSoon(`Tag: ${tag.label}`, 'Tag exploration is coming soon.', [
-                      ['Matches', String(tag.count)],
-                    ])
-                  }
-                  sx={{
-                    textAlign: 'left',
-                    borderRadius: '14px',
-                    p: 1.5,
-                    backgroundColor: alpha(theme.palette.background.default, 0.7),
-                    border: `1px solid ${alpha(theme.palette.divider, 0.5)}`,
-                  }}
-                >
-                  <Box>
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      {tag.label}
-                    </Typography>
-                    <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
-                      {tag.count} matches
-                    </Typography>
-                  </Box>
-                </ButtonBase>
-              ))}
-            </Box>
-          </Paper>
-
-          <Paper elevation={0} sx={{ ...surfaceSx, p: 2.5 }}>
-            <Typography variant="h6" sx={{ fontFamily: 'Orbitron' }}>
-              Identifier radar
-            </Typography>
-            <Typography variant="body2" sx={{ color: theme.palette.text.secondary, mt: 0.5 }}>
-              Map identifiers to apps to keep the live feed contextual.
-            </Typography>
-            <Stack spacing={1.5} sx={{ mt: 2 }}>
-              {identifierRadar.length === 0 && (
-                <Typography variant="body2" color="text.secondary">
-                  No identifiers detected yet.
-                </Typography>
-              )}
-              {identifierRadar.map((item) => (
-                <ButtonBase
-                  key={item.id}
-                  onClick={() =>
-                    item.tx
-                      ? openTxDetails(item.tx, `Identifier ${item.id}`)
-                      : openComingSoon(item.id, 'Identifier details are coming soon.')
-                  }
-                  sx={{
-                    textAlign: 'left',
-                    borderRadius: '14px',
-                    p: 1.5,
-                    backgroundColor: alpha(theme.palette.background.default, 0.7),
-                    border: `1px solid ${alpha(theme.palette.divider, 0.5)}`,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 0.5,
-                  }}
-                >
-                  <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                    {item.id}
+            <Paper elevation={0} sx={{ ...surfaceSx, p: 2.5 }}>
+              <Typography variant="h6" sx={{ fontFamily: 'Orbitron' }}>
+                Tag matrix ({isSearchMode ? 'search' : timeRange})
+              </Typography>
+              <Typography variant="body2" sx={{ color: theme.palette.text.secondary, mt: 0.5 }}>
+                Surface emerging context across QDN, assets, and names.
+              </Typography>
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(4, 1fr)' },
+                  gap: 1,
+                  mt: 2,
+                }}
+              >
+                {tagMatrix.length === 0 && (
+                  <Typography variant="body2" color="text.secondary">
+                    Tags will appear once activity flows in.
                   </Typography>
-                  <Stack direction="row" spacing={1} alignItems="center">
-                    <Typography variant="caption">{item.app}</Typography>
-                    <Chip label={item.status} size="small" variant="outlined" />
-                  </Stack>
-                </ButtonBase>
-              ))}
-            </Stack>
-          </Paper>
+                )}
+                {tagMatrix.map((tag) => (
+                  <ButtonBase
+                    key={tag.label}
+                    onClick={() =>
+                      openComingSoon(`Tag: ${tag.label}`, 'Tag exploration is coming soon.', [
+                        ['Matches', String(tag.count)],
+                      ])
+                    }
+                    sx={{
+                      textAlign: 'left',
+                      borderRadius: '14px',
+                      p: 1.5,
+                      backgroundColor: alpha(theme.palette.background.default, 0.7),
+                      border: `1px solid ${alpha(theme.palette.divider, 0.5)}`,
+                    }}
+                  >
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                        {tag.label}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: theme.palette.text.secondary }}>
+                        {tag.count} matches
+                      </Typography>
+                    </Box>
+                  </ButtonBase>
+                ))}
+              </Box>
+            </Paper>
+
+            <Paper elevation={0} sx={{ ...surfaceSx, p: 2.5 }}>
+              <Typography variant="h6" sx={{ fontFamily: 'Orbitron' }}>
+                Identifier radar ({isSearchMode ? 'search' : timeRange})
+              </Typography>
+              <Typography variant="body2" sx={{ color: theme.palette.text.secondary, mt: 0.5 }}>
+                Map identifiers to apps to keep the live feed contextual.
+              </Typography>
+              <Stack spacing={1.5} sx={{ mt: 2 }}>
+                {identifierRadar.length === 0 && (
+                  <Typography variant="body2" color="text.secondary">
+                    No identifiers detected yet.
+                  </Typography>
+                )}
+                {identifierRadar.map((item) => (
+                  <ButtonBase
+                    key={item.id}
+                    onClick={() =>
+                      item.tx
+                        ? openTxDetails(item.tx, `Identifier ${item.id}`)
+                        : openComingSoon(item.id, 'Identifier details are coming soon.')
+                    }
+                    sx={{
+                      textAlign: 'left',
+                      borderRadius: '14px',
+                      p: 1.5,
+                      backgroundColor: alpha(theme.palette.background.default, 0.7),
+                      border: `1px solid ${alpha(theme.palette.divider, 0.5)}`,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 0.5,
+                    }}
+                  >
+                    <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                      {item.id}
+                    </Typography>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Typography variant="caption">{item.app}</Typography>
+                      <Chip label={item.status} size="small" variant="outlined" />
+                    </Stack>
+                  </ButtonBase>
+                ))}
+              </Stack>
+            </Paper>
+          </Stack>
         </Box>
 
         {indexLoading && (
@@ -937,6 +1184,27 @@ const XqloreExplorer = () => {
           <Button onClick={closeDialog}>Close</Button>
         </DialogActions>
       </Dialog>
+
+      {showBackToTop && (
+        <IconButton
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          sx={{
+            position: 'fixed',
+            right: { xs: 16, md: 32 },
+            bottom: { xs: 16, md: 32 },
+            borderRadius: '50%',
+            backgroundColor: alpha(theme.palette.background.paper, 0.92),
+            border: `1px solid ${alpha(theme.palette.primary.main, 0.4)}`,
+            boxShadow: `0 10px 24px ${alpha(theme.palette.common.black, 0.2)}`,
+            '&:hover': {
+              backgroundColor: alpha(theme.palette.background.paper, 1),
+            },
+          }}
+          aria-label="Back to top"
+        >
+          <ArrowUpwardIcon />
+        </IconButton>
+      )}
     </Box>
   );
 };

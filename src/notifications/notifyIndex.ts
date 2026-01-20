@@ -63,7 +63,7 @@ async function getAdminNameSet(groupId: number): Promise<Set<string>> {
   const rows = await fetchGroupMembers(true, groupId); // onlyAdmins=true
   const addrs = rows.map((r) => String(r.member || r.address || '').trim()).filter(Boolean);
 
-  const limit = pLimit(4);
+  const limit = pLimit(10);
   const allNames = (
     await Promise.all(addrs.map((addr) => limit(() => namesForAddress(addr))))
   ).flat();
