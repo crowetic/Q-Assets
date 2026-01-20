@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.6 - 2026-1-17
+## 0.8.6 - 0.8.7 - 2026-1-17 - 2026-01-19
 
 - Adjusted Data Explorer tombstone filtering to only apply deletion heuristics to small files and rely on explicit markers.
 - Added the Xqlore explorer design with live activity layout, tag matrix, and app attribution panels.
