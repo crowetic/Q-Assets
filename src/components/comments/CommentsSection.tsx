@@ -542,7 +542,7 @@ export default function CommentsSection({
 
     let cancelled = false;
     const ac = new AbortController();
-    const limit = pLimit(10); // control network pressure
+    const limit = pLimit(2); // control network pressure
     const BATCH = 10; // update UI every N docs
 
     (async () => {
@@ -691,7 +691,7 @@ export default function CommentsSection({
 
         // 5) Avatars AFTER items paint; do not block
         const authors = Array.from(new Set(tagged.map((c) => c.author))).filter(Boolean);
-        const avatarLimit = pLimit(10);
+        const avatarLimit = pLimit(2);
         await Promise.all(
           authors.map((a) =>
             avatarLimit(async () => {

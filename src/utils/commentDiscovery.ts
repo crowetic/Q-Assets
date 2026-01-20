@@ -5,7 +5,7 @@ import { DEV_GROUP_ID, MINTER_GROUP_ID } from '../constants/qdnConstants';
 import { getGroupAddressSetsById } from '../utils/access';
 import { getAllAccountNames, getPrimaryAccountName } from '../utils/qortalApi';
 
-const limit = pLimit(10);
+const limit = pLimit(2);
 
 // Robust: get all names for an address (you already have similar in wikiAccess.ts)
 async function getAllNamesForAddress(address: string): Promise<string[]> {
@@ -101,7 +101,7 @@ export async function discoverEligibleCommentPublishers(opts: {
     ...dev.memberAddrs,
   ]);
 
-  const limit = pLimit(10);
+  const limit = pLimit(2);
   const perAddr = await Promise.all(
     Array.from(unionAddrs).map((addr) =>
       limit(async () => {

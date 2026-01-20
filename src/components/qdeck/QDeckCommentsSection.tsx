@@ -166,7 +166,7 @@ export default function QDeckCommentsSection({ cardId, canComment }: Props) {
     if (!authors.length) return;
 
     let cancelled = false;
-    const limit = pLimit(10);
+    const limit = pLimit(2);
 
     void Promise.all(
       authors.map((author) =>

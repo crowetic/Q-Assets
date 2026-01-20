@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.8 - 2026-01-19
+
+- Switched Xqlore long-term index builds to configurable 25k-block batch counts with sequential processing.
+- Capped Xqlore index batches at 50k transactions and adjust batch end blocks when density is high.
+- Added pagination to the Xqlore activity stream to keep large timeframes manageable.
+- Removed the encrypted payloads metric from the Xqlore signal console.
+- Updated Xqlore index head selection to prefer the largest coverage before timestamps, with allowlisted app publishers still preferred.
+- Added aggregated Xqlore stats overview publishing with account activity leaders.
+- Added a rebuild action to regenerate the Xqlore stats overview from all published index batches.
+- Improved stats overview rebuild to fall back to the latest index when candidate lookup returns empty, with staged progress updates during aggregation.
+- Sorted Xqlore index entries by block height before validation and skip publishing empty batch ranges.
+- Added a rebuild action to republish existing Xqlore index batches using the latest normalization.
+- Added fallback lookup when the latest Xqlore index or stats overview identifiers are missing.
+- Streamed Xqlore index rebuilds in publish chunks (20 batches) to limit memory while reducing publish calls.
+- Scoped Xqlore index rebuilds to the active publisher and reused existing identifiers, preferring the largest batch per range.
+- Excluded the null account from Xqlore stats, raised leaderboards to the top 50, and expanded the overview with QORT flow leaders while keeping QDN publish and asset event leaderboards (excluding QORT-as-asset transfers from asset counts).
+- Fixed Xqlore index batch publishing typing so the publish queue accepts batch resources.
+
 ## 0.8.6 - 0.8.7 - 2026-1-17 - 2026-01-19
 
 - Adjusted Data Explorer tombstone filtering to only apply deletion heuristics to small files and rely on explicit markers.
@@ -21,8 +39,6 @@
 - Switched Xqlore activity list and identifier panels to render registry-updated tx data immediately.
 - Added a loading indicator for the Xqlore app registry in the attribution panel.
 - Stabilized Xqlore admin form updates to prevent update-depth errors and reduce input lag.
-- Switched Xqlore long-term index builds to configurable 100k-block batch counts with sequential processing.
-- Fixed Xqlore index batch publishing typing so the publish queue accepts batch resources.
 - Adjusted Xqlore activity labeling so only QDN publishes map to apps and other tx types show type-based details.
 - Labeled the Qortal Null Account with an explainer and added balance lookup on Xqlore account pages.
 - Defaulted Xqlore activity to 24h and moved identifier/tag panels under attribution on the right column.

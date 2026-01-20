@@ -3,6 +3,8 @@ import {
   XQLORE_APP_INDEX_HEAD_ID,
   XQLORE_APP_INDEX_PREFIX,
   XQLORE_APP_INDEX_WHITELIST_ID,
+  XQLORE_STATS_OVERVIEW_HEAD_ID,
+  XQLORE_STATS_OVERVIEW_PREFIX,
   XQLORE_TX_INDEX_HEAD_ID,
   XQLORE_TX_INDEX_PREFIX,
 } from '../constants/qdnConstants';
@@ -14,6 +16,8 @@ import {
 } from './searchSimple';
 import { listManagementGroupNames } from './access';
 import { getTransactionInfoBySignature } from './qortalApi';
+
+const NULL_ACCOUNT_ADDRESS = 'QdSnUy6sUiEnaN87dWmE92g1uQjrvPgrWG';
 
 export type XqlorePublisher = {
   name?: string;
@@ -97,6 +101,44 @@ export type XqloreAppIndexWhitelist = {
   version: number;
   updatedAt: number;
   publishers: string[];
+};
+
+export type XqloreStatsOverviewAccountCount = {
+  address: string;
+  count: number;
+  name?: string;
+};
+
+export type XqloreStatsOverviewAccountAmount = {
+  address: string;
+  amount: number;
+  name?: string;
+};
+
+export type XqloreStatsOverview = {
+  version: number;
+  updatedAt: number;
+  blockStart: number;
+  blockEnd: number;
+  entryCount: number;
+  qdnPublishes: number;
+  assetEvents: number;
+  topAccountsByIncomingQort: XqloreStatsOverviewAccountAmount[];
+  topAccountsBySoldQort: XqloreStatsOverviewAccountAmount[];
+  topAccountsByBoughtQort: XqloreStatsOverviewAccountAmount[];
+  topAccountsByConsolidatedQort: XqloreStatsOverviewAccountCount[];
+  topAccountsByTxCount: XqloreStatsOverviewAccountCount[];
+  topAccountsByQdnPublishes: XqloreStatsOverviewAccountCount[];
+  topAccountsByAssetEvents: XqloreStatsOverviewAccountCount[];
+};
+
+export type XqloreStatsOverviewHead = {
+  version: number;
+  updatedAt: number;
+  latestIdentifier: string;
+  blockStart: number;
+  blockEnd: number;
+  entryCount: number;
 };
 
 const toTimestamp = (hit: SimpleHit) => Number(hit.updated ?? hit.created ?? 0) || 0;
@@ -253,6 +295,69 @@ const normalizeAppWhitelist = (raw: any): XqloreAppIndexWhitelist => {
   };
 };
 
+const normalizeStatsOverview = (raw: any): XqloreStatsOverview | null => {
+  const obj = coerceObject(raw);
+  if (!obj) return null;
+  const blockStart = Number(obj.blockStart);
+  const blockEnd = Number(obj.blockEnd);
+  if (!Number.isFinite(blockStart) || !Number.isFinite(blockEnd)) return null;
+  const countList = (value: any) =>
+    Array.isArray(value)
+      ? value
+          .map((item) => ({
+            address: typeof item?.address === 'string' ? item.address.trim() : '',
+            count: Number(item?.count ?? 0) || 0,
+            name: typeof item?.name === 'string' ? item.name.trim() : undefined,
+          }))
+          .filter((item) => item.address && item.address !== NULL_ACCOUNT_ADDRESS && item.count > 0)
+      : [];
+  const amountList = (value: any) =>
+    Array.isArray(value)
+      ? value
+          .map((item) => ({
+            address: typeof item?.address === 'string' ? item.address.trim() : '',
+            amount: Number(item?.amount ?? 0) || 0,
+            name: typeof item?.name === 'string' ? item.name.trim() : undefined,
+          }))
+          .filter(
+            (item) => item.address && item.address !== NULL_ACCOUNT_ADDRESS && item.amount > 0
+          )
+      : [];
+  return {
+    version: Number(obj.version) || 1,
+    updatedAt: Number(obj.updatedAt) || Date.now(),
+    blockStart,
+    blockEnd,
+    entryCount: Number(obj.entryCount) || 0,
+    qdnPublishes: Number(obj.qdnPublishes) || 0,
+    assetEvents: Number(obj.assetEvents) || 0,
+    topAccountsByIncomingQort: amountList(obj.topAccountsByIncomingQort),
+    topAccountsBySoldQort: amountList(obj.topAccountsBySoldQort),
+    topAccountsByBoughtQort: amountList(obj.topAccountsByBoughtQort),
+    topAccountsByConsolidatedQort: countList(obj.topAccountsByConsolidatedQort),
+    topAccountsByTxCount: countList(obj.topAccountsByTxCount),
+    topAccountsByQdnPublishes: countList(obj.topAccountsByQdnPublishes),
+    topAccountsByAssetEvents: countList(obj.topAccountsByAssetEvents),
+  };
+};
+
+const normalizeStatsOverviewHead = (raw: any): XqloreStatsOverviewHead | null => {
+  const obj = coerceObject(raw);
+  if (!obj) return null;
+  const latestIdentifier = typeof obj.latestIdentifier === 'string' ? obj.latestIdentifier : '';
+  const blockStart = Number(obj.blockStart);
+  const blockEnd = Number(obj.blockEnd);
+  if (!latestIdentifier || !Number.isFinite(blockStart) || !Number.isFinite(blockEnd)) return null;
+  return {
+    version: Number(obj.version) || 1,
+    updatedAt: Number(obj.updatedAt) || Date.now(),
+    latestIdentifier,
+    blockStart,
+    blockEnd,
+    entryCount: Number(obj.entryCount) || 0,
+  };
+};
+
 async function fetchQdnJson(hit: SimpleHit): Promise<any | null> {
   if (!hit.name || !hit.identifier) return null;
   try {
@@ -277,6 +382,11 @@ export function buildTxIndexIdentifier(blockStart: number, blockEnd: number) {
   return `${XQLORE_TX_INDEX_PREFIX}${blockStart}__${blockEnd}__${stamp}`;
 }
 
+export function buildStatsOverviewIdentifier(blockStart: number, blockEnd: number) {
+  const stamp = Date.now().toString(36);
+  return `${XQLORE_STATS_OVERVIEW_PREFIX}${blockStart}__${blockEnd}__${stamp}`;
+}
+
 export function buildAppIndexIdentifier() {
   const stamp = Date.now().toString(36);
   return `${XQLORE_APP_INDEX_PREFIX}${stamp}`;
@@ -285,10 +395,24 @@ export function buildAppIndexIdentifier() {
 export async function fetchLatestTxIndexHead(): Promise<XqloreTxIndexHead | null> {
   const hits = await searchSimpleByFullId(XQLORE_TX_INDEX_HEAD_ID, false);
   if (!hits.length) return null;
-  const sorted = hits.slice().sort((a, b) => toTimestamp(b) - toTimestamp(a));
-  const best = sorted[0];
-  const doc = await fetchQdnJson(best);
-  return normalizeTxIndexHead(doc);
+  const docs = await Promise.all(hits.map((hit) => fetchQdnJson(hit)));
+  const heads = docs.map(normalizeTxIndexHead).filter(Boolean) as XqloreTxIndexHead[];
+  if (!heads.length) return null;
+  const sorted = heads.slice().sort((a, b) => {
+    if (b.blockEnd !== a.blockEnd) return b.blockEnd - a.blockEnd;
+    if (b.entryCount !== a.entryCount) return b.entryCount - a.entryCount;
+    return b.updatedAt - a.updatedAt;
+  });
+  return sorted[0];
+}
+
+export async function fetchLatestStatsOverviewHead(): Promise<XqloreStatsOverviewHead | null> {
+  const hits = await searchSimpleByFullId(XQLORE_STATS_OVERVIEW_HEAD_ID, false);
+  if (!hits.length) return null;
+  const docs = await Promise.all(hits.map((hit) => fetchQdnJson(hit)));
+  const heads = docs.map(normalizeStatsOverviewHead).filter(Boolean) as XqloreStatsOverviewHead[];
+  if (!heads.length) return null;
+  return heads.slice().sort((a, b) => b.updatedAt - a.updatedAt)[0];
 }
 
 export async function fetchLatestTxIndex(): Promise<{
@@ -301,13 +425,37 @@ export async function fetchLatestTxIndex(): Promise<{
     const hit = hits.find((item) => item.identifier === head.latestIdentifier) ?? hits[0];
     if (!hit) return { head, index: null };
     const doc = await fetchQdnJson(hit);
-    return { head, index: normalizeTxIndex(doc) };
+    const normalized = normalizeTxIndex(doc);
+    if (normalized) return { head, index: normalized };
   }
 
   const fallbackHits = await fetchTxIndexCandidates(1);
   if (!fallbackHits.length) return { head, index: null };
   const doc = await fetchQdnJson(fallbackHits[0]);
   return { head, index: normalizeTxIndex(doc) };
+}
+
+export async function fetchLatestStatsOverview(): Promise<{
+  head: XqloreStatsOverviewHead | null;
+  overview: XqloreStatsOverview | null;
+}> {
+  const head = await fetchLatestStatsOverviewHead();
+  if (head?.latestIdentifier) {
+    const hits = await searchSimpleByIdentifierPrefix('DOCUMENT', head.latestIdentifier, 0);
+    const hit = hits.find((item) => item.identifier === head.latestIdentifier) ?? hits[0];
+    if (!hit) return { head, overview: null };
+    const doc = await fetchQdnJson(hit);
+    const normalized = normalizeStatsOverview(doc);
+    if (normalized) return { head, overview: normalized };
+  }
+  const fallbackHits = await searchSimpleByIdentifierPrefix(
+    'DOCUMENT',
+    XQLORE_STATS_OVERVIEW_PREFIX,
+    1
+  );
+  if (!fallbackHits.length) return { head, overview: null };
+  const doc = await fetchQdnJson(fallbackHits[0]);
+  return { head, overview: normalizeStatsOverview(doc) };
 }
 
 export async function fetchTxIndexCandidates(limit = 20): Promise<SimpleHit[]> {
@@ -321,14 +469,25 @@ export async function fetchLatestAppIndexHead(
   const hits = await searchSimpleByFullId(XQLORE_APP_INDEX_HEAD_ID, false);
   if (!hits.length) return null;
   const allowed = new Set((allowedPublishers || []).map((p) => p.toLowerCase()));
-  const pick = (list: SimpleHit[]) =>
-    list.slice().sort((a, b) => toTimestamp(b) - toTimestamp(a))[0];
-  const preferred = allowed.size
+  const filtered = allowed.size
     ? hits.filter((hit) => allowed.has(String(hit.name || '').toLowerCase()))
-    : [];
-  const best = preferred.length ? pick(preferred) : pick(hits);
-  const doc = await fetchQdnJson(best);
-  return normalizeAppIndexHead(doc);
+    : hits;
+  const docs = await Promise.all(filtered.map((hit) => fetchQdnJson(hit)));
+  const heads = docs.map(normalizeAppIndexHead).filter(Boolean) as XqloreAppIndexHead[];
+  if (!heads.length && allowed.size) {
+    const fallbackDocs = await Promise.all(hits.map((hit) => fetchQdnJson(hit)));
+    const fallbackHeads = fallbackDocs
+      .map(normalizeAppIndexHead)
+      .filter(Boolean) as XqloreAppIndexHead[];
+    if (!fallbackHeads.length) return null;
+    return fallbackHeads.slice().sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  }
+  if (!heads.length) return null;
+  const sorted = heads.slice().sort((a, b) => {
+    if (b.appCount !== a.appCount) return b.appCount - a.appCount;
+    return b.updatedAt - a.updatedAt;
+  });
+  return sorted[0];
 }
 
 export async function fetchLatestAppIndex(allowedPublishers?: string[]): Promise<{
@@ -479,10 +638,11 @@ export async function buildTxIndexPublishResources(params: {
   blockStart: number;
   blockEnd: number;
   entries: XqloreTxIndexEntry[];
+  identifier?: string;
 }): Promise<Array<{ name: string; service: Service; identifier: string; base64: string }>> {
-  const { publisherName, publisherAddress, blockStart, blockEnd, entries } = params;
+  const { publisherName, publisherAddress, blockStart, blockEnd, entries, identifier } = params;
   const now = Date.now();
-  const identifier = buildTxIndexIdentifier(blockStart, blockEnd);
+  const resolvedIdentifier = identifier || buildTxIndexIdentifier(blockStart, blockEnd);
   const payload: XqloreTxIndex = {
     version: 1,
     createdAt: now,
@@ -498,10 +658,51 @@ export async function buildTxIndexPublishResources(params: {
     version: 1,
     updatedAt: now,
     publisher: { name: publisherName, address: publisherAddress },
-    latestIdentifier: identifier,
+    latestIdentifier: resolvedIdentifier,
     blockStart,
     blockEnd,
     entryCount: entries.length,
+  };
+  const [body64, head64] = await Promise.all([objectToBase64(payload), objectToBase64(head)]);
+  return [
+    {
+      name: publisherName,
+      service: 'DOCUMENT',
+      identifier: resolvedIdentifier,
+      base64: body64,
+    },
+    {
+      name: publisherName,
+      service: 'DOCUMENT',
+      identifier: XQLORE_TX_INDEX_HEAD_ID,
+      base64: head64,
+    },
+  ];
+}
+
+export async function buildStatsOverviewPublishResources(params: {
+  publisherName: string;
+  blockStart: number;
+  blockEnd: number;
+  overview: XqloreStatsOverview;
+}): Promise<Array<{ name: string; service: Service; identifier: string; base64: string }>> {
+  const { publisherName, blockStart, blockEnd, overview } = params;
+  const now = Date.now();
+  const identifier = buildStatsOverviewIdentifier(blockStart, blockEnd);
+  const payload: XqloreStatsOverview = {
+    ...overview,
+    version: 1,
+    updatedAt: now,
+    blockStart,
+    blockEnd,
+  };
+  const head: XqloreStatsOverviewHead = {
+    version: 1,
+    updatedAt: now,
+    latestIdentifier: identifier,
+    blockStart,
+    blockEnd,
+    entryCount: overview.entryCount,
   };
   const [body64, head64] = await Promise.all([objectToBase64(payload), objectToBase64(head)]);
   return [
@@ -514,7 +715,7 @@ export async function buildTxIndexPublishResources(params: {
     {
       name: publisherName,
       service: 'DOCUMENT',
-      identifier: XQLORE_TX_INDEX_HEAD_ID,
+      identifier: XQLORE_STATS_OVERVIEW_HEAD_ID,
       base64: head64,
     },
   ];

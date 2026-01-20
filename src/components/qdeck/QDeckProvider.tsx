@@ -456,7 +456,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const lastLoadKey = useRef<string>('');
   const { track } = useFetchTracker();
-  const cardLimiter = useMemo(() => pLimit(10), []);
+  const cardLimiter = useMemo(() => pLimit(2), []);
 
   const loadCardsForBoard = React.useCallback(
     async (_issuerIgnored: string, b: QDeckBoard) => {
@@ -1343,7 +1343,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       });
     }
 
-    const commentLimit = pLimit(10);
+    const commentLimit = pLimit(2);
     const commentCardIds = new Set<string>();
     Object.keys(cardVariants).forEach((id) => commentCardIds.add(id));
     Object.keys(cards).forEach((id) => commentCardIds.add(id));

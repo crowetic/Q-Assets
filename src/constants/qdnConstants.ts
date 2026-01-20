@@ -39,6 +39,8 @@ export const XQLORE_TX_INDEX_HEAD_ID = 'xqlore_tx_index_head';
 export const XQLORE_APP_INDEX_PREFIX = 'xqlore_app_index__';
 export const XQLORE_APP_INDEX_HEAD_ID = 'xqlore_app_index_head';
 export const XQLORE_APP_INDEX_WHITELIST_ID = 'xqlore_app_index_whitelist';
+export const XQLORE_STATS_OVERVIEW_PREFIX = 'xqlore_stats_overview__';
+export const XQLORE_STATS_OVERVIEW_HEAD_ID = 'xqlore_stats_overview_head';
 
 // Optional: base prefix for asset news across *all* assets, for global search
 export const assetNewsGlobalPrefix = 'asset_news_pub__';

@@ -62,6 +62,7 @@ const FALLBACK_LIMIT = 100;
 const FALLBACK_MAX_PAGES = 10;
 
 const LIVE_POLL_MS = 15_000;
+const ACTIVITY_PAGE_SIZE = 50;
 
 const TYPE_COLORS: Record<string, 'info' | 'success' | 'warning' | 'error' | 'secondary'> = {
   ARBITRARY: 'info',
@@ -94,6 +95,7 @@ const XqloreExplorer = () => {
   const [linkTarget, setLinkTarget] = useState<LinkTarget | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
+  const [activityPage, setActivityPage] = useState(1);
   const [searchRawResults, setSearchRawResults] = useState<any[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -372,6 +374,15 @@ const XqloreExplorer = () => {
     }));
   }, [attributedTxs]);
 
+  const pagedActivityItems = useMemo(() => {
+    const limit = ACTIVITY_PAGE_SIZE * activityPage;
+    return activityItems.slice(0, limit);
+  }, [activityItems, activityPage]);
+
+  useEffect(() => {
+    setActivityPage(1);
+  }, [timeRange, query]);
+
   const metrics = useMemo(() => {
     const total = displayedTxs.length;
     const qdnPublishes = displayedTxs.filter((tx) => tx.type === 'ARBITRARY').length;
@@ -451,15 +462,9 @@ const XqloreExplorer = () => {
     const total = Math.max(attributedTxs.length, 1);
     const mapped = attributedTxs.filter((tx) => tx.app !== 'Unmapped').length;
     const unmapped = attributedTxs.filter((tx) => tx.app === 'Unmapped').length;
-    const encrypted = attributedTxs.filter((tx) => tx.tags.includes('private')).length;
     return [
       { label: 'Identifier matches', value: mapped, pct: Math.round((mapped / total) * 100) },
       { label: 'Unmapped apps', value: unmapped, pct: Math.round((unmapped / total) * 100) },
-      {
-        label: 'Encrypted payloads',
-        value: encrypted,
-        pct: Math.round((encrypted / total) * 100),
-      },
     ];
   }, [attributedTxs]);
 
@@ -834,7 +839,7 @@ const XqloreExplorer = () => {
               </Typography>
             ) : (
               <Stack spacing={2}>
-                {activityItems.map((item, index) => (
+                {pagedActivityItems.map((item, index) => (
                   <Box
                     key={item.id}
                     role="button"
@@ -942,6 +947,11 @@ const XqloreExplorer = () => {
                     </Stack>
                   </Box>
                 ))}
+                {pagedActivityItems.length < activityItems.length && (
+                  <Button variant="outlined" onClick={() => setActivityPage((prev) => prev + 1)}>
+                    Load more activity
+                  </Button>
+                )}
               </Stack>
             )}
           </Paper>
