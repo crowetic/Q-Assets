@@ -15,7 +15,12 @@ import { getAccount, getAllAccountNames } from '../../utils/qortalApi';
 import { getAssetBalances } from '../../utils/qortalAssetRequests';
 import { useQortTransactions } from '../../portfolio/useQortTransactions';
 import { useXqloreAppIndex } from '../../hooks/useXqloreAppIndex';
-import { formatNumber, formatRelativeTime, normalizeTx } from '../../utils/xqloreTx';
+import {
+  formatNumber,
+  formatRelativeTime,
+  normalizeTx,
+  type NormalizedTx,
+} from '../../utils/xqloreTx';
 import XqloreTxDetailsDialog from '../../components/xqlore/XqloreTxDetailsDialog';
 
 const NULL_ACCOUNT_ADDRESS = 'QdSnUy6sUiEnaN87dWmE92g1uQjrvPgrWG';
@@ -98,7 +103,7 @@ const XqloreAccountPage = () => {
   const normalizedTxs = useMemo(() => {
     return txState.items
       .map((tx) => normalizeTx(tx, registry))
-      .filter(Boolean)
+      .filter((tx): tx is NormalizedTx => Boolean(tx))
       .slice(0, 30);
   }, [txState.items, registry]);
 
@@ -154,7 +159,15 @@ const XqloreAccountPage = () => {
               </Stack>
             </Stack>
             {isNullAccount && (
-              <Paper elevation={0} sx={{ p: 2, borderRadius: 2, backgroundColor: alpha(theme.palette.warning.light, 0.1), border: `1px solid ${alpha(theme.palette.warning.main, 0.4)}` }}>
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 2,
+                  borderRadius: 2,
+                  backgroundColor: alpha(theme.palette.warning.light, 0.1),
+                  border: `1px solid ${alpha(theme.palette.warning.main, 0.4)}`,
+                }}
+              >
                 <Stack spacing={1}>
                   <Stack direction="row" spacing={1} alignItems="center">
                     <Chip label="Null Account" color="warning" variant="outlined" />
@@ -165,8 +178,8 @@ const XqloreAccountPage = () => {
                   <Typography variant="body2" color="text.secondary">
                     The Null Account is an account leveraged by ATs on Qortal and is a burn address
                     for any assets sent to it. The Null account is owned by no one and has no
-                    private key. Null-owned groups are forced GROUP_APPROVAL controlled, such as
-                    the MINTER group and Dev groups of Qortal.
+                    private key. Null-owned groups are forced GROUP_APPROVAL controlled, such as the
+                    MINTER group and Dev groups of Qortal.
                   </Typography>
                 </Stack>
               </Paper>
