@@ -309,7 +309,7 @@ export async function repairCardsIndex(
   const refs = await discoverCardRefsBySearch(board);
   const limit = opts?.concurrency ? pLimit(opts.concurrency) : pLimit(2);
   const seen = new Set<string>();
-  const entries: Array<{ name: string; cardId: string }> = [];
+  const entries: NonNullable<CardsIndexDoc['entries']> = [];
   const cardIds = new Set<string>(current.cardIds ?? []);
 
   await Promise.all(
@@ -2455,7 +2455,12 @@ export async function resolveProjectForRead(
 
 async function loadNewestAuthorizedProjectDoc(
   base: QDeckProject,
-  meta: { visibility: 'public' | 'private'; mode?: 'group' | 'direct'; groupId?: number; isAdmins?: boolean },
+  meta: {
+    visibility: 'public' | 'private';
+    mode?: 'group' | 'direct';
+    groupId?: number;
+    isAdmins?: boolean;
+  },
   opts?: { issuerHints?: string[]; maxCandidates?: number }
 ): Promise<QDeckProject | null> {
   const identifier =

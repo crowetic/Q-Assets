@@ -20,6 +20,7 @@
 - Tucked Xqlore index tools behind an on-demand toggle and refreshed the stats layout.
 - Renamed the consolidated QORT leaderboard to clarify it is a consolidation transaction count.
 - Updated Xqlore incoming/bought QORT to treat AT payouts to their deployers as refunds, not buys.
+- Fixed Q-Deck cards index typing to include card metadata fields.
 
 ## 0.8.8 - 2026-01-19
 

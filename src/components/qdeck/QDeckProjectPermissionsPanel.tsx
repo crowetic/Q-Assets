@@ -25,7 +25,7 @@ import { QDeckProject } from '../../types/qdeck';
 import { loadProjectsIndexMerged } from '../../utils/qdeckProjectIndexCache';
 import { resolveProjectForRead, saveProjectDoc } from '../../utils/qdeckApi';
 import { useAuth } from 'qapp-core';
-import pLimit from 'p-limit';
+// import pLimit from 'p-limit';
 import { getAccountGroups, type GroupSummary } from '../../utils/qortalApi';
 import { fetchGroupMembers } from '../../utils/access';
 import { isQAddressFormat } from '../../utils/address';
@@ -46,7 +46,7 @@ export default function QDeckProjectPermissionsPanel() {
   const [projects, setProjects] = useState<EditableProject[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const limit = useMemo(() => pLimit(2), []);
+  // const limit = useMemo(() => pLimit(2), []);
   const [myGroups, setMyGroups] = useState<GroupSummary[]>([]);
   const groupMemberCacheRef = useRef(new Map<number, Set<string>>());
   const nameAddressCacheRef = useRef(new Map<string, string>());
@@ -133,7 +133,10 @@ export default function QDeckProjectPermissionsPanel() {
       if (mode === 'direct') {
         const recipients = project.privateMeta?.recipients;
         if (!recipients?.length) {
-          return { ok: false, reason: 'Direct encrypted projects can only add existing recipients.' };
+          return {
+            ok: false,
+            reason: 'Direct encrypted projects can only add existing recipients.',
+          };
         }
         const address = await resolveNameToAddress(nameOrAddress);
         if (!address) {
@@ -161,7 +164,10 @@ export default function QDeckProjectPermissionsPanel() {
     const mode =
       project.privateMeta?.mode ?? (project.privateMeta?.groupId != null ? 'group' : 'direct');
     if (mode !== 'group') {
-      return { ok: false, reason: 'Direct encrypted projects do not allow group-based permissions.' };
+      return {
+        ok: false,
+        reason: 'Direct encrypted projects do not allow group-based permissions.',
+      };
     }
     const privateGroupId = project.privateMeta?.groupId;
     if (!privateGroupId) {
@@ -187,9 +193,11 @@ export default function QDeckProjectPermissionsPanel() {
 
       for (const entry of entries) {
         const issuer = idx?.issuerName || myName;
-        const resolved = await resolveProjectForRead(issuer, entry.projectId, entry.visibility).catch(
-          () => null
-        );
+        const resolved = await resolveProjectForRead(
+          issuer,
+          entry.projectId,
+          entry.visibility
+        ).catch(() => null);
         const base = resolved || (entry as any);
         const ownerGroups = base.ownerGroups || [];
         const editorGroups = Array.from(
@@ -549,7 +557,9 @@ export default function QDeckProjectPermissionsPanel() {
                           onChange={(e) =>
                             setProjects((prev) =>
                               prev.map((x) =>
-                                x.projectId === p.projectId ? { ...x, newEditor: e.target.value } : x
+                                x.projectId === p.projectId
+                                  ? { ...x, newEditor: e.target.value }
+                                  : x
                               )
                             )
                           }

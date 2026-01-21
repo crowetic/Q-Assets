@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect } from 'react';
+import { useCallback, useLayoutEffect } from 'react';
 import { usePublish } from 'qapp-core';
 import type { Service } from 'qapp-core';
 import { useAlert } from '../components/alerts';
