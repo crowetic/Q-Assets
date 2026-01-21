@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.8.9 - 2026-01-20
+
+- Added a board rename action to the Q-Deck board menu.
+- Sorted Q-Deck board overviews by most recently updated or created.
+- Collapsed long board group lists in the Q-Deck overviews with a +N more expander.
+- Added board rename actions to the My/All Boards menus and refreshed list titles after renames.
+- Added a Q-Deck project permissions panel to manage project admins/editors and admin overrides.
+- Enforced project edit rights so only authorized editors/admin overrides can publish project updates.
+- Optimized project calendars by reading schedule metadata from cards indexes and skipping archived cards.
+- Remembered per-board publish mode (immediate vs queued) for Q-Deck boards.
+- Displayed group names alongside IDs in the My/All Boards permission chips.
+- Fixed "create card already in progress" to place new cards into the In Progress list when available.
+- Added completion timestamps to done cards in Q-Deck boards.
+- Reordered Xqlore long-term stats to highlight QDN activity first and compacted account labels when names are missing.
+- Adjusted Xqlore buy/sell stats to ignore AT cancellations and only count QORT sent into ATs as sells.
+- Added minted-block leaders to the Xqlore stats overview using rewardshare minter lists and address snapshots.
+- Added a long-term stat for total QORT accounts with balances over 25 QORT, shown in the top summary.
+- Tucked Xqlore index tools behind an on-demand toggle and refreshed the stats layout.
+- Renamed the consolidated QORT leaderboard to clarify it is a consolidation transaction count.
+- Updated Xqlore incoming/bought QORT to treat AT payouts to their deployers as refunds, not buys.
+
 ## 0.8.8 - 2026-01-19
 
 - Switched Xqlore long-term index builds to configurable 25k-block batch counts with sequential processing.
@@ -17,6 +38,14 @@
 - Scoped Xqlore index rebuilds to the active publisher and reused existing identifiers, preferring the largest batch per range.
 - Excluded the null account from Xqlore stats, raised leaderboards to the top 50, and expanded the overview with QORT flow leaders while keeping QDN publish and asset event leaderboards (excluding QORT-as-asset transfers from asset counts).
 - Fixed Xqlore index batch publishing typing so the publish queue accepts batch resources.
+- Improved link handling to open `qortal://` links in-app while reliably copying external links.
+- Switched external link copy notices to use the in-app alert dialog.
+- Fixed link handler capture so header buttons keep working.
+- Allowed published content to retain `https://` links and linkified Qortal/external URLs on render.
+- Preserved `mailto:` and `tel:` links during publish sanitization.
+- Fixed announcement detail rendering to linkify URLs so links are clickable.
+- Limited news/announcement loading to non-expired publications and removed archived toggles.
+- Rehydrated anchor tags stripped of hrefs in published HTML so legacy links are clickable.
 
 ## 0.8.6 - 0.8.7 - 2026-1-17 - 2026-01-19
 

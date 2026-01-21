@@ -26,7 +26,7 @@ import PublicIcon from '@mui/icons-material/Public';
 import LockIcon from '@mui/icons-material/Lock';
 import { useAuth } from 'qapp-core';
 
-import type { QDeckBoard, QDeckProject } from '../types/qdeck';
+import type { CardsIndexDoc, QDeckBoard, QDeckProject } from '../types/qdeck';
 import {
   resolveProjectForReadWithMeta,
   resolveBoardForReadWithMeta,
@@ -38,13 +38,13 @@ import {
   canEncryptToGroup,
 } from '../utils/qdeckApi';
 import { boardUrl } from '../utils/qdeckApi';
+import { canUserEditProject } from '../utils/qdeckAccess';
 import { QDeckId } from '../constants/qdeckIdentifiers';
 import { searchSimpleByIdPrefixOnly } from '../utils/searchSimple';
 import { useAlert } from '../components/alerts';
 import { getGroupNameById, getPrimaryAccountName } from '../utils/qortalApi';
 import CalendarView from '../components/qdeck/CalendarView';
 import { CreateBoardDialog } from '../components/qdeck/CreateBoardDialog';
-import type { QDeckCard } from '../types/qdeck';
 import pLimit from 'p-limit';
 import { pastelHexFromId } from '../utils/qdeckColors';
 import { ensureAssetsIndexLoaded, readAssetsIndexSync } from '../bootstrap/assetsBootstrap';
@@ -59,6 +59,17 @@ type PendingBoardAdd = {
   board: QDeckBoard;
   issuerName: string;
   mismatchFields: string[];
+};
+
+type ProjectCardInfo = {
+  cardId: string;
+  title: string;
+  statusListId?: string;
+  scheduledStart?: number;
+  scheduledEnd?: number;
+  scheduledAllDay?: boolean;
+  completedAt?: number;
+  isDone?: boolean;
 };
 
 type CreateBoardPayload = {
@@ -158,6 +169,7 @@ export default function QDeckProjectPage() {
   const [loading, setLoading] = React.useState(true);
   const [errorText, setErrorText] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
+  const [canEditProject, setCanEditProject] = React.useState<boolean | null>(null);
   const [pendingPublishes, setPendingPublishes] = React.useState<BatchPublishResource[]>([]);
   const [publishingQueue, setPublishingQueue] = React.useState(false);
 
@@ -186,7 +198,7 @@ export default function QDeckProjectPage() {
   const [projectCards, setProjectCards] = React.useState<
     Array<{
       board: QDeckBoard;
-      card: QDeckCard;
+      card: ProjectCardInfo;
       boardRef: { boardId: string; issuerName: string; colorHex?: string };
     }>
   >([]);
@@ -248,6 +260,36 @@ export default function QDeckProjectPage() {
   }, [projectId, pendingPublishes]);
 
   React.useEffect(() => {
+    if (!project) {
+      setCanEditProject(null);
+      return;
+    }
+    let active = true;
+    setCanEditProject(null);
+    canUserEditProject(project, {
+      name: auth?.name ?? undefined,
+      address: auth?.address ?? undefined,
+    })
+      .then((ok) => {
+        if (active) setCanEditProject(ok);
+      })
+      .catch(() => {
+        if (active) setCanEditProject(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [project, auth?.name, auth?.address]);
+
+  const ensureCanEdit = React.useCallback(async () => {
+    if (canEditProject === true) return true;
+    await alert('You do not have edit rights for this project.', 'Project permissions', {
+      severity: 'warning',
+    });
+    return false;
+  }, [alert, canEditProject]);
+
+  React.useEffect(() => {
     if (!addBoardOpen) return;
     let alive = true;
     (async () => {
@@ -307,7 +349,8 @@ export default function QDeckProjectPage() {
 
   const persistProject = React.useCallback(
     async (next: QDeckProject) => {
-      if (!issuer) return;
+      if (!issuer || !project) return;
+      if (!(await ensureCanEdit())) return;
       setSaving(true);
       try {
         const updated: QDeckProject = {
@@ -365,7 +408,7 @@ export default function QDeckProjectPage() {
         setSaving(false);
       }
     },
-    [issuer, alert]
+    [issuer, alert, ensureCanEdit, project]
   );
 
   const loadProjectCards = React.useCallback(async () => {
@@ -379,7 +422,7 @@ export default function QDeckProjectPage() {
     const limit = pLimit(2);
     const rows: Array<{
       board: QDeckBoard;
-      card: QDeckCard;
+      card: ProjectCardInfo;
       boardRef: { boardId: string; issuerName: string; colorHex?: string };
     }> = [];
     const details: Record<string, QDeckBoard> = {};
@@ -395,28 +438,67 @@ export default function QDeckProjectPage() {
           issuerHints: [ref.issuerName, board.createdBy].filter(Boolean),
         }).catch(() => null);
         if (!index) continue;
-        const entries =
+        type DetailedEntry = NonNullable<CardsIndexDoc['entries']>[number];
+        type IndexEntry = DetailedEntry | { name?: string; cardId: string };
+        const archived = new Set(index.archivedIds ?? []);
+        const entries: IndexEntry[] =
           index.entries?.length && index.entries.some((e) => e.cardId && e.name)
             ? index.entries
             : (index.cardIds ?? []).map((cardId) => ({ name: board.createdBy, cardId }));
+        const activeEntries = entries.filter(
+          (entry) => entry.cardId && !archived.has(entry.cardId)
+        );
+        const isDetailedEntry = (entry: IndexEntry): entry is DetailedEntry =>
+          'title' in entry ||
+          'statusListId' in entry ||
+          'scheduledStart' in entry ||
+          'scheduledEnd' in entry ||
+          'completedAt' in entry;
+        const hasIndexSchedule = (entry: IndexEntry): entry is DetailedEntry => {
+          if (!isDetailedEntry(entry)) return false;
+          return (
+            !!entry.title &&
+            !!entry.statusListId &&
+            (entry.scheduledStart != null ||
+              entry.scheduledEnd != null ||
+              entry.completedAt != null)
+          );
+        };
+        const fromIndex = activeEntries.filter(hasIndexSchedule).map((entry) => ({
+          cardId: entry.cardId,
+          title: entry.title!,
+          statusListId: entry.statusListId,
+          scheduledStart: entry.scheduledStart,
+          scheduledEnd: entry.scheduledEnd,
+          scheduledAllDay: entry.scheduledAllDay,
+          completedAt: entry.completedAt,
+          isDone: entry.isDone,
+        }));
+        const toFetch = activeEntries.filter((entry) => !hasIndexSchedule(entry));
         const cards = await Promise.all(
-          entries.map((entry) =>
+          toFetch.map((entry) =>
             limit(() => loadCardDoc(entry.name || board.createdBy, board, entry.cardId)).catch(
               () => null
             )
           )
         );
-        const byId = new Map<string, QDeckCard>();
+        const byId = new Map<string, ProjectCardInfo>();
+        for (const card of fromIndex) {
+          byId.set(card.cardId, card);
+        }
         for (const doc of cards) {
           if (!doc || (doc as any)._type !== 'QDECK_CARD') continue;
-          const prev = byId.get(doc.cardId);
-          if (
-            !prev ||
-            (doc.updatedAt ?? 0) > (prev.updatedAt ?? 0) ||
-            (doc.seq ?? 0) > (prev.seq ?? 0)
-          ) {
-            byId.set(doc.cardId, doc);
-          }
+          const next: ProjectCardInfo = {
+            cardId: doc.cardId,
+            title: doc.title,
+            statusListId: doc.statusListId,
+            scheduledStart: doc.scheduledStart,
+            scheduledEnd: doc.scheduledEnd,
+            scheduledAllDay: doc.scheduledAllDay,
+            completedAt: doc.completedAt,
+            isDone: doc.isDone,
+          };
+          byId.set(doc.cardId, next);
         }
         for (const card of byId.values()) {
           rows.push({ board, card, boardRef: ref });
@@ -682,7 +764,7 @@ export default function QDeckProjectPage() {
       if (!end) end = card.scheduledAllDay ? start : start + hourMs;
       if (end < start) end = start;
       const list = board.lists.find((l) => l.listId === card.statusListId);
-      const listTitle = list?.title ?? card.statusListId;
+      const listTitle = list?.title ?? card.statusListId ?? 'Unknown list';
       const meta = `${board.title} · ${listTitle}`;
       return [
         {
@@ -704,6 +786,7 @@ export default function QDeckProjectPage() {
     issuerName: string
   ) => {
     if (!project) return;
+    if (!(await ensureCanEdit())) return;
     const existing = project.boards ?? [];
     if (existing.some((b) => b.boardId === board.boardId && b.issuerName === issuerName)) {
       await alert('This board is already in the project.', 'Add board', { severity: 'info' });
@@ -724,6 +807,7 @@ export default function QDeckProjectPage() {
 
   const createBoardForProject = async (opts: CreateBoardPayload) => {
     if (!project) return false;
+    if (!(await ensureCanEdit())) return false;
     setCreateBoardBusy(true);
     try {
       if (opts.visibility === 'private') {
@@ -784,6 +868,7 @@ export default function QDeckProjectPage() {
 
   const submitAddBoard = async () => {
     if (!project) return;
+    if (!(await ensureCanEdit())) return;
     const issuerName = boardIssuer.trim();
     const boardId = boardIdInput.trim();
     if (!issuerName || !boardId) {
@@ -820,6 +905,7 @@ export default function QDeckProjectPage() {
 
   const removeBoard = async (boardId: string, issuerName: string) => {
     if (!project) return;
+    if (!(await ensureCanEdit())) return;
     const next = {
       ...project,
       boards: (project.boards ?? []).filter(
@@ -831,6 +917,7 @@ export default function QDeckProjectPage() {
 
   const updateBoardColor = async (boardId: string, issuerName: string, colorHex: string) => {
     if (!project) return;
+    if (!(await ensureCanEdit())) return;
     const normalized = normalizeHex(colorHex);
     if (!normalized) return;
     const next = {
@@ -848,6 +935,7 @@ export default function QDeckProjectPage() {
 
   const publishQueuedChanges = async () => {
     if (!pendingPublishes.length) return;
+    if (!(await ensureCanEdit())) return;
     setPublishingQueue(true);
     try {
       await publishResources(pendingPublishes);
@@ -867,6 +955,7 @@ export default function QDeckProjectPage() {
   const addAsset = async () => {
     if (!project) return;
     if (!assetSelection) return;
+    if (!(await ensureCanEdit())) return;
     const assetId = String(assetSelection.assetId).trim();
     const existing = project.assetIds ?? [];
     if (existing.some((a) => a.assetId === assetId)) {
@@ -883,6 +972,7 @@ export default function QDeckProjectPage() {
 
   const removeAsset = async (assetId: string) => {
     if (!project) return;
+    if (!(await ensureCanEdit())) return;
     const next = {
       ...project,
       assetIds: (project.assetIds ?? []).filter((a) => a.assetId !== assetId),
@@ -903,6 +993,7 @@ export default function QDeckProjectPage() {
   }
 
   const isPrivate = project.visibility === 'private';
+  const editDisabled = canEditProject !== true;
 
   return (
     <Box sx={{ p: { xs: 1.5, sm: 2 }, mx: 'auto' }}>
@@ -953,19 +1044,25 @@ export default function QDeckProjectPage() {
             variant={pendingPublishes.length ? 'contained' : 'outlined'}
             color={pendingPublishes.length ? 'success' : 'primary'}
             onClick={publishQueuedChanges}
-            disabled={!pendingPublishes.length || publishingQueue}
+            disabled={!pendingPublishes.length || publishingQueue || editDisabled}
           >
             Publish queued
           </Button>
           <Button
             variant="text"
             onClick={clearPublishQueue}
-            disabled={!pendingPublishes.length || publishingQueue}
+            disabled={!pendingPublishes.length || publishingQueue || editDisabled}
           >
             Clear queue
           </Button>
         </Stack>
       </Stack>
+
+      {canEditProject === false && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          You do not have edit rights for this project. Viewing in read-only mode.
+        </Alert>
+      )}
 
       <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
         <Stack
@@ -981,7 +1078,7 @@ export default function QDeckProjectPage() {
               variant="outlined"
               size="small"
               onClick={() => setCreateBoardOpen(true)}
-              disabled={saving || createBoardBusy}
+              disabled={saving || createBoardBusy || editDisabled}
             >
               Create board
             </Button>
@@ -989,7 +1086,7 @@ export default function QDeckProjectPage() {
               variant="contained"
               size="small"
               onClick={() => setAddBoardOpen(true)}
-              disabled={saving || createBoardBusy}
+              disabled={saving || createBoardBusy || editDisabled}
             >
               Add board
             </Button>
@@ -1037,6 +1134,7 @@ export default function QDeckProjectPage() {
                       size="small"
                       inputProps={{ 'aria-label': 'Board color' }}
                       sx={{ width: 56 }}
+                      disabled={editDisabled || saving}
                     />
                     <Button
                       size="small"
@@ -1049,7 +1147,7 @@ export default function QDeckProjectPage() {
                       size="small"
                       color="error"
                       onClick={() => removeBoard(b.boardId, b.issuerName)}
-                      disabled={saving}
+                      disabled={saving || editDisabled}
                     >
                       Remove
                     </Button>
@@ -1150,7 +1248,11 @@ export default function QDeckProjectPage() {
             )}
             sx={{ minWidth: { xs: '100%', sm: 240 }, flex: 1 }}
           />
-          <Button variant="outlined" onClick={addAsset} disabled={!assetSelection || saving}>
+          <Button
+            variant="outlined"
+            onClick={addAsset}
+            disabled={!assetSelection || saving || editDisabled}
+          >
             Add asset
           </Button>
         </Stack>
@@ -1209,7 +1311,7 @@ export default function QDeckProjectPage() {
                     size="small"
                     color="error"
                     onClick={() => removeAsset(asset.assetId)}
-                    disabled={saving}
+                    disabled={saving || editDisabled}
                   >
                     Remove
                   </Button>
@@ -1319,7 +1421,11 @@ export default function QDeckProjectPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setAddBoardOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={submitAddBoard} disabled={!boardIdInput.trim()}>
+          <Button
+            variant="contained"
+            onClick={submitAddBoard}
+            disabled={!boardIdInput.trim() || editDisabled}
+          >
             Add board
           </Button>
         </DialogActions>

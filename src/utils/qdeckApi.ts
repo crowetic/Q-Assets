@@ -41,6 +41,7 @@ import {
   canUserDeleteBoard,
   collectRecipientPublicKeys,
   canPublisherPublishToBoard,
+  canPublisherPublishToProject,
   cardAuthHeaderMatchesPublisher,
 } from './qdeckAccess';
 import { LruTtl } from './cache';
@@ -192,6 +193,25 @@ export async function loadNewestCardsIndex(
   return newest.doc;
 }
 
+type ProjectDocCandidate = {
+  name: string;
+  doc: QDeckProject;
+  stamp?: number;
+};
+
+const pickNewestProjectDoc = (a: ProjectDocCandidate, b: ProjectDocCandidate) => {
+  const aStamp = a.stamp ?? 0;
+  const bStamp = b.stamp ?? 0;
+  if (aStamp !== bStamp) return aStamp > bStamp ? a : b;
+  const aSeq = a.doc.seq ?? 0;
+  const bSeq = b.doc.seq ?? 0;
+  if (aSeq !== bSeq) return aSeq > bSeq ? a : b;
+  const aUpdated = a.doc.updatedAt ?? 0;
+  const bUpdated = b.doc.updatedAt ?? 0;
+  if (aUpdated !== bUpdated) return aUpdated > bUpdated ? a : b;
+  return a;
+};
+
 export async function saveCardsIndex(issuerName: string, board: QDeckBoard, doc: CardsIndexDoc) {
   const identifier = QDeckId.cardsIndex(doc.boardId);
   const payloadBase64 = stripDataUrlPrefix(await objectToBase64(doc));
@@ -303,7 +323,17 @@ export async function repairCardsIndex(
           if (!doc || (doc as any)._type === 'QDECK_TOMBSTONE') return;
           if (!cardAuthHeaderMatchesPublisher(doc as QDeckCard, ref.name)) return;
           if (!(await canPublisherPublishToBoard(board, { name: ref.name }))) return;
-          entries.push({ name: ref.name, cardId: ref.cardId });
+          entries.push({
+            name: ref.name,
+            cardId: ref.cardId,
+            title: doc.title,
+            statusListId: doc.statusListId,
+            scheduledStart: doc.scheduledStart,
+            scheduledEnd: doc.scheduledEnd,
+            scheduledAllDay: doc.scheduledAllDay,
+            completedAt: doc.completedAt,
+            isDone: doc.isDone,
+          });
           cardIds.add(ref.cardId);
         } catch {
           /* ignore */
@@ -332,7 +362,7 @@ export async function addCardToIndex(
   board: QDeckBoard,
   cardId: string,
   publisherName?: string, // the *card's* publisher (defaults to issuerName for legacy)
-  opts?: { skipPublish?: boolean; currentDoc?: CardsIndexDoc }
+  opts?: { skipPublish?: boolean; currentDoc?: CardsIndexDoc; card?: QDeckCard }
 ): Promise<CardsIndexDoc> {
   const doc =
     opts?.currentDoc ??
@@ -355,10 +385,24 @@ export async function addCardToIndex(
     doc.cardIds.push(cardId);
   }
 
-  // new entries
+  // new entries (with schedule metadata when available)
   doc.entries = doc.entries ?? [];
-  if (!doc.entries.some((e) => e.name === pub && e.cardId === cardId)) {
-    doc.entries.push({ name: pub, cardId });
+  const schedule: Partial<NonNullable<CardsIndexDoc['entries']>[number]> = opts?.card
+    ? {
+        title: opts.card.title,
+        statusListId: opts.card.statusListId,
+        scheduledStart: opts.card.scheduledStart,
+        scheduledEnd: opts.card.scheduledEnd,
+        scheduledAllDay: opts.card.scheduledAllDay,
+        completedAt: opts.card.completedAt,
+        isDone: opts.card.isDone,
+      }
+    : {};
+  const entryIndex = doc.entries.findIndex((e) => e.name === pub && e.cardId === cardId);
+  if (entryIndex === -1) {
+    doc.entries.push({ name: pub, cardId, ...schedule });
+  } else if (opts?.card) {
+    doc.entries[entryIndex] = { ...doc.entries[entryIndex], ...schedule };
   }
 
   doc.updatedAt = Date.now();
@@ -2409,6 +2453,91 @@ export async function resolveProjectForRead(
   return res?.doc ?? null;
 }
 
+async function loadNewestAuthorizedProjectDoc(
+  base: QDeckProject,
+  meta: { visibility: 'public' | 'private'; mode?: 'group' | 'direct'; groupId?: number; isAdmins?: boolean },
+  opts?: { issuerHints?: string[]; maxCandidates?: number }
+): Promise<QDeckProject | null> {
+  const identifier =
+    meta.visibility === 'private'
+      ? QDeckId.projectPrivate(
+          base.projectId,
+          meta.mode ?? (meta.groupId != null ? 'group' : 'direct'),
+          meta.isAdmins,
+          meta.groupId
+        )
+      : QDeckId.projectPublic(base.projectId);
+  const isPrivate = meta.visibility === 'private';
+  const hits = await searchSimpleByFullId(identifier, isPrivate).catch(() => []);
+  const maxCandidates = opts?.maxCandidates ?? 20;
+  const candidates: Array<{ name: string; stamp: number }> = [];
+
+  for (const hit of hits) {
+    if (!hit?.name) continue;
+    const stamp = Number.isFinite(hit.updated) ? Number(hit.updated) : Number(hit.created) || 0;
+    candidates.push({ name: hit.name.trim(), stamp });
+  }
+
+  candidates.sort((a, b) => b.stamp - a.stamp);
+
+  const names = new Set<string>();
+  for (const hint of opts?.issuerHints ?? []) {
+    const trimmed = (hint || '').trim();
+    if (trimmed) names.add(trimmed);
+  }
+  for (const entry of candidates) {
+    if (names.size >= maxCandidates) break;
+    if (entry.name) names.add(entry.name);
+  }
+
+  const mode = meta.mode ?? (meta.groupId != null ? 'group' : 'direct');
+  const limit = pLimit(2);
+  const baseCandidate: ProjectDocCandidate = {
+    name: (opts?.issuerHints?.[0] ?? base.createdBy ?? '').trim(),
+    doc: base,
+    stamp: base.updatedAt ?? 0,
+  };
+  const docs = (
+    await Promise.all(
+      Array.from(names).map((name) =>
+        limit(async () => {
+          try {
+            const doc =
+              meta.visibility === 'private'
+                ? await qdeckFetch<QDeckProject>(
+                    name,
+                    identifier,
+                    true,
+                    mode === 'group' ? meta.groupId : undefined,
+                    mode === 'group' ? !!meta.isAdmins : undefined,
+                    mode
+                  )
+                : await qdeckFetch<QDeckProject>(name, identifier, false);
+            if (!doc || (doc as any)._type === 'QDECK_TOMBSTONE') return null;
+            if (doc.projectId !== base.projectId) return null;
+            if (!(await canPublisherPublishToProject(base, { name }))) return null;
+            const stamp = candidates.find((c) => c.name === name)?.stamp ?? doc.updatedAt ?? 0;
+            return { name, doc, stamp };
+          } catch {
+            return null;
+          }
+        })
+      )
+    )
+  ).filter(Boolean) as ProjectDocCandidate[];
+
+  const all = docs.length ? docs.slice() : [];
+  if (!all.some((c) => c.doc.projectId === base.projectId && c.name === baseCandidate.name)) {
+    all.push(baseCandidate);
+  }
+  if (!all.length) return null;
+  let newest = all[0];
+  for (let i = 1; i < all.length; i += 1) {
+    newest = pickNewestProjectDoc(newest, all[i]);
+  }
+  return newest.doc;
+}
+
 export async function resolveProjectForReadWithMeta(
   issuer: string,
   projectIdOrIdent: string,
@@ -2478,7 +2607,14 @@ export async function resolveProjectForReadWithMeta(
 
   if (projectIdOrIdent.startsWith(QDeckId.prefixPublicProjects)) {
     const doc = await qdeckFetch<QDeckProject>(issuer, projectIdOrIdent, false);
-    if (doc) return { doc, visibility: 'public' as const };
+    if (doc) {
+      const latest = await loadNewestAuthorizedProjectDoc(
+        doc,
+        { visibility: 'public' },
+        { issuerHints: [issuer, doc.createdBy].filter(Boolean) as string[] }
+      ).catch(() => null);
+      return { doc: latest ?? doc, visibility: 'public' as const };
+    }
     const projectId = projectIdOrIdent.slice(QDeckId.prefixPublicProjects.length);
     const local = localProbeFor(projectId, 'public');
     if (local) return local;
@@ -2497,8 +2633,13 @@ export async function resolveProjectForReadWithMeta(
         'group'
       );
       if (doc) {
-        return {
+        const latest = await loadNewestAuthorizedProjectDoc(
           doc,
+          { visibility: 'private', mode: 'group', groupId: p.groupId, isAdmins: !!p.isAdmins },
+          { issuerHints: [issuer, doc.createdBy].filter(Boolean) as string[] }
+        ).catch(() => null);
+        return {
+          doc: latest ?? doc,
           visibility: 'private' as const,
           mode: 'group' as const,
           groupId: p.groupId,
@@ -2515,7 +2656,14 @@ export async function resolveProjectForReadWithMeta(
       undefined,
       'direct'
     );
-    if (doc) return { doc, visibility: 'private' as const, mode: 'direct' as const };
+    if (doc) {
+      const latest = await loadNewestAuthorizedProjectDoc(
+        doc,
+        { visibility: 'private', mode: 'direct' },
+        { issuerHints: [issuer, doc.createdBy].filter(Boolean) as string[] }
+      ).catch(() => null);
+      return { doc: latest ?? doc, visibility: 'private' as const, mode: 'direct' as const };
+    }
     return localProbeFor(p.projectId, 'private');
   }
 
@@ -2525,7 +2673,15 @@ export async function resolveProjectForReadWithMeta(
   if (hint === 'public') {
     const pubIdent = QDeckId.projectPublic(projectId);
     const doc = await qdeckFetch<QDeckProject>(issuer, pubIdent, false);
-    return doc ? { doc, visibility: 'public' as const } : localProbeFor(projectId, 'public');
+    if (doc) {
+      const latest = await loadNewestAuthorizedProjectDoc(
+        doc,
+        { visibility: 'public' },
+        { issuerHints: [issuer, doc.createdBy].filter(Boolean) as string[] }
+      ).catch(() => null);
+      return { doc: latest ?? doc, visibility: 'public' as const };
+    }
+    return localProbeFor(projectId, 'public');
   }
 
   if (hint === 'private') {
@@ -2537,7 +2693,14 @@ export async function resolveProjectForReadWithMeta(
   {
     const pubIdent = QDeckId.projectPublic(projectId);
     const pub = await qdeckFetch<QDeckProject>(issuer, pubIdent, false);
-    if (pub) return { doc: pub, visibility: 'public' as const };
+    if (pub) {
+      const latest = await loadNewestAuthorizedProjectDoc(
+        pub,
+        { visibility: 'public' },
+        { issuerHints: [issuer, pub.createdBy].filter(Boolean) as string[] }
+      ).catch(() => null);
+      return { doc: latest ?? pub, visibility: 'public' as const };
+    }
   }
   const local = localProbeFor(projectId);
   if (local) return local;

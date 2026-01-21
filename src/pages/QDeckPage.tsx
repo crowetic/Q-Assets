@@ -14,6 +14,7 @@ import {
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
+import EditIcon from '@mui/icons-material/Edit';
 
 import { useAuth } from 'qapp-core';
 
@@ -75,13 +76,18 @@ export function RowLinkGuard({ children }: { children: React.ReactNode }) {
 export function RowActions({
   onOpen,
   onDelete,
+  onRename,
   canDelete,
+  canRename,
 }: {
   onOpen: () => void;
   onDelete: () => void;
+  onRename?: () => void;
   canDelete: boolean;
+  canRename?: boolean;
 }) {
   const [anchor, setAnchor] = React.useState<null | HTMLElement>(null);
+  const renameAllowed = canRename ?? true;
   return (
     <>
       <IconButton
@@ -116,6 +122,22 @@ export function RowActions({
           </ListItemIcon>
           <ListItemText primary="Open" />
         </MenuItem>
+        {onRename && (
+          <MenuItem
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setAnchor(null);
+              onRename();
+            }}
+            disabled={!renameAllowed}
+          >
+            <ListItemIcon>
+              <EditIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText primary={renameAllowed ? 'Rename' : 'Rename (not allowed)'} />
+          </MenuItem>
+        )}
         <MenuItem
           onClick={(e) => {
             e.preventDefault();

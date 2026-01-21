@@ -42,6 +42,7 @@ import ManageHome from '../pages/manage/ManageHome';
 import ManageDividends from '../pages/manage/ManageDividends';
 import ManageDividendsAsset from '../pages/manage/ManageDividendsAsset';
 import QDeckPermissionsPage from '../pages/manage/QDeckPermissions';
+import QDeckProjectPermissionsPage from '../pages/manage/QDeckProjectPermissions';
 import AdminPanel from '../pages/manage/AdminPanel';
 import ManageAssets from '../pages/manage/ManageAssets';
 import PublishAssetNewsPage from '../pages/PublishAssetNews';
@@ -125,6 +126,7 @@ export function Routes() {
         { path: 'manage/dividends', element: <ManageDividends /> },
         { path: 'manage/dividends/:assetId', element: <ManageDividendsAsset /> },
         { path: 'manage/qdeck-permissions', element: <QDeckPermissionsPage /> },
+        { path: 'manage/qdeck-project-permissions', element: <QDeckProjectPermissionsPage /> },
         { path: 'manage/admin', element: <AdminPanel /> },
 
         // --- Manage / Data Management (panel + subpages)

@@ -62,6 +62,7 @@ type LoadOpts = {
 type PublishMode = 'immediate' | 'batch';
 const QUEUE_STORAGE_KEY = 'qdeck_publish_queue_v1';
 const PUBLISH_MODE_STORAGE_KEY = 'qdeck_publish_mode_v1';
+const PUBLISH_MODE_BY_BOARD_STORAGE_KEY = 'qdeck_publish_mode_by_board_v1';
 const publishQueueKey = (res: BatchPublishResource) =>
   `${res.service}::${(res.name || '').toLowerCase()}::${res.identifier}`;
 
@@ -92,6 +93,32 @@ const readPublishModeFromStorage = (): PublishMode => {
     /* ignore */
   }
   return 'immediate';
+};
+
+const readPublishModeForBoard = (boardId?: string | null): PublishMode | null => {
+  if (!boardId || typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(PUBLISH_MODE_BY_BOARD_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const mode = parsed?.[boardId];
+    if (mode === 'batch' || mode === 'immediate') return mode;
+  } catch {
+    /* ignore */
+  }
+  return null;
+};
+
+const writePublishModeForBoard = (boardId: string, mode: PublishMode) => {
+  if (typeof window === 'undefined') return;
+  try {
+    const raw = window.localStorage.getItem(PUBLISH_MODE_BY_BOARD_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, PublishMode>) : {};
+    parsed[boardId] = mode;
+    window.localStorage.setItem(PUBLISH_MODE_BY_BOARD_STORAGE_KEY, JSON.stringify(parsed));
+  } catch {
+    /* ignore */
+  }
 };
 
 type QDeckCtx = {
@@ -257,6 +284,15 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [board?.boardId]);
 
   useEffect(() => {
+    const boardId = board?.boardId;
+    if (!boardId) return;
+    const stored = readPublishModeForBoard(boardId);
+    if (stored && stored !== publishMode) {
+      setPublishMode(stored);
+    }
+  }, [board?.boardId, publishMode]);
+
+  useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
       window.sessionStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(publishQueue));
@@ -273,6 +309,12 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       /* ignore */
     }
   }, [publishMode]);
+
+  useEffect(() => {
+    const boardId = board?.boardId;
+    if (!boardId) return;
+    writePublishModeForBoard(boardId, publishMode);
+  }, [board?.boardId, publishMode]);
 
   const enqueuePublishResources = useCallback(
     (boardId: string, resources: BatchPublishResource[]) => {
@@ -872,6 +914,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const indexDoc = await addCardToIndex(publisher, board, c.cardId, undefined, {
         skipPublish: true,
         currentDoc: currentIndexDoc,
+        card: c,
       });
       setCachedCardsIndexDoc(board.boardId, indexDoc);
       const cardPayload = await buildCardPublishPayload(publisher, board, c);
@@ -921,6 +964,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const indexDoc = await addCardToIndex(publisher, board, cardId, publisher, {
         skipPublish: true,
         currentDoc: currentIndexDoc,
+        card: next,
       });
       setCachedCardsIndexDoc(board.boardId, indexDoc);
       const indexPayload = await buildCardsIndexPublishPayload(publisher, board, indexDoc);
@@ -1015,6 +1059,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const indexDoc = await addCardToIndex(publisher, board, card.cardId, publisher, {
         skipPublish: true,
         currentDoc: currentIndexDoc,
+        card,
       });
       setCachedCardsIndexDoc(board.boardId, indexDoc);
       const indexPayload = await buildCardsIndexPublishPayload(publisher, board, indexDoc);
@@ -1073,6 +1118,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const indexDoc = await addCardToIndex(publisher, board, cardId, publisher, {
         skipPublish: true,
         currentDoc: currentIndexDoc,
+        card: nextCard,
       });
       setCachedCardsIndexDoc(board.boardId, indexDoc);
       const indexPayload = await buildCardsIndexPublishPayload(publisher, board, indexDoc);

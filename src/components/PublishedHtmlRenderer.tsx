@@ -20,31 +20,94 @@ type Props = {
 };
 
 // utils/linkifyQortal.ts
+const URL_RE = /(qortal:\/\/[^\s<>"'`]+|https?:\/\/[^\s<>"'`]+)/gi;
+
+function trimTrailingPunct(raw: string): { url: string; trailing: string } {
+  let url = raw;
+  let trailing = '';
+  while (url.length) {
+    const last = url[url.length - 1];
+    if (
+      last === '.' ||
+      last === ',' ||
+      last === '!' ||
+      last === '?' ||
+      last === ';' ||
+      last === ':'
+    ) {
+      trailing = last + trailing;
+      url = url.slice(0, -1);
+      continue;
+    }
+    if (last === ')') {
+      const openCount = (url.match(/\(/g) || []).length;
+      const closeCount = (url.match(/\)/g) || []).length;
+      if (closeCount > openCount) {
+        trailing = last + trailing;
+        url = url.slice(0, -1);
+        continue;
+      }
+    }
+    if (last === ']') {
+      const openCount = (url.match(/\[/g) || []).length;
+      const closeCount = (url.match(/\]/g) || []).length;
+      if (closeCount > openCount) {
+        trailing = last + trailing;
+        url = url.slice(0, -1);
+        continue;
+      }
+    }
+    break;
+  }
+  return { url, trailing };
+}
+
 export function linkifyQortalHtml(html: string): string {
-  if (!html || !html.includes('qortal://')) return html;
+  if (!html || !URL_RE.test(html)) return html;
+  URL_RE.lastIndex = 0;
   const parser = new DOMParser();
   const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
 
   const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
-  const re = /(qortal:\/\/[^\s<>"']+)/gi; // only qortal://
 
   const ops: Array<{ node: Text; frag: DocumentFragment }> = [];
   for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
+    const parent = n.parentElement;
+    if (!parent) continue;
+    if (parent.tagName.toLowerCase() === 'a') {
+      const existingHref = parent.getAttribute('href');
+      if (!existingHref) {
+        const text = (n.nodeValue || '').trim();
+        const matches = text.match(URL_RE) || [];
+        if (matches.length === 1 && matches[0] === text) {
+          parent.setAttribute('href', text);
+        }
+      }
+      continue;
+    }
+    if (parent.closest('code,pre,script,style')) continue;
     const text = n.nodeValue || '';
-    if (!re.test(text)) continue;
-    re.lastIndex = 0;
+    if (!URL_RE.test(text)) continue;
+    URL_RE.lastIndex = 0;
 
     const frag = doc.createDocumentFragment();
     let last = 0;
     let m: RegExpExecArray | null;
-    while ((m = re.exec(text))) {
+    while ((m = URL_RE.exec(text))) {
       if (m.index > last) frag.append(text.slice(last, m.index));
+      const { url, trailing } = trimTrailingPunct(m[0]);
+      if (!url) {
+        frag.append(m[0]);
+        last = m.index + m[0].length;
+        continue;
+      }
       const a = doc.createElement('a');
-      a.href = m[0];
+      a.href = url;
       a.rel = 'noopener';
       a.target = '_self';
-      a.textContent = m[0];
+      a.textContent = url;
       frag.append(a);
+      if (trailing) frag.append(trailing);
       last = m.index + m[0].length;
     }
     if (last < text.length) frag.append(text.slice(last));

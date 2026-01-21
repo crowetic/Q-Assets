@@ -11,6 +11,7 @@ import {
 } from '../../utils/news';
 import { useTheme, alpha } from '@mui/material/styles';
 import NewsActionBar from '../../components/news/NewsActionBar';
+import PublishedHtmlRenderer from '../PublishedHtmlRenderer';
 import { useMemberGroupIds } from '../../hooks/useMemberGroupIds';
 
 import type { NewsSummary, NewsType } from '../../types/newsAndPromos';
@@ -204,8 +205,6 @@ export default function QAssetsNewsSection() {
   const [loadingAssetNews, setLoadingAssetNews] = useState(true);
   const [loadingPromotions, setLoadingPromotions] = useState(true);
 
-  const [showArchivedAnnouncements, setShowArchivedAnnouncements] = useState(false);
-  const [showArchivedNews, setShowArchivedNews] = useState(false);
   const [showMoreAnnouncements, setShowMoreAnnouncements] = useState(false);
   const [showMoreNews, setShowMoreNews] = useState(false);
 
@@ -245,11 +244,7 @@ export default function QAssetsNewsSection() {
 
       void (async () => {
         try {
-          const results = await fetchAnnouncements(announcementLimit, {
-            includeExpired: showArchivedAnnouncements,
-            forceFresh,
-            signal,
-          });
+          const results = await fetchAnnouncements(announcementLimit, { forceFresh, signal });
           if (!isSignalCurrent(annControllerRef, signal)) return;
           setAnnouncements(results);
         } catch (err) {
@@ -265,7 +260,7 @@ export default function QAssetsNewsSection() {
         }
       })();
     },
-    [createAbortController, showArchivedAnnouncements, showMoreAnnouncements]
+    [createAbortController, showMoreAnnouncements]
   );
 
   const loadAssetNews = useCallback(() => {
@@ -278,7 +273,6 @@ export default function QAssetsNewsSection() {
     void (async () => {
       try {
         const results = await fetchLatestAssetNews(assetNewsLimit, {
-          includeExpired: showArchivedNews,
           allowedGroupIds: memberGroupIds,
           signal,
         });
@@ -296,7 +290,7 @@ export default function QAssetsNewsSection() {
         }
       }
     })();
-  }, [createAbortController, memberGroupIds, showArchivedNews, showMoreNews]);
+  }, [createAbortController, memberGroupIds, showMoreNews]);
 
   const loadPromotions = useCallback(() => {
     const controller = createAbortController(promoControllerRef);
@@ -382,18 +376,14 @@ export default function QAssetsNewsSection() {
   const announcementList = announcements ?? [];
 
   const announcementActive = announcementList.filter((item) => !item.isExpired);
-  const announcementArchived = announcementList.filter((item) => item.isExpired);
   const assetNewsList = assetNews || [];
   const newsActive = assetNewsList.filter((item) => !item.isExpired);
-  const newsArchived = assetNewsList.filter((item) => item.isExpired);
 
-  const visibleAnnouncements = (
-    showArchivedAnnouncements ? announcementArchived : announcementActive
-  ).slice(0, showMoreAnnouncements ? Number.MAX_SAFE_INTEGER : maxPerList);
-  const visibleNews = (showArchivedNews ? newsArchived : newsActive).slice(
+  const visibleAnnouncements = announcementActive.slice(
     0,
-    showMoreNews ? Number.MAX_SAFE_INTEGER : maxPerList
+    showMoreAnnouncements ? Number.MAX_SAFE_INTEGER : maxPerList
   );
+  const visibleNews = newsActive.slice(0, showMoreNews ? Number.MAX_SAFE_INTEGER : maxPerList);
 
   const promotionsList = promotions ?? [];
 
@@ -547,12 +537,12 @@ export default function QAssetsNewsSection() {
         )}
 
         {selected.fullHtml && (
-          <Box
+          <PublishedHtmlRenderer
+            html={selected.fullHtml}
             sx={{
               '& img': { maxWidth: '100%', height: 'auto' },
               '& h1, & h2, & h3': { mt: 2 },
             }}
-            dangerouslySetInnerHTML={{ __html: selected.fullHtml }}
           />
         )}
       </Box>
@@ -578,11 +568,7 @@ export default function QAssetsNewsSection() {
               <NewsListColumn
                 title="Q-Assets Announcements"
                 items={visibleAnnouncements}
-                emptyText={
-                  showArchivedAnnouncements
-                    ? 'No archived announcements.'
-                    : 'No Q-Assets announcements yet.'
-                }
+                emptyText="No Q-Assets announcements yet."
                 onClickItem={handleClickItem}
                 variant="announcement"
               />
@@ -595,25 +581,13 @@ export default function QAssetsNewsSection() {
                   mt: 1,
                 }}
               >
-                {(showArchivedAnnouncements ? announcementArchived : announcementActive).length >
-                  maxPerList && (
+                {announcementActive.length > maxPerList && (
                   <Button
                     size="small"
                     onClick={() => setShowMoreAnnouncements((v) => !v)}
                     variant="outlined"
                   >
                     {showMoreAnnouncements ? 'Show less' : 'Show more'}
-                  </Button>
-                )}
-                {announcementArchived.length > 0 && (
-                  <Button
-                    size="small"
-                    onClick={() => {
-                      setShowArchivedAnnouncements((v) => !v);
-                      setShowMoreAnnouncements(false);
-                    }}
-                  >
-                    {showArchivedAnnouncements ? 'Show active' : 'Show archived'}
                   </Button>
                 )}
               </Box>
@@ -628,11 +602,7 @@ export default function QAssetsNewsSection() {
               <NewsListColumn
                 title="Asset News Publications"
                 items={visibleNews}
-                emptyText={
-                  showArchivedNews
-                    ? 'No archived asset news.'
-                    : 'No Asset news published by issuers recently... '
-                }
+                emptyText="No Asset news published by issuers recently... "
                 onClickItem={handleClickItem}
                 variant="news"
               />
@@ -645,24 +615,13 @@ export default function QAssetsNewsSection() {
                   mt: 1,
                 }}
               >
-                {(showArchivedNews ? newsArchived : newsActive).length > maxPerList && (
+                {newsActive.length > maxPerList && (
                   <Button
                     size="small"
                     onClick={() => setShowMoreNews((v) => !v)}
                     variant="outlined"
                   >
                     {showMoreNews ? 'Show less' : 'Show more'}
-                  </Button>
-                )}
-                {newsArchived.length > 0 && (
-                  <Button
-                    size="small"
-                    onClick={() => {
-                      setShowArchivedNews((v) => !v);
-                      setShowMoreNews(false);
-                    }}
-                  >
-                    {showArchivedNews ? 'Show active' : 'Show archived'}
                   </Button>
                 )}
               </Box>

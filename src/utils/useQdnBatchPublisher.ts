@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useLayoutEffect } from 'react';
 import { usePublish } from 'qapp-core';
 import type { Service } from 'qapp-core';
 import { useAlert } from '../components/alerts';
@@ -32,6 +32,7 @@ export type BatchPublishResource = PublishableResource & {
 type PublishExecutor = (resources: PublishableResource[]) => Promise<void>;
 
 let activePublishExecutor: PublishExecutor | null = null;
+let hasLoggedFallback = false;
 
 const registerPublishExecutor = (executor: PublishExecutor | null) => {
   activePublishExecutor = executor;
@@ -39,9 +40,12 @@ const registerPublishExecutor = (executor: PublishExecutor | null) => {
 
 const fallbackPublishExecutor: PublishExecutor = async (resources) => {
   if (!resources.length) return;
-  console.warn(
-    '[useQdnBatchPublisher] publish executor not initialized, falling back to direct PUBLISH_MULTIPLE_QDN_RESOURCES'
-  );
+  if (!hasLoggedFallback) {
+    hasLoggedFallback = true;
+    console.warn(
+      '[useQdnBatchPublisher] publish executor not initialized, falling back to direct PUBLISH_MULTIPLE_QDN_RESOURCES'
+    );
+  }
   await qortalRequest({
     action: 'PUBLISH_MULTIPLE_QDN_RESOURCES',
     resources,
@@ -418,7 +422,7 @@ export function useQdnBatchPublisher() {
   const { alert } = useAlert();
   const { publishMultipleResources } = usePublish();
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const executor: PublishExecutor = async (mappedResources) => {
       await publishMultipleResources(mappedResources);
     };

@@ -36,14 +36,14 @@ export function prepareHtmlForPublish(
   const publication = styleTag + '\n' + wrapped;
 
   // Link policy helpers
-  const isExternalHref = (s: string) => /^(?:https?:|ftp:|\/\/)/i.test(s.trim());
   const isAllowedHref = (s: string) => {
     const href = s.trim();
     if (!href) return true;
     if (/^qortal:\/\//i.test(href)) return true;
+    if (/^(https?:\/\/|mailto:|tel:)/i.test(href)) return true;
     if (href[0] === '#') return true;
     if (href[0] === '/' || href.slice(0, 2) === './' || href.slice(0, 3) === '../') return true;
-    return !isExternalHref(href);
+    return false;
   };
 
   // Hook: after attributes sanitized, neuter only external anchors

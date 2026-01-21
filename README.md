@@ -15,6 +15,12 @@ Q-Assets is an asset issuance, management, trading, and information Q-App for th
 - Manage files and sharing without leaving the app.
 - Show small QDN files that are not deleted tombstones.
 
+## Link Handling
+
+- Open `qortal://` links inside Q-Assets, including popup renders for external Q-Apps.
+- Copy external internet links to your clipboard with a browser-open reminder.
+- Linkify `qortal://` and `https://` URLs in published content.
+
 ## Xqlore Explorer
 
 - Scan a live, full-spectrum overview of Qortal activity across assets, names, and QDN data.
@@ -26,6 +32,8 @@ Q-Assets is an asset issuance, management, trading, and information Q-App for th
 - Rebuild and republish existing index batches when the indexing logic changes.
 - Publish aggregated Xqlore stats overviews with QORT flow, QDN, and asset activity leaderboards.
 - Rebuild the stats overview from all published index batches when needed.
+- Surface QDN-first long-term stats with minted-block leaders, QORT balance thresholds, and compact account labels when names are missing.
+- Toggle index tools on demand from the long-term stats page.
 - Manage the Xqlore app-identifier registry from the admin console when you have access.
 - Highlight the Qortal Null Account with an explainer and balance lookup on account pages.
 
@@ -37,13 +45,21 @@ Q-Assets is an asset issuance, management, trading, and information Q-App for th
 - Start tasks and complete them directly from cards to set start/end dates and mark work done.
 - Optionally create cards already in progress to prefill the start task status.
 - Search within a board to quickly find cards by title, tags, assignees, or list name.
+- Board overviews prioritize recent activity and collapse long group lists with a +N more expander.
 - Reorder lists and customize list colors from the board manager to match your workflow.
+- Rename boards from the board view or the My/All Boards menus.
 - Use a cleaner comment view with avatars, quick add buttons, and comment counts at a glance.
+- Remember per-board publish mode (immediate vs queued) the next time you open a board.
+- Show group names (not just IDs) in the My/All Boards permission chips.
+- Show completed timestamps on done cards in Q-Deck boards.
 - Organize boards into projects, view board permissions and asset links, display scheduled cards across multi-day spans in project calendars with per-board colors, and queue project edits for batch publishing.
 - Add boards to projects from all accessible boards (not just ones you created).
 - Create new boards directly from a project and auto-attach them.
 - Pick assets from the Q-Assets index when linking them to projects, with non-blocking metadata hydration.
 - Show asset avatars alongside project asset links for quicker scanning.
+- Manage project admins/editors and admin override permissions from the Q-Deck project permissions panel.
+- Enforce project edit rights so only authorized editors or admin overrides can publish project updates.
+- Load project calendars faster by reading schedule metadata from card indexes and skipping archived cards.
 - Switch between My Projects and All Projects to discover public projects (and accessible private ones).
 - Use the Q-Deck overview page for quick navigation to boards and projects.
 

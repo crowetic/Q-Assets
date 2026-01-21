@@ -61,7 +61,7 @@ import {
   InputAdornment,
 } from '@mui/material';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
-// import EditIcon from '@mui/icons-material/Edit';
+import EditIcon from '@mui/icons-material/Edit';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import ArchiveIcon from '@mui/icons-material/Archive';
@@ -830,7 +830,18 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
 
   const handleCreateCard = useCallback(
     async (listId: string, position: AddPosition, draft: NewCardDraft) => {
-      const order = getOrderForPosition(listId, position);
+      const inProgressListId =
+        draft.startInProgress && board
+          ? board.lists.find((l) => {
+              const normalized = (l.title ?? '')
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, ' ')
+                .trim();
+              return normalized.includes('in progress');
+            })?.listId
+          : undefined;
+      const targetListId = inProgressListId ?? listId;
+      const order = getOrderForPosition(targetListId, position);
       const assignees = draft.startInProgress && identity?.name ? [identity.name] : undefined;
       const scheduledStart = draft.startInProgress && identity?.name ? Date.now() : undefined;
       try {
@@ -840,7 +851,7 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
           priority: draft.priority,
           estimatedCompletionTimeMinutes: draft.estimatedMinutes,
           tags: draft.tags,
-          statusListId: listId,
+          statusListId: targetListId,
           order,
           assignees,
           scheduledStart,
@@ -945,6 +956,11 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
   // --- header actions ---
   const handleOpenMenu = (e: React.MouseEvent<HTMLElement>) => setMenuEl(e.currentTarget);
   const handleCloseMenu = () => setMenuEl(null);
+  const handleRenameBoard = useCallback(() => {
+    if (!board) return;
+    setEditingTitle(true);
+    handleCloseMenu();
+  }, [board, handleCloseMenu]);
 
   // const openCard = (cardId: string) => {
   //   setSelectedCardId(cardId);
@@ -1211,6 +1227,12 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
         </Tooltip>
 
         <Menu anchorEl={menuEl} open={menuOpen} onClose={handleCloseMenu}>
+          <MenuItem onClick={handleRenameBoard}>
+            <ListItemIcon>
+              <EditIcon fontSize="small" />
+            </ListItemIcon>
+            Rename board…
+          </MenuItem>
           <MenuItem
             onClick={() => {
               manageListsRef.current?.open();

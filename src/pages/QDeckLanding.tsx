@@ -1,15 +1,6 @@
 import * as React from 'react';
 import { Link as RouterLink } from 'react-router-dom';
-import {
-  Box,
-  Stack,
-  Typography,
-  Paper,
-  Button,
-  Divider,
-  Chip,
-  useMediaQuery,
-} from '@mui/material';
+import { Box, Stack, Typography, Paper, Button, Divider, Chip, useMediaQuery } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import ViewKanbanIcon from '@mui/icons-material/ViewKanban';
 import PublicIcon from '@mui/icons-material/Public';
@@ -60,14 +51,12 @@ const infoCards = [
   },
   {
     title: 'Schedules & Calendar',
-    description:
-      'Add start/end times to cards to surface them in board and project calendars.',
+    description: 'Add start/end times to cards to surface them in board and project calendars.',
     icon: <CalendarMonthIcon />,
   },
   {
     title: 'Publish Queue',
-    description:
-      'Make several edits, then publish all queued changes together when you are ready.',
+    description: 'Make several edits, then publish all queued changes together when you are ready.',
     icon: <PublishIcon />,
   },
   {
@@ -160,7 +149,9 @@ export default function QDeckLanding() {
               </Box>
               <Button
                 variant="contained"
-                color={card.tone === 'primary' ? 'primary' : card.tone === 'success' ? 'success' : 'info'}
+                color={
+                  card.tone === 'primary' ? 'primary' : card.tone === 'success' ? 'success' : 'info'
+                }
                 sx={{ alignSelf: { xs: 'start', sm: 'center' } }}
               >
                 Open
@@ -176,12 +167,7 @@ export default function QDeckLanding() {
         <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
           What is inside Q-Deck?
         </Typography>
-        <Stack
-          direction={{ xs: 'column', md: 'row' }}
-          spacing={1.5}
-          flexWrap="wrap"
-          useFlexGap
-        >
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} flexWrap="wrap" useFlexGap>
           {infoCards.map((card) => (
             <Paper
               key={card.title}

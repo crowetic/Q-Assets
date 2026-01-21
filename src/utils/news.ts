@@ -64,7 +64,6 @@ const decodeAnnouncementResource = async (data64?: string | null) => {
 };
 
 type FetchNewsOptions = {
-  includeExpired?: boolean;
   forceFresh?: boolean;
   allowedGroupIds?: number[]; // membership list to gate private asset news
   signal?: AbortSignal;
@@ -85,8 +84,7 @@ export async function fetchAnnouncements(
       }
     };
     ensureNotAborted();
-    const includeExpired = options?.includeExpired ?? false;
-    const listKey = `ann:list:${includeExpired}:${limit}`;
+    const listKey = `ann:list:${limit}`;
     if (!options?.forceFresh) {
       const cachedList = getCached<NewsSummary[]>(listKey);
       if (cachedList) return cachedList;
@@ -113,6 +111,10 @@ export async function fetchAnnouncements(
     ) => {
       try {
         ensureNotAborted();
+        const createdCandidate = normalizeTimestamp(createdHint);
+        if (expiryCutoff != null && createdCandidate != null && createdCandidate < expiryCutoff) {
+          return false;
+        }
         const svc = service || ('DOCUMENT' as Service);
         const cacheKey = `ann:item:${(publisher || '').toLowerCase()}:${svc}:${identifier}`;
         let payload: { html: string; title?: string; createdAt?: number } | null | undefined =
@@ -142,7 +144,7 @@ export async function fetchAnnouncements(
 
         const created = normalizeTimestamp(payload.createdAt ?? createdHint) ?? Date.now();
         const isExpired = expiryCutoff != null && created < expiryCutoff;
-        if (!includeExpired && isExpired) return false;
+        if (isExpired) return false;
 
         items.push({
           type: 'announcement',
@@ -205,10 +207,12 @@ export async function fetchAnnouncements(
     for (const hit of allHits) {
       const dedupeKey = keyFor(hit.name, hit.identifier);
       if (seen.has(dedupeKey)) continue;
+      const createdHint =
+        normalizeTimestamp(hit.created ?? hit.updated) ?? hit.created ?? hit.updated;
+      if (expiryCutoff != null && createdHint != null && createdHint < expiryCutoff) continue;
       const allowed = await canPublishAnnouncement(hit.name);
       if (!allowed) continue;
       const finalService = (hit.service as Service) || ('DOCUMENT' as Service);
-      const createdHint = normalizeTimestamp(hit.created) ?? hit.created;
       const added = await pushAnnouncement(hit.name, hit.identifier, finalService, createdHint);
       if (added) {
         seen.add(dedupeKey);
@@ -256,9 +260,8 @@ export async function fetchLatestAssetNews(
     };
 
     ensureNotAborted();
-    const includeExpired = options?.includeExpired ?? false;
     const allowedGroupIds = options?.allowedGroupIds ?? [];
-    const listKey = `assetnews:list:${includeExpired}:${limit}:${allowedGroupIds
+    const listKey = `assetnews:list:${limit}:${allowedGroupIds
       .slice()
       .sort((a, b) => a - b)
       .join(',')}`;
@@ -291,6 +294,9 @@ export async function fetchLatestAssetNews(
       ensureNotAborted();
       const dedupeKey = `${hit.name}::${hit.identifier}`;
       if (seenIds.has(dedupeKey)) continue;
+      const createdHint =
+        normalizeTimestamp(hit.created ?? hit.updated) ?? hit.created ?? hit.updated;
+      if (expiryCutoff != null && createdHint != null && createdHint < expiryCutoff) continue;
       seenIds.add(dedupeKey);
       dedupedHits.push(hit);
     }
@@ -403,7 +409,7 @@ export async function fetchLatestAssetNews(
 
           const created = normalizeTimestamp(createdAt ?? hit.updated ?? hit.created) ?? Date.now();
           const isExpired = expiryCutoff != null && created < expiryCutoff;
-          if (!includeExpired && isExpired) return null;
+          if (isExpired) return null;
 
           const entry: NewsSummary = {
             type: 'assetNews',

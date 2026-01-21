@@ -31,23 +31,29 @@ import {
   deleteBoardById,
   isGroupKeyMissing,
   qdeckFetch,
+  resolveBoardForReadWithMeta,
+  saveBoardDoc,
   // repairOwnerIndex, //todo readd this in the future after verifying.
 } from '../utils/qdeckApi';
-import { loadBoardsIndexMerged } from '../utils/qdeckIndexCache';
+import { loadBoardsIndexMerged, saveBoardsIndexWriteThrough } from '../utils/qdeckIndexCache';
 import { searchSimpleByIdPrefixOnly } from '../utils/searchSimple';
 import { parsePrivateBoardIdentV2, QDeckId } from '../constants/qdeckIdentifiers';
 import type { QDeckBoard, BoardsIndexDoc, AnyBoard } from '../types/qdeck';
 import { coerceService, coerceVisibility } from '../types/qdeck';
-import { getAccountGroups, GroupSummary } from '../utils/qortalApi';
+import { getAccountGroups, getGroupNameById, GroupSummary } from '../utils/qortalApi';
 import { useAlert } from '../components/alerts';
 import { collectRecipientPublicKeys } from '../utils/qdeckAccess';
 import { RowActions, RowLinkGuard } from './QDeckPage';
 import { pastelBgFromId, pastelBorderFromId } from '../utils/qdeckColors';
 import { useFetchTracker } from '../state/global/fetchTracker';
+import { RenameBoardDialog } from '../components/qdeck/RenameBoardDialog';
+import { ExpandableChipList } from '../components/qdeck/ExpandableChipList';
+import pLimit from 'p-limit';
 type BoardLoadStatus = 'queued' | 'loading' | 'decrypting' | 'loaded' | 'error';
 type OwnedBoardDetail = {
   status: BoardLoadStatus;
   statusMessage?: string;
+  title?: string;
   updatedAt?: number;
   createdAt?: number;
   identifier?: string;
@@ -76,6 +82,13 @@ export default function MyBoards() {
   const [open, setOpen] = React.useState(false);
   const [title, setTitle] = React.useState('');
   const [boardDetails, setBoardDetails] = React.useState<Record<string, OwnedBoardDetail>>({});
+  const [renameState, setRenameState] = React.useState<null | {
+    boardId: string;
+    identifier?: string;
+  }>(null);
+  const [renameTitle, setRenameTitle] = React.useState('');
+  const [renameBusy, setRenameBusy] = React.useState(false);
+  const [groupNameMap, setGroupNameMap] = React.useState<Record<number, string>>({});
 
   // creator form state
   const [groupOptions, setGroupOptions] = React.useState<GroupSummary[]>([]);
@@ -106,6 +119,7 @@ export default function MyBoards() {
     [track]
   );
   const boardHydrateTokenRef = React.useRef(0);
+  const groupNameTokenRef = React.useRef(0);
 
   let issuer = userName;
   if (!issuer) authenticateUser();
@@ -207,6 +221,7 @@ export default function MyBoards() {
             status: 'loaded',
             statusMessage: 'Board ready.',
             identifier: head.identifier,
+            title: doc.title,
             updatedAt: doc.updatedAt,
             createdAt: doc.createdAt,
             listCount: Array.isArray(doc.lists) ? doc.lists.length : prev[shortId]?.listCount,
@@ -359,6 +374,36 @@ export default function MyBoards() {
     })();
   }, [doc?.issuerName, hydrateOwnedBoard]);
 
+  React.useEffect(() => {
+    const ids = new Set<number>();
+    Object.values(boardDetails).forEach((detail) => {
+      (detail?.ownerGroups ?? []).forEach((gid) => ids.add(Number(gid)));
+      (detail?.editorGroups ?? []).forEach((gid) => ids.add(Number(gid)));
+      (detail?.groupsAllowed ?? []).forEach((gid) => ids.add(Number(gid)));
+    });
+    const missing = Array.from(ids).filter((id) => Number.isFinite(id) && !groupNameMap[id]);
+    if (!missing.length) return;
+    const token = ++groupNameTokenRef.current;
+    const limit = pLimit(2);
+    Promise.all(
+      missing.map((gid) =>
+        limit(async () => {
+          const name = await getGroupNameById(gid).catch(() => null);
+          return { gid, name };
+        })
+      )
+    ).then((results) => {
+      if (groupNameTokenRef.current !== token) return;
+      setGroupNameMap((prev) => {
+        const next = { ...prev };
+        results.forEach((res) => {
+          if (res?.name) next[res.gid] = res.name;
+        });
+        return next;
+      });
+    });
+  }, [boardDetails, groupNameMap]);
+
   // load groups when dialog opens
   React.useEffect(() => {
     if (!open || !myAddress) return;
@@ -493,6 +538,104 @@ export default function MyBoards() {
   };
 
   const publisher = doc?.issuerName?.trim() ? doc.issuerName : issuer;
+  const closeRenameDialog = React.useCallback(() => {
+    if (renameBusy) return;
+    setRenameState(null);
+    setRenameTitle('');
+  }, [renameBusy]);
+
+  const handleRenameSave = async () => {
+    if (!renameState || !publisher) return;
+    const nextTitle = renameTitle.trim();
+    if (!nextTitle) return;
+
+    setRenameBusy(true);
+    try {
+      const probe = await resolveBoardForReadWithMeta(
+        publisher,
+        renameState.identifier ?? renameState.boardId
+      ).catch(() => null);
+      if (!probe?.doc) {
+        throw new Error('Board not found or inaccessible.');
+      }
+      const updatedAt = Date.now();
+      const updatedBoard: QDeckBoard = {
+        ...probe.doc,
+        title: nextTitle,
+        updatedAt,
+      };
+
+      await saveBoardDoc(publisher, updatedBoard);
+
+      const idx = (await loadBoardsIndexMerged(publisher)) ?? {
+        _type: 'QDECK_BOARDS_INDEX' as const,
+        version: 1 as const,
+        issuerName: publisher,
+        boards: [],
+        updatedAt: 0,
+        seq: 0,
+      };
+      const existing = idx.boards.find((b) => b.boardId === updatedBoard.boardId);
+      const createdAt = updatedBoard.createdAt ?? existing?.createdAt ?? updatedAt;
+      const next = {
+        ...idx,
+        boards: [
+          ...idx.boards.filter((b) => b.boardId !== updatedBoard.boardId),
+          {
+            boardId: updatedBoard.boardId,
+            title: updatedBoard.title,
+            createdAt,
+            updatedAt,
+            visibility: coerceVisibility(updatedBoard.visibility ?? 'public'),
+            service: coerceService(updatedBoard.service ?? 'DOCUMENT'),
+          },
+        ],
+        updatedAt: Date.now(),
+        seq: (idx.seq ?? 0) + 1,
+      };
+      await saveBoardsIndexWriteThrough(publisher, next);
+
+      setDoc((prev) =>
+        prev
+          ? {
+              ...prev,
+              boards: prev.boards.map((b) =>
+                b.boardId === updatedBoard.boardId
+                  ? { ...b, title: updatedBoard.title, updatedAt }
+                  : b
+              ),
+              updatedAt: Date.now(),
+              seq: (prev.seq ?? 0) + 1,
+            }
+          : prev
+      );
+      setBoardDetails((prev) => ({
+        ...prev,
+        [updatedBoard.boardId]: {
+          ...(prev[updatedBoard.boardId] ?? {}),
+          title: updatedBoard.title,
+          updatedAt,
+        },
+      }));
+      alert('Board renamed.', 'Rename board', { severity: 'success' });
+      setRenameState(null);
+      setRenameTitle('');
+    } catch (e: any) {
+      alert(e?.message || 'Failed to rename board.', 'Rename board', { severity: 'error' });
+    } finally {
+      setRenameBusy(false);
+    }
+  };
+  const sortedBoards = React.useMemo(() => {
+    const boards = doc?.boards ?? [];
+    return boards.slice().sort((a, b) => {
+      const aDetail = boardDetails[a.boardId];
+      const bDetail = boardDetails[b.boardId];
+      const aTs = aDetail?.updatedAt ?? aDetail?.createdAt ?? a.updatedAt ?? a.createdAt ?? 0;
+      const bTs = bDetail?.updatedAt ?? bDetail?.createdAt ?? b.updatedAt ?? b.createdAt ?? 0;
+      return bTs - aTs;
+    });
+  }, [doc?.boards, boardDetails]);
 
   return (
     <Box sx={{ p: { xs: 1.5, sm: 2 }, mx: 'auto' }}>
@@ -572,12 +715,13 @@ export default function MyBoards() {
           </Typography>
         )}
 
-        {(doc?.boards ?? []).map((b) => {
+        {sortedBoards.map((b) => {
           const detail = boardDetails[b.boardId];
           const targetId = detail?.identifier ?? b.boardId;
           const to = `/qdeck/${encodeURIComponent(publisher)}/${encodeURIComponent(targetId)}`;
           const visibility = detail?.visibility ?? b.visibility ?? 'public';
           const isPrivate = visibility === 'private';
+          const displayTitle = detail?.title || b.title;
           const statusColor =
             detail?.status === 'error'
               ? 'error.main'
@@ -631,7 +775,7 @@ export default function MyBoards() {
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    {b.title}
+                    {displayTitle}
                   </Typography>
 
                   {isPrivate ? (
@@ -678,9 +822,14 @@ export default function MyBoards() {
                     {detail?.owners?.map((owner) => (
                       <Chip key={`owner-${owner}`} size="small" label={`Admin: ${owner}`} />
                     ))}
-                    {detail?.ownerGroups?.map((gid) => (
-                      <Chip key={`owner-group-${gid}`} size="small" label={`Admin group #${gid}`} />
-                    ))}
+                    <ExpandableChipList
+                      items={(detail?.ownerGroups ?? []).map((gid) => ({
+                        key: `owner-group-${gid}`,
+                        label: groupNameMap[gid]
+                          ? `Admin group: ${groupNameMap[gid]} (#${gid})`
+                          : `Admin group #${gid}`,
+                      }))}
+                    />
                   </Stack>
                 )}
                 {(detail?.editors?.length || detail?.editorGroups?.length) && (
@@ -693,26 +842,28 @@ export default function MyBoards() {
                         label={`Editor: ${editor}`}
                       />
                     ))}
-                    {detail?.editorGroups?.map((gid) => (
-                      <Chip
-                        key={`editor-group-${gid}`}
-                        size="small"
-                        color="info"
-                        label={`Editor group #${gid}`}
-                      />
-                    ))}
+                    <ExpandableChipList
+                      chipColor="info"
+                      items={(detail?.editorGroups ?? []).map((gid) => ({
+                        key: `editor-group-${gid}`,
+                        label: groupNameMap[gid]
+                          ? `Editor group: ${groupNameMap[gid]} (#${gid})`
+                          : `Editor group #${gid}`,
+                      }))}
+                    />
                   </Stack>
                 )}
                 {(detail?.groupsAllowed?.length || detail?.usersAllowed?.length) && (
                   <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ mt: 0.5 }}>
-                    {detail?.groupsAllowed?.map((gid) => (
-                      <Chip
-                        key={`allowed-group-${gid}`}
-                        size="small"
-                        color="secondary"
-                        label={`Group allowed #${gid}`}
-                      />
-                    ))}
+                    <ExpandableChipList
+                      chipColor="secondary"
+                      items={(detail?.groupsAllowed ?? []).map((gid) => ({
+                        key: `allowed-group-${gid}`,
+                        label: groupNameMap[gid]
+                          ? `Group allowed: ${groupNameMap[gid]} (#${gid})`
+                          : `Group allowed #${gid}`,
+                      }))}
+                    />
                     {detail?.usersAllowed?.map((user) => (
                       <Chip
                         key={`allowed-user-${user}`}
@@ -741,12 +892,17 @@ export default function MyBoards() {
                 <RowLinkGuard>
                   <RowActions
                     onOpen={() => {}}
+                    onRename={() => {
+                      setRenameState({ boardId: b.boardId, identifier: detail?.identifier });
+                      setRenameTitle(displayTitle);
+                    }}
                     onDelete={() => {
                       setCascadeCards(false);
                       setCascadeComments(false);
-                      setConfirmDel({ boardId: b.boardId, title: b.title });
+                      setConfirmDel({ boardId: b.boardId, title: displayTitle });
                     }}
                     canDelete={true}
+                    canRename={true}
                   />
                 </RowLinkGuard>
               </Stack>
@@ -897,6 +1053,15 @@ export default function MyBoards() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <RenameBoardDialog
+        open={!!renameState}
+        value={renameTitle}
+        onChange={setRenameTitle}
+        onClose={closeRenameDialog}
+        onSave={handleRenameSave}
+        busy={renameBusy}
+      />
 
       {/* Delete dialog */}
       <Dialog open={!!confirmDel} onClose={() => setConfirmDel(null)} maxWidth="xs" fullWidth>

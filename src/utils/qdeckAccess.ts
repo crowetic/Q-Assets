@@ -1,4 +1,4 @@
-import { QDeckBoard, QDeckCard } from '../types/qdeck';
+import { QDeckBoard, QDeckCard, QDeckProject } from '../types/qdeck';
 import { fetchGroupMembers } from './access';
 import { qdeckFetch } from './qdeckApi';
 import { getAccountGroupIds, getAccountGroups } from './qortalApi';
@@ -10,8 +10,8 @@ function eq(a?: string, b?: string) {
   return a === b;
 }
 
-export async function userInAllowedGroups(board: QDeckBoard, viewerAddress?: string) {
-  const need = new Set(board.groupsAllowed ?? []);
+async function userInAllowedGroupsList(groupsAllowed: number[] | undefined, viewerAddress?: string) {
+  const need = new Set(groupsAllowed ?? []);
   if (!need.size || !viewerAddress) return false;
   const mineKey = `qdeck:groups:${viewerAddress}`;
   let mineArr = getCached<number[]>(mineKey);
@@ -24,10 +24,22 @@ export async function userInAllowedGroups(board: QDeckBoard, viewerAddress?: str
   return false;
 }
 
-export function userInUsersAllowlist(board: QDeckBoard, viewerName?: string, viewerAddr?: string) {
-  const allow = board.usersAllowed ?? [];
+function userInUsersAllowlistList(
+  usersAllowed: string[] | undefined,
+  viewerName?: string,
+  viewerAddr?: string
+) {
+  const allow = usersAllowed ?? [];
   if (!allow.length) return false;
   return allow.some((v) => eq(v, viewerName) || eq(v, viewerAddr));
+}
+
+export async function userInAllowedGroups(board: QDeckBoard, viewerAddress?: string) {
+  return userInAllowedGroupsList(board.groupsAllowed ?? [], viewerAddress);
+}
+
+export function userInUsersAllowlist(board: QDeckBoard, viewerName?: string, viewerAddr?: string) {
+  return userInUsersAllowlistList(board.usersAllowed ?? [], viewerName, viewerAddr);
 }
 
 /** EDIT permission rules */
@@ -99,6 +111,82 @@ export async function canUserEditBoard(
     (!board.usersAllowed || board.usersAllowed.length === 0) &&
     (!board.groupsAllowed || board.groupsAllowed.length === 0);
   if (!ok && board.visibility === 'public' && (noExplicitEditors || noEnhancedEditors)) {
+    ok = true;
+  }
+  setCached(permKey, ok, 60_000);
+  return ok;
+}
+
+/** EDIT permission rules (projects) */
+export async function canUserEditProject(
+  project: QDeckProject,
+  viewer: { name?: string; address?: string }
+) {
+  const permKey = `qdeck:perm:edit:project:${project.projectId}:${project.updatedAt || project.seq || ''}:${
+    viewer.name || ''
+  }:${viewer.address || ''}`;
+  const cached = getCached<boolean>(permKey);
+  if (cached !== undefined) return cached;
+
+  const owners = new Set(
+    (project.owners && project.owners.length ? project.owners : [project.createdBy]).map((s) =>
+      s.trim()
+    )
+  );
+  const ownerGroups = new Set(project.ownerGroups ?? []);
+  const editors = new Set(project.editors ?? project.usersAllowed ?? []);
+  const editorGroups = new Set(
+    project.editorGroups && project.editorGroups.length
+      ? project.editorGroups
+      : (project.groupsAllowed ?? [])
+  );
+
+  if (
+    (viewer.name && owners.has(viewer.name)) ||
+    (viewer.address && owners.has(viewer.address)) ||
+    (viewer.address && ownerGroups.size && (await isAdminOfAnyGroup(viewer.address, ownerGroups)))
+  ) {
+    setCached(permKey, true, 60_000);
+    return true;
+  }
+
+  if (project.adminOverride && viewer.address && editorGroups.size) {
+    if (await isAdminOfAnyGroup(viewer.address, editorGroups)) {
+      setCached(permKey, true, 60_000);
+      return true;
+    }
+  }
+
+  if (
+    (viewer.name && editors.has(viewer.name)) ||
+    (viewer.address && editors.has(viewer.address)) ||
+    (viewer.address &&
+      editorGroups.size &&
+      (await isMemberOfAnyGroup(viewer.address, editorGroups)))
+  ) {
+    setCached(permKey, true, 60_000);
+    return true;
+  }
+
+  if (eq(project.createdBy, viewer.name) || eq(project.creatorAddress, viewer.address)) {
+    setCached(permKey, true, 60_000);
+    return true;
+  }
+
+  if (userInUsersAllowlistList(project.usersAllowed ?? [], viewer.name, viewer.address)) {
+    setCached(permKey, true, 60_000);
+    return true;
+  }
+
+  let ok = await userInAllowedGroupsList(project.groupsAllowed ?? [], viewer.address);
+  const noExplicitEditors =
+    (!project.usersAllowed || project.usersAllowed.length === 0) &&
+    (!project.groupsAllowed || project.groupsAllowed.length === 0);
+  const noEnhancedEditors =
+    (!project.editors || project.editors.length === 0) &&
+    (!project.editorGroups || project.editorGroups.length === 0) &&
+    noExplicitEditors;
+  if (!ok && project.visibility === 'public' && (noExplicitEditors || noEnhancedEditors)) {
     ok = true;
   }
   setCached(permKey, ok, 60_000);
@@ -474,6 +562,23 @@ export async function canPublisherPublishToBoard(
 
   // Delegate to the same logic you already use for writers
   return canUserEditBoard(board, { name, address });
+}
+
+export async function canPublisherPublishToProject(
+  project: QDeckProject,
+  publisher: { name?: string; address?: string }
+): Promise<boolean> {
+  const name = publisher.name;
+  let address = publisher.address;
+
+  if (!name && !address) return false;
+
+  if (!address && name) {
+    address = await resolveNameAddress(name);
+  }
+  if (!address) return false;
+
+  return canUserEditProject(project, { name, address });
 }
 
 /**

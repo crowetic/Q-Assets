@@ -88,7 +88,17 @@ export type CardsIndexDoc = {
   version: 1;
   boardId: string;
   cardIds: string[]; // legacy
-  entries?: Array<{ name: string; cardId: string }>; // new, multi-issuer
+  entries?: Array<{
+    name: string;
+    cardId: string;
+    title?: string;
+    statusListId?: string;
+    scheduledStart?: number;
+    scheduledEnd?: number;
+    scheduledAllDay?: boolean;
+    completedAt?: number;
+    isDone?: boolean;
+  }>; // new, multi-issuer
   archivedIds?: string[]; // optional list of archived cardIds
   updatedAt: number;
   seq: number;

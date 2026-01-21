@@ -231,6 +231,11 @@ const DraggableCardInner: FC<DraggableProps> = ({
     return startedByMe ? 'Complete task' : 'Start task';
   }, [card, userName]);
 
+  const completedAtLabel = useMemo(() => {
+    if (!card?.isDone || !card.completedAt) return null;
+    return new Date(card.completedAt).toLocaleString();
+  }, [card]);
+
   const canUseTaskAction = Boolean(card && !card.isDone && userName?.trim());
   const isTaskCompleted = Boolean(card?.isDone);
   const isTaskInProgress = Boolean(
@@ -663,6 +668,19 @@ const DraggableCardInner: FC<DraggableProps> = ({
             {taskButtonLabel}
           </Button>
         </Box>
+        {completedAtLabel && (
+          <Typography
+            variant="caption"
+            sx={{
+              mt: 0.35,
+              display: 'block',
+              textAlign: 'center',
+              color: 'text.secondary',
+            }}
+          >
+            Completed {completedAtLabel}
+          </Typography>
+        )}
       </Box>
     </Paper>
   );

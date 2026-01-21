@@ -25,7 +25,12 @@ import PublicIcon from '@mui/icons-material/Public';
 import { useAuth } from 'qapp-core';
 
 import { QDeckId, parsePrivateBoardIdentV2 } from '../constants/qdeckIdentifiers';
-import { deleteBoardById, qdeckFetch } from '../utils/qdeckApi';
+import {
+  deleteBoardById,
+  qdeckFetch,
+  resolveBoardForReadWithMeta,
+  saveBoardDoc,
+} from '../utils/qdeckApi';
 import type { AnyBoard, QDeckBoard } from '../types/qdeck';
 import { coerceService, coerceVisibility } from '../types/qdeck';
 import { searchSimpleByIdPrefixOnly } from '../utils/searchSimple';
@@ -33,6 +38,11 @@ import { RowActions, RowLinkGuard } from './QDeckPage';
 import { useAlert } from '../components/alerts';
 import { pastelBgFromId, pastelBorderFromId } from '../utils/qdeckColors';
 import { useFetchTracker } from '../state/global/fetchTracker';
+import { ExpandableChipList } from '../components/qdeck/ExpandableChipList';
+import { loadBoardsIndexMerged, saveBoardsIndexWriteThrough } from '../utils/qdeckIndexCache';
+import { RenameBoardDialog } from '../components/qdeck/RenameBoardDialog';
+import { getGroupNameById } from '../utils/qortalApi';
+import pLimit from 'p-limit';
 
 type BoardLoadStatus = 'queued' | 'loading' | 'decrypting' | 'loaded' | 'error';
 type ListedBoard = AnyBoard & {
@@ -73,6 +83,15 @@ export default function QDeckAllBoards() {
   const [boardMap, setBoardMap] = React.useState<Record<string, ListedBoard>>({});
   const [q, setQ] = React.useState('');
   const [stats, setStats] = React.useState({ pubFound: 0, privFound: 0 });
+  const [renameTarget, setRenameTarget] = React.useState<null | {
+    issuer: string;
+    boardId: string;
+    identifier?: string;
+    key: string;
+  }>(null);
+  const [renameTitle, setRenameTitle] = React.useState('');
+  const [renameBusy, setRenameBusy] = React.useState(false);
+  const [groupNameMap, setGroupNameMap] = React.useState<Record<number, string>>({});
 
   const [confirmDel, setConfirmDel] = React.useState<null | {
     issuer: string;
@@ -95,6 +114,7 @@ export default function QDeckAllBoards() {
   );
 
   const loadTokenRef = React.useRef(0);
+  const groupNameTokenRef = React.useRef(0);
 
   const upsertBoard = React.useCallback(
     (key: string, next: ListedBoard | ((prev?: ListedBoard) => ListedBoard)) => {
@@ -117,6 +137,89 @@ export default function QDeckAllBoards() {
       return next;
     });
   }, []);
+
+  const closeRenameDialog = React.useCallback(() => {
+    if (renameBusy) return;
+    setRenameTarget(null);
+    setRenameTitle('');
+  }, [renameBusy]);
+
+  const handleRenameSave = async () => {
+    if (!renameTarget) return;
+    const nextTitle = renameTitle.trim();
+    if (!nextTitle) return;
+
+    setRenameBusy(true);
+    try {
+      const probe = await resolveBoardForReadWithMeta(
+        renameTarget.issuer,
+        renameTarget.identifier ?? renameTarget.boardId
+      ).catch(() => null);
+      if (!probe?.doc) {
+        throw new Error('Board not found or inaccessible.');
+      }
+      const updatedAt = Date.now();
+      const updatedBoard: QDeckBoard = {
+        ...probe.doc,
+        title: nextTitle,
+        updatedAt,
+      };
+
+      await saveBoardDoc(renameTarget.issuer, updatedBoard);
+
+      const idx = (await loadBoardsIndexMerged(renameTarget.issuer)) ?? {
+        _type: 'QDECK_BOARDS_INDEX' as const,
+        version: 1 as const,
+        issuerName: renameTarget.issuer,
+        boards: [],
+        updatedAt: 0,
+        seq: 0,
+      };
+      const existing = idx.boards.find((b) => b.boardId === updatedBoard.boardId);
+      const createdAt = updatedBoard.createdAt ?? existing?.createdAt ?? updatedAt;
+      const next = {
+        ...idx,
+        boards: [
+          ...idx.boards.filter((b) => b.boardId !== updatedBoard.boardId),
+          {
+            boardId: updatedBoard.boardId,
+            title: updatedBoard.title,
+            createdAt,
+            updatedAt,
+            visibility: coerceVisibility(updatedBoard.visibility ?? 'public'),
+            service: coerceService(updatedBoard.service ?? 'DOCUMENT'),
+          },
+        ],
+        updatedAt: Date.now(),
+        seq: (idx.seq ?? 0) + 1,
+      };
+      await saveBoardsIndexWriteThrough(renameTarget.issuer, next);
+
+      setBoardMap((prev) => {
+        const current = prev[renameTarget.key];
+        if (!current) return prev;
+        return {
+          ...prev,
+          [renameTarget.key]: {
+            ...current,
+            title: updatedBoard.title,
+            updatedAt,
+            status: 'loaded',
+            statusMessage: 'Board metadata loaded.',
+            accessible: true,
+          },
+        };
+      });
+
+      alert('Board renamed.', 'Rename board', { severity: 'success' });
+      setRenameTarget(null);
+      setRenameTitle('');
+    } catch (e: any) {
+      alert(e?.message || 'Failed to rename board.', 'Rename board', { severity: 'error' });
+    } finally {
+      setRenameBusy(false);
+    }
+  };
 
   const hydrateBoard = React.useCallback(
     async (
@@ -227,6 +330,36 @@ export default function QDeckAllBoards() {
     load().catch(console.error);
   }, [load]);
 
+  React.useEffect(() => {
+    const ids = new Set<number>();
+    Object.values(boardMap).forEach((detail) => {
+      (detail?.ownerGroups ?? []).forEach((gid) => ids.add(Number(gid)));
+      (detail?.editorGroups ?? []).forEach((gid) => ids.add(Number(gid)));
+      (detail?.groupsAllowed ?? []).forEach((gid) => ids.add(Number(gid)));
+    });
+    const missing = Array.from(ids).filter((id) => Number.isFinite(id) && !groupNameMap[id]);
+    if (!missing.length) return;
+    const token = ++groupNameTokenRef.current;
+    const limit = pLimit(2);
+    Promise.all(
+      missing.map((gid) =>
+        limit(async () => {
+          const name = await getGroupNameById(gid).catch(() => null);
+          return { gid, name };
+        })
+      )
+    ).then((results) => {
+      if (groupNameTokenRef.current !== token) return;
+      setGroupNameMap((prev) => {
+        const next = { ...prev };
+        results.forEach((res) => {
+          if (res?.name) next[res.gid] = res.name;
+        });
+        return next;
+      });
+    });
+  }, [boardMap, groupNameMap]);
+
   const boardList = React.useMemo(() => {
     const values = Object.values(boardMap);
     const dedup = new Map<string, ListedBoard>();
@@ -247,9 +380,12 @@ export default function QDeckAllBoards() {
       }
     });
     return Array.from(dedup.values()).sort((a, b) => {
+      const aTs = a.updatedAt ?? a.createdAt ?? 0;
+      const bTs = b.updatedAt ?? b.createdAt ?? 0;
+      if (bTs !== aTs) return bTs - aTs;
       const statusDiff = statusPriority[b.status] - statusPriority[a.status];
       if (statusDiff !== 0) return statusDiff;
-      return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+      return (a.title ?? '').localeCompare(b.title ?? '');
     });
   }, [boardMap]);
 
@@ -317,6 +453,7 @@ export default function QDeckAllBoards() {
         const targetId = b.identifier ?? b.shortId;
         const to = `/qdeck/${encodeURIComponent(b.name)}/${encodeURIComponent(targetId)}`;
         const canDelete = myName === b.name;
+        const canRename = myName === b.name && b.accessible && b.status === 'loaded';
         const bg = (t: any) => pastelBgFromId(b.shortId, t.palette.mode);
         const border = (t: any) => `1px solid ${pastelBorderFromId(b.shortId, t.palette.mode)}`;
         const isLoaded = b.status === 'loaded';
@@ -426,9 +563,14 @@ export default function QDeckAllBoards() {
                   {b.owners?.map((owner) => (
                     <Chip key={`owner-${owner}`} size="small" label={`Admin: ${owner}`} />
                   ))}
-                  {b.ownerGroups?.map((gid) => (
-                    <Chip key={`owner-group-${gid}`} size="small" label={`Admin group #${gid}`} />
-                  ))}
+                  <ExpandableChipList
+                    items={(b.ownerGroups ?? []).map((gid) => ({
+                      key: `owner-group-${gid}`,
+                      label: groupNameMap[gid]
+                        ? `Admin group: ${groupNameMap[gid]} (#${gid})`
+                        : `Admin group #${gid}`,
+                    }))}
+                  />
                 </Stack>
               )}
               {(b.editors?.length || b.editorGroups?.length) && (
@@ -441,26 +583,28 @@ export default function QDeckAllBoards() {
                       label={`Editor: ${editor}`}
                     />
                   ))}
-                  {b.editorGroups?.map((gid) => (
-                    <Chip
-                      key={`editor-group-${gid}`}
-                      size="small"
-                      color="info"
-                      label={`Editor group #${gid}`}
-                    />
-                  ))}
+                  <ExpandableChipList
+                    chipColor="info"
+                    items={(b.editorGroups ?? []).map((gid) => ({
+                      key: `editor-group-${gid}`,
+                      label: groupNameMap[gid]
+                        ? `Editor group: ${groupNameMap[gid]} (#${gid})`
+                        : `Editor group #${gid}`,
+                    }))}
+                  />
                 </Stack>
               )}
               {(b.groupsAllowed?.length || b.usersAllowed?.length) && (
                 <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ mt: 0.5 }}>
-                  {b.groupsAllowed?.map((gid) => (
-                    <Chip
-                      key={`allowed-group-${gid}`}
-                      size="small"
-                      color="secondary"
-                      label={`Group allowed #${gid}`}
-                    />
-                  ))}
+                  <ExpandableChipList
+                    chipColor="secondary"
+                    items={(b.groupsAllowed ?? []).map((gid) => ({
+                      key: `allowed-group-${gid}`,
+                      label: groupNameMap[gid]
+                        ? `Group allowed: ${groupNameMap[gid]} (#${gid})`
+                        : `Group allowed #${gid}`,
+                    }))}
+                  />
                   {b.usersAllowed?.map((user) => (
                     <Chip
                       key={`allowed-user-${user}`}
@@ -479,12 +623,22 @@ export default function QDeckAllBoards() {
                 <RowLinkGuard>
                   <RowActions
                     onOpen={() => {}}
+                    onRename={() => {
+                      setRenameTarget({
+                        issuer: b.name,
+                        boardId: b.shortId,
+                        identifier: b.identifier,
+                        key: `${b.name}::${b.identifier ?? b.shortId}`,
+                      });
+                      setRenameTitle(b.title);
+                    }}
                     onDelete={() => {
                       setCascadeCards(false);
                       setCascadeComments(false);
                       setConfirmDel({ issuer: b.name, boardId: b.shortId, title: b.title });
                     }}
                     canDelete={canDelete}
+                    canRename={canRename}
                   />
                 </RowLinkGuard>
               ) : (
@@ -500,6 +654,15 @@ export default function QDeckAllBoards() {
           </Paper>
         );
       })}
+
+      <RenameBoardDialog
+        open={!!renameTarget}
+        value={renameTitle}
+        onChange={setRenameTitle}
+        onClose={closeRenameDialog}
+        onSave={handleRenameSave}
+        busy={renameBusy}
+      />
 
       {/* Delete dialog (single instance, outside map) */}
       <Dialog open={!!confirmDel} onClose={() => setConfirmDel(null)} maxWidth="xs" fullWidth>

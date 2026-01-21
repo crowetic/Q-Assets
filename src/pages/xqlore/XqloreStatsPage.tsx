@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Button,
   Chip,
+  Collapse,
   Divider,
   LinearProgress,
   Link as MuiLink,
@@ -36,7 +37,13 @@ import {
   type XqloreTxIndex,
   type XqloreTxIndexEntry,
 } from '../../utils/xqloreIndex';
-import { formatNumber, getIdentifier, getService, getTxType } from '../../utils/xqloreTx';
+import {
+  formatNumber,
+  getIdentifier,
+  getService,
+  getTxType,
+  shortenValue,
+} from '../../utils/xqloreTx';
 import { useXqloreTxIndex } from '../../hooks/useXqloreTxIndex';
 
 const BLOCK_BATCH_SIZE = 25_000;
@@ -87,6 +94,12 @@ const XqloreStatsPage = () => {
   const [overviewProgress, setOverviewProgress] = useState('');
   const [indexRebuildLoading, setIndexRebuildLoading] = useState(false);
   const [indexRebuildProgress, setIndexRebuildProgress] = useState('');
+  const [showIndexTools, setShowIndexTools] = useState(false);
+  const [mintedLeaders, setMintedLeaders] = useState<AccountCount[] | null>(null);
+  const [mintedLoading, setMintedLoading] = useState(false);
+  const [qortAccountsOver25, setQortAccountsOver25] = useState<number | null>(null);
+  const [qortAccountsLoading, setQortAccountsLoading] = useState(false);
+  const mintedCacheRef = useRef(new Map<string, number>());
 
   const surfaceSx = {
     borderRadius: '24px',
@@ -129,31 +142,6 @@ const XqloreStatsPage = () => {
   const overviewGroups: OverviewGroup[] = statsOverview
     ? [
         {
-          title: 'Most incoming QORT',
-          items: statsOverview.topAccountsByIncomingQort,
-          kind: 'amount',
-        },
-        {
-          title: 'Most sold QORT',
-          items: statsOverview.topAccountsBySoldQort,
-          kind: 'amount',
-        },
-        {
-          title: 'Most bought QORT',
-          items: statsOverview.topAccountsByBoughtQort,
-          kind: 'amount',
-        },
-        {
-          title: 'Most consolidated QORT',
-          items: statsOverview.topAccountsByConsolidatedQort,
-          kind: 'count',
-        },
-        {
-          title: 'Most overall transactions',
-          items: statsOverview.topAccountsByTxCount,
-          kind: 'count',
-        },
-        {
           title: 'Most QDN publishes',
           items: statsOverview.topAccountsByQdnPublishes,
           kind: 'count',
@@ -163,10 +151,37 @@ const XqloreStatsPage = () => {
           items: statsOverview.topAccountsByAssetEvents,
           kind: 'count',
         },
+        {
+          title: 'Most incoming QORT',
+          items: statsOverview.topAccountsByIncomingQort,
+          kind: 'amount',
+        },
+        {
+          title: 'Most bought QORT',
+          items: statsOverview.topAccountsByBoughtQort,
+          kind: 'amount',
+        },
+        {
+          title: 'Most sold QORT',
+          items: statsOverview.topAccountsBySoldQort,
+          kind: 'amount',
+        },
+        {
+          title: 'Consolidation tx count',
+          items: statsOverview.topAccountsByConsolidatedQort,
+          kind: 'count',
+        },
+        {
+          title: 'Most overall transactions',
+          items: statsOverview.topAccountsByTxCount,
+          kind: 'count',
+        },
       ]
     : [];
 
   const isNullAddress = (addr?: string | null) => addr === NULL_ACCOUNT_ADDRESS;
+  const formatAccountLabel = (item: { address: string; name?: string }) =>
+    item.name ? item.name : shortenValue(item.address, 6, 4);
   const isAssetEvent = (entry: XqloreTxIndexEntry) => {
     if (!entry.type.includes('ASSET')) return false;
     if (entry.type === 'TRANSFER_ASSET' && Number(entry.assetId) === 0) return false;
@@ -260,6 +275,31 @@ const XqloreStatsPage = () => {
       .slice(0, MAX_TOP_ACCOUNTS);
 
   const aggregateEntries = (entries: XqloreTxIndexEntry[]) => {
+    const resolveAtAddress = (entry: XqloreTxIndexEntry) => {
+      const tx = entry.tx && typeof entry.tx === 'object' ? entry.tx : null;
+      const raw =
+        typeof tx?.atAddress === 'string'
+          ? tx.atAddress.trim()
+          : typeof tx?.aTAddress === 'string'
+            ? tx.aTAddress.trim()
+            : '';
+      return raw || undefined;
+    };
+    const atCreatorMap = new Map<string, string>();
+    const atAddresses = new Set<string>();
+    entries.forEach((entry) => {
+      const atAddress = resolveAtAddress(entry);
+      if (!atAddress) return;
+      atAddresses.add(atAddress);
+      if (entry.type === 'DEPLOY_AT' && entry.creatorAddress) {
+        atCreatorMap.set(atAddress, entry.creatorAddress);
+      }
+    });
+    const isAtAddress = (addr?: string | null) => (addr ? atAddresses.has(addr) : false);
+    const isOwnAt = (addr?: string | null, atAddress?: string) => {
+      if (!addr || !atAddress) return false;
+      return atCreatorMap.get(atAddress) === addr;
+    };
     const txCountMap = new Map<string, AccountCount>();
     const incomingQortMap = new Map<string, AccountAmount>();
     const boughtQortMap = new Map<string, AccountAmount>();
@@ -292,13 +332,25 @@ const XqloreStatsPage = () => {
           entry.tx && typeof entry.tx === 'object' && typeof entry.tx.recipientName === 'string'
             ? entry.tx.recipientName
             : undefined;
-        addAmount(incomingQortMap, entry.recipient, amount, recipientName);
-        addCount(consolidatedQortMap, entry.recipient, 1, recipientName);
+        const atAddress = entry.type === 'AT' ? resolveAtAddress(entry) : undefined;
+        const isSelfAt = entry.type === 'AT' && isOwnAt(entry.recipient, atAddress);
+        if (!isSelfAt) {
+          addAmount(incomingQortMap, entry.recipient, amount, recipientName);
+          addCount(consolidatedQortMap, entry.recipient, 1, recipientName);
+        }
         if (entry.type === 'AT') {
-          addAmount(boughtQortMap, entry.recipient, amount, recipientName);
+          if (!isSelfAt) {
+            addAmount(boughtQortMap, entry.recipient, amount, recipientName);
+          }
         }
       }
-      if (amount > 0 && entry.type === 'AT' && entry.creatorAddress) {
+      if (
+        amount > 0 &&
+        entry.creatorAddress &&
+        entry.recipient &&
+        entry.type !== 'AT' &&
+        isAtAddress(entry.recipient)
+      ) {
         addAmount(soldQortMap, entry.creatorAddress, amount, entry.creatorName);
       }
     });
@@ -484,9 +536,7 @@ const XqloreStatsPage = () => {
         return { start, end };
       };
       const normalizedName = (name?: string) => String(name || '').toLowerCase();
-      const ownHits = hits.filter(
-        (hit) => normalizedName(hit.name) === normalizedName(activeName)
-      );
+      const ownHits = hits.filter((hit) => normalizedName(hit.name) === normalizedName(activeName));
       if (!ownHits.length) {
         await alert(
           'No index batches found for the active name. Rebuild skipped to avoid duplicating other publishers.',
@@ -652,6 +702,157 @@ const XqloreStatsPage = () => {
   useEffect(() => {
     void loadOverview();
   }, [loadOverview]);
+
+  const nameLookup = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!statsOverview) return map;
+    const collect = (items?: Array<{ address: string; name?: string }>) => {
+      (items ?? []).forEach((item) => {
+        if (!item?.address || !item?.name) return;
+        if (!map.has(item.address)) map.set(item.address, item.name);
+      });
+    };
+    collect(statsOverview.topAccountsByIncomingQort);
+    collect(statsOverview.topAccountsBySoldQort);
+    collect(statsOverview.topAccountsByBoughtQort);
+    collect(statsOverview.topAccountsByConsolidatedQort);
+    collect(statsOverview.topAccountsByTxCount);
+    collect(statsOverview.topAccountsByQdnPublishes);
+    collect(statsOverview.topAccountsByAssetEvents);
+    return map;
+  }, [statsOverview]);
+
+  useEffect(() => {
+    let active = true;
+    const limiter = pLimit(3);
+    setMintedLoading(true);
+    const load = async () => {
+      const minterSet = new Set<string>();
+      let offset = 0;
+      const pageSize = 1000;
+      while (true) {
+        const params = new URLSearchParams({
+          limit: String(pageSize),
+          reverse: 'true',
+          offset: String(offset),
+        });
+        const res = await fetch(`/addresses/rewardshares?${params.toString()}`, {
+          headers: { accept: 'application/json' },
+        });
+        if (!res.ok) break;
+        const rows = await res.json();
+        if (!Array.isArray(rows) || rows.length === 0) break;
+        rows.forEach((row) => {
+          const mintingAccount = String(
+            row?.mintingAccount ?? row?.mintingAddress ?? row?.mintingAccountAddress ?? ''
+          ).trim();
+          if (!mintingAccount || isNullAddress(mintingAccount)) return;
+          const recipient = String(
+            row?.recipient ?? row?.recipientAddress ?? row?.recipientAccount ?? ''
+          ).trim();
+          const share = Number(
+            row?.rewardSharePercent ?? row?.rewardShareRatio ?? row?.sharePercent ?? 0
+          );
+          const matchesRecipient = recipient ? recipient === mintingAccount : true;
+          const matchesShare = Number.isFinite(share) ? share === 0 : true;
+          if (matchesRecipient && matchesShare) {
+            minterSet.add(mintingAccount);
+          }
+        });
+        if (rows.length < pageSize) break;
+        offset += pageSize;
+      }
+
+      if (!minterSet.size) {
+        setMintedLeaders([]);
+        return;
+      }
+
+      const minters = Array.from(minterSet);
+      const results = await Promise.all(
+        minters.map((address) =>
+          limiter(async () => {
+            const cached = mintedCacheRef.current.get(address);
+            if (typeof cached === 'number') {
+              return { address, count: cached, name: nameLookup.get(address) };
+            }
+            try {
+              const res = await fetch(`/addresses/${address}`, {
+                headers: { accept: 'application/json' },
+              });
+              if (!res.ok) throw new Error('Failed to load address data');
+              const data = await res.json();
+              const blocks = Number(data?.blocksMinted ?? 0) || 0;
+              mintedCacheRef.current.set(address, blocks);
+              return { address, count: blocks, name: nameLookup.get(address) };
+            } catch {
+              mintedCacheRef.current.set(address, 0);
+              return { address, count: 0, name: nameLookup.get(address) };
+            }
+          })
+        )
+      );
+      if (!active) return;
+      const leaders = results
+        .filter((item) => item.count > 0)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, MAX_TOP_ACCOUNTS);
+      setMintedLeaders(leaders);
+    };
+    void load().finally(() => {
+      if (active) setMintedLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [nameLookup]);
+
+  useEffect(() => {
+    let active = true;
+    setQortAccountsLoading(true);
+    const load = async () => {
+      let total = 0;
+      let offset = 0;
+      const pageSize = 5000;
+      while (true) {
+        const params = new URLSearchParams({
+          assetid: '0',
+          ordering: 'ASSET_BALANCE_ACCOUNT',
+          excludeZero: 'true',
+          limit: String(pageSize),
+          reverse: 'true',
+          offset: String(offset),
+        });
+        const res = await fetch(`/assets/balances?${params.toString()}`, {
+          headers: { accept: 'application/json' },
+        });
+        if (!res.ok) break;
+        const rows = await res.json();
+        if (!Array.isArray(rows) || rows.length === 0) break;
+        let belowThreshold = false;
+        rows.forEach((row) => {
+          const balance = Number(
+            row?.balance ?? row?.amount ?? row?.confirmedBalance ?? row?.confirmed
+          );
+          if (!Number.isFinite(balance)) return;
+          if (balance >= 25) {
+            total += 1;
+          } else {
+            belowThreshold = true;
+          }
+        });
+        if (belowThreshold || rows.length < pageSize) break;
+        offset += pageSize;
+      }
+      if (active) setQortAccountsOver25(total);
+    };
+    void load().finally(() => {
+      if (active) setQortAccountsLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const buildIndex = useCallback(async () => {
     setLoading(true);
@@ -973,14 +1174,65 @@ const XqloreStatsPage = () => {
                 </Button>
               </Stack>
             </Stack>
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' },
+                gap: 2,
+              }}
+            >
+              {[
+                {
+                  label: 'QDN publishes',
+                  value: longStats.arbitrary,
+                  accent: theme.palette.info.main,
+                },
+                {
+                  label: 'Asset events',
+                  value: longStats.assets,
+                  accent: theme.palette.warning.main,
+                },
+                {
+                  label: 'Indexed entries',
+                  value: longStats.count,
+                  accent: theme.palette.success.main,
+                },
+                {
+                  label: 'accounts with >25 QORT',
+                  value: qortAccountsOver25 ?? 0,
+                  accent: theme.palette.primary.main,
+                  loading: qortAccountsLoading,
+                },
+              ].map((item) => (
+                <Paper
+                  key={item.label}
+                  elevation={0}
+                  sx={{
+                    p: 2,
+                    borderRadius: 2,
+                    border: `1px solid ${alpha(item.accent, 0.35)}`,
+                    background: `linear-gradient(140deg, ${alpha(
+                      item.accent,
+                      0.12
+                    )} 0%, ${alpha(theme.palette.background.paper, 0.9)} 80%)`,
+                  }}
+                >
+                  <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 0.6 }}>
+                    {item.label}
+                  </Typography>
+                  {item.loading ? (
+                    <Typography variant="body2" color="text.secondary">
+                      Scanning...
+                    </Typography>
+                  ) : (
+                    <Typography variant="h5" sx={{ fontWeight: 700 }}>
+                      {item.value.toLocaleString()}
+                    </Typography>
+                  )}
+                </Paper>
+              ))}
+            </Box>
             <Stack direction="row" spacing={1} flexWrap="wrap">
-              <Chip
-                label={`Indexed entries: ${longStats.count}`}
-                variant="outlined"
-                color={statsOverview ? 'success' : 'default'}
-              />
-              <Chip label={`Asset events: ${longStats.assets}`} variant="outlined" />
-              <Chip label={`QDN publishes: ${longStats.arbitrary}`} variant="outlined" />
               {statsOverview?.blockStart && statsOverview?.blockEnd && (
                 <Chip
                   label={`Aggregate blocks ${statsOverview.blockStart}-${statsOverview.blockEnd}`}
@@ -996,148 +1248,160 @@ const XqloreStatsPage = () => {
                 />
               )}
             </Stack>
+            <Stack direction="row" spacing={1} flexWrap="wrap">
+              <Button
+                variant={showIndexTools ? 'contained' : 'outlined'}
+                onClick={() => setShowIndexTools((prev) => !prev)}
+              >
+                Index tools
+              </Button>
+            </Stack>
           </Stack>
         </Paper>
 
-        <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 3, md: 4 } }}>
-          <Stack spacing={2}>
-            <Typography variant="h5" sx={{ fontFamily: 'Orbitron' }}>
-              Publish / update tx index
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Build 25k-block index batches and publish them for long-term visibility (capped at 50k
-              transactions per batch). Ranges start from genesis or continue after the latest
-              published index. Validation checks random signatures and continuity across each batch.
-            </Typography>
-            <Stack
-              direction={{ xs: 'column', md: 'row' }}
-              spacing={2}
-              alignItems={{ md: 'center' }}
-            >
-              <TextField
-                size="small"
-                label="25k batches"
-                type="number"
-                value={batchCount}
-                onChange={(event) => {
-                  const value = Number(event.target.value);
-                  if (!Number.isFinite(value)) return;
-                  const next = Math.max(1, Math.min(MAX_BATCH_COUNT, Math.floor(value)));
-                  setBatchCount(next);
-                }}
-                helperText={`Up to ${MAX_BATCH_COUNT} batches`}
-                sx={{ maxWidth: 200 }}
-              />
-              <ToggleButtonGroup
-                value={includeNames ? 'yes' : 'no'}
-                exclusive
-                onChange={(_, next) => setIncludeNames(next === 'yes')}
-                size="small"
-              >
-                <ToggleButton value="yes">Include names</ToggleButton>
-                <ToggleButton value="no">No names</ToggleButton>
-              </ToggleButtonGroup>
-            </Stack>
-            <Stack direction="row" spacing={1} flexWrap="wrap">
-              <Button variant="contained" onClick={buildIndex} disabled={loading}>
-                {loading ? 'Building...' : 'Build + validate index'}
-              </Button>
-              <Button
-                variant="outlined"
-                onClick={publishIndex}
-                disabled={loading || !validation?.ok}
-              >
-                Publish index
-              </Button>
-              <Button
-                variant="outlined"
-                onClick={rebuildIndexes}
-                disabled={indexRebuildLoading || loading}
-              >
-                {indexRebuildLoading ? 'Rebuilding indexes...' : 'Rebuild index batches'}
-              </Button>
-              <Button
-                variant="outlined"
-                onClick={rebuildStatsOverview}
-                disabled={overviewRebuildLoading || loading}
-              >
-                {overviewRebuildLoading ? 'Rebuilding overview...' : 'Rebuild stats overview'}
-              </Button>
-            </Stack>
-            {statusNote && (
-              <Typography variant="body2" color={validation?.ok ? 'success.main' : 'error.main'}>
-                {statusNote}
+        <Collapse in={showIndexTools} unmountOnExit>
+          <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 3, md: 4 }, mb: 3 }}>
+            <Stack spacing={2}>
+              <Typography variant="h5" sx={{ fontFamily: 'Orbitron' }}>
+                Publish / update tx index
               </Typography>
-            )}
-            {indexRebuildLoading && indexRebuildProgress && (
-              <Box>
-                <Typography variant="caption" color="text.secondary">
-                  {indexRebuildProgress}
+              <Typography variant="body2" color="text.secondary">
+                Build 25k-block index batches and publish them for long-term visibility (capped at
+                50k transactions per batch). Ranges start from genesis or continue after the latest
+                published index. Validation checks random signatures and continuity across each
+                batch.
+              </Typography>
+              <Stack
+                direction={{ xs: 'column', md: 'row' }}
+                spacing={2}
+                alignItems={{ md: 'center' }}
+              >
+                <TextField
+                  size="small"
+                  label="25k batches"
+                  type="number"
+                  value={batchCount}
+                  onChange={(event) => {
+                    const value = Number(event.target.value);
+                    if (!Number.isFinite(value)) return;
+                    const next = Math.max(1, Math.min(MAX_BATCH_COUNT, Math.floor(value)));
+                    setBatchCount(next);
+                  }}
+                  helperText={`Up to ${MAX_BATCH_COUNT} batches`}
+                  sx={{ maxWidth: 200 }}
+                />
+                <ToggleButtonGroup
+                  value={includeNames ? 'yes' : 'no'}
+                  exclusive
+                  onChange={(_, next) => setIncludeNames(next === 'yes')}
+                  size="small"
+                >
+                  <ToggleButton value="yes">Include names</ToggleButton>
+                  <ToggleButton value="no">No names</ToggleButton>
+                </ToggleButtonGroup>
+              </Stack>
+              <Stack direction="row" spacing={1} flexWrap="wrap">
+                <Button variant="contained" onClick={buildIndex} disabled={loading}>
+                  {loading ? 'Building...' : 'Build + validate index'}
+                </Button>
+                <Button
+                  variant="outlined"
+                  onClick={publishIndex}
+                  disabled={loading || !validation?.ok}
+                >
+                  Publish index
+                </Button>
+                <Button
+                  variant="outlined"
+                  onClick={rebuildIndexes}
+                  disabled={indexRebuildLoading || loading}
+                >
+                  {indexRebuildLoading ? 'Rebuilding indexes...' : 'Rebuild index batches'}
+                </Button>
+                <Button
+                  variant="outlined"
+                  onClick={rebuildStatsOverview}
+                  disabled={overviewRebuildLoading || loading}
+                >
+                  {overviewRebuildLoading ? 'Rebuilding overview...' : 'Rebuild stats overview'}
+                </Button>
+              </Stack>
+              {statusNote && (
+                <Typography variant="body2" color={validation?.ok ? 'success.main' : 'error.main'}>
+                  {statusNote}
                 </Typography>
-                <LinearProgress sx={{ mt: 1 }} />
-              </Box>
-            )}
-            {overviewRebuildLoading && overviewProgress && (
-              <Box>
-                <Typography variant="caption" color="text.secondary">
-                  {overviewProgress}
-                </Typography>
-                <LinearProgress sx={{ mt: 1 }} />
-              </Box>
-            )}
-            {loading && progress && (
-              <Box>
-                <Stack direction="row" spacing={1} justifyContent="space-between">
+              )}
+              {indexRebuildLoading && indexRebuildProgress && (
+                <Box>
                   <Typography variant="caption" color="text.secondary">
-                    {progress.phase}
-                    {progress.batch ? ` · ${progress.batch}` : ''}
+                    {indexRebuildProgress}
                   </Typography>
+                  <LinearProgress sx={{ mt: 1 }} />
+                </Box>
+              )}
+              {overviewRebuildLoading && overviewProgress && (
+                <Box>
                   <Typography variant="caption" color="text.secondary">
-                    {progress.entries.toLocaleString()} tx · {progress.pages} pages
+                    {overviewProgress}
                   </Typography>
-                </Stack>
-                <LinearProgress sx={{ mt: 1 }} />
-              </Box>
-            )}
-            {validation && (
-              <Box>
-                <Divider sx={{ my: 2 }} />
-                <Stack spacing={1}>
-                  {validation.errors.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" color="error">
-                        Validation errors
-                      </Typography>
-                      {validation.errors.map((err, idx) => (
-                        <Typography key={`${err}-${idx}`} variant="body2" color="error">
-                          {err}
-                        </Typography>
-                      ))}
-                    </Box>
-                  )}
-                  {validation.warnings.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" color="warning.main">
-                        Warnings
-                      </Typography>
-                      {validation.warnings.map((warn, idx) => (
-                        <Typography key={`${warn}-${idx}`} variant="body2" color="warning.main">
-                          {warn}
-                        </Typography>
-                      ))}
-                    </Box>
-                  )}
-                  {blockStart && blockEnd && batches.length > 0 && (
+                  <LinearProgress sx={{ mt: 1 }} />
+                </Box>
+              )}
+              {loading && progress && (
+                <Box>
+                  <Stack direction="row" spacing={1} justifyContent="space-between">
                     <Typography variant="caption" color="text.secondary">
-                      Built {batches.reduce((sum, batch) => sum + batch.entries.length, 0)} entries
-                      across {batches.length} batch(es) for blocks {blockStart}-{blockEnd}.
+                      {progress.phase}
+                      {progress.batch ? ` · ${progress.batch}` : ''}
                     </Typography>
-                  )}
-                </Stack>
-              </Box>
-            )}
-          </Stack>
-        </Paper>
+                    <Typography variant="caption" color="text.secondary">
+                      {progress.entries.toLocaleString()} tx · {progress.pages} pages
+                    </Typography>
+                  </Stack>
+                  <LinearProgress sx={{ mt: 1 }} />
+                </Box>
+              )}
+              {validation && (
+                <Box>
+                  <Divider sx={{ my: 2 }} />
+                  <Stack spacing={1}>
+                    {validation.errors.length > 0 && (
+                      <Box>
+                        <Typography variant="subtitle2" color="error">
+                          Validation errors
+                        </Typography>
+                        {validation.errors.map((err, idx) => (
+                          <Typography key={`${err}-${idx}`} variant="body2" color="error">
+                            {err}
+                          </Typography>
+                        ))}
+                      </Box>
+                    )}
+                    {validation.warnings.length > 0 && (
+                      <Box>
+                        <Typography variant="subtitle2" color="warning.main">
+                          Warnings
+                        </Typography>
+                        {validation.warnings.map((warn, idx) => (
+                          <Typography key={`${warn}-${idx}`} variant="body2" color="warning.main">
+                            {warn}
+                          </Typography>
+                        ))}
+                      </Box>
+                    )}
+                    {blockStart && blockEnd && batches.length > 0 && (
+                      <Typography variant="caption" color="text.secondary">
+                        Built {batches.reduce((sum, batch) => sum + batch.entries.length, 0)}{' '}
+                        entries across {batches.length} batch(es) for blocks {blockStart}-{blockEnd}
+                        .
+                      </Typography>
+                    )}
+                  </Stack>
+                </Box>
+              )}
+            </Stack>
+          </Paper>
+        </Collapse>
 
         <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 3, md: 4 }, mt: 3 }}>
           <Stack spacing={2}>
@@ -1146,8 +1410,7 @@ const XqloreStatsPage = () => {
             </Typography>
             <Typography variant="body2" color="text.secondary">
               Aggregated metrics across all published index batches with QORT flow, QDN, and asset
-              activity leaderboards. This summary will expand over time (most minted blocks and
-              other signals are coming soon).
+              activity leaderboards, including minted blocks pulled from address snapshots.
             </Typography>
             {!statsOverview ? (
               <Typography variant="body2" color="text.secondary">
@@ -1193,7 +1456,7 @@ const XqloreStatsPage = () => {
                                   to={`/xqlore/accounts/${item.address}`}
                                   underline="hover"
                                 >
-                                  #{idx + 1} - {item.name || item.address}
+                                  #{idx + 1} - {formatAccountLabel(item)}
                                 </MuiLink>
                                 <Typography variant="body2">
                                   {formatNumber(item.amount)} QORT
@@ -1212,7 +1475,7 @@ const XqloreStatsPage = () => {
                                   to={`/xqlore/accounts/${item.address}`}
                                   underline="hover"
                                 >
-                                  #{idx + 1} - {item.name || item.address}
+                                  #{idx + 1} - {formatAccountLabel(item)}
                                 </MuiLink>
                                 <Typography variant="body2">{formatNumber(item.count)}</Typography>
                               </Stack>
@@ -1232,9 +1495,35 @@ const XqloreStatsPage = () => {
                   <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
                     Most minted blocks
                   </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Coming soon.
-                  </Typography>
+                  {mintedLoading ? (
+                    <Typography variant="body2" color="text.secondary">
+                      Loading minted block counts...
+                    </Typography>
+                  ) : mintedLeaders && mintedLeaders.length > 0 ? (
+                    <Stack spacing={1}>
+                      {mintedLeaders.slice(0, MAX_TOP_ACCOUNTS).map((item, idx) => (
+                        <Stack
+                          key={item.address}
+                          direction="row"
+                          justifyContent="space-between"
+                          alignItems="center"
+                        >
+                          <MuiLink
+                            component={Link}
+                            to={`/xqlore/accounts/${item.address}`}
+                            underline="hover"
+                          >
+                            #{idx + 1} - {formatAccountLabel(item)}
+                          </MuiLink>
+                          <Typography variant="body2">{formatNumber(item.count)}</Typography>
+                        </Stack>
+                      ))}
+                    </Stack>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      No minted block data yet.
+                    </Typography>
+                  )}
                 </Paper>
               </Box>
             )}

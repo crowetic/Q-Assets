@@ -388,9 +388,14 @@ export default function QDeckProjects() {
             />
           </Stack>
         </Stack>
-        <Button variant="contained" onClick={() => setOpen(true)}>
-          New project
-        </Button>
+        <Stack direction="row" spacing={1}>
+          <Button variant="outlined" component={RouterLink} to="/manage/qdeck-project-permissions">
+            Manage Permissions
+          </Button>
+          <Button variant="contained" onClick={() => setOpen(true)}>
+            New project
+          </Button>
+        </Stack>
       </Stack>
 
       {!doc?.projects?.length ? (
