@@ -290,7 +290,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (stored && stored !== publishMode) {
       setPublishMode(stored);
     }
-  }, [board?.boardId, publishMode]);
+  }, [board?.boardId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;

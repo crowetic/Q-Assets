@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0 - 2026-01-21
+
+- Corrected the Xqlore stats aggregation so AT deposits are treated as sold QORT, AT payouts only count as buys for non-owner accounts, and refunds no longer skew the leaderboards.
+- Removed the minted-block leaderboard from the Xqlore stats overview pending a rewrite of that feature.
+
 ## 0.8.9 - 2026-01-20
 
 - Added a board rename action to the Q-Deck board menu.
@@ -20,6 +25,9 @@
 - Tucked Xqlore index tools behind an on-demand toggle and refreshed the stats layout.
 - Renamed the consolidated QORT leaderboard to clarify it is a consolidation transaction count.
 - Updated Xqlore incoming/bought QORT to treat AT payouts to their deployers as refunds, not buys.
+- Updated Xqlore buy/sell logic to key ACCT trades off DEPLOY_AT metadata so sold QORT uses deploy amounts and excludes refunded ATs.
+- Guarded Q-Deck card minimize state updates to prevent render loops when opening boards.
+- Prevented publish-mode preference syncing from re-triggering state updates when toggling queued publishing.
 - Fixed Q-Deck cards index typing to include card metadata fields.
 
 ## 0.8.8 - 2026-01-19

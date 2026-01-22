@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Button,
@@ -95,12 +95,8 @@ const XqloreStatsPage = () => {
   const [indexRebuildLoading, setIndexRebuildLoading] = useState(false);
   const [indexRebuildProgress, setIndexRebuildProgress] = useState('');
   const [showIndexTools, setShowIndexTools] = useState(false);
-  const [mintedLeaders, setMintedLeaders] = useState<AccountCount[] | null>(null);
-  const [mintedLoading, setMintedLoading] = useState(false);
   const [qortAccountsOver25, setQortAccountsOver25] = useState<number | null>(null);
   const [qortAccountsLoading, setQortAccountsLoading] = useState(false);
-  const mintedCacheRef = useRef(new Map<string, number>());
-
   const surfaceSx = {
     borderRadius: '24px',
     border: `1px solid ${alpha(theme.palette.divider, 0.8)}`,
@@ -286,20 +282,38 @@ const XqloreStatsPage = () => {
       return raw || undefined;
     };
     const atCreatorMap = new Map<string, string>();
-    const atAddresses = new Set<string>();
+    const atTypeMap = new Map<string, string>();
+    const atRefunded = new Set<string>();
     entries.forEach((entry) => {
       const atAddress = resolveAtAddress(entry);
       if (!atAddress) return;
-      atAddresses.add(atAddress);
       if (entry.type === 'DEPLOY_AT' && entry.creatorAddress) {
         atCreatorMap.set(atAddress, entry.creatorAddress);
+        const tx = entry.tx && typeof entry.tx === 'object' ? entry.tx : null;
+        const rawType =
+          typeof tx?.aTType === 'string'
+            ? tx.aTType.trim()
+            : typeof tx?.atType === 'string'
+              ? tx.atType.trim()
+              : '';
+        if (rawType) atTypeMap.set(atAddress, rawType.toUpperCase());
       }
     });
-    const isAtAddress = (addr?: string | null) => (addr ? atAddresses.has(addr) : false);
+    entries.forEach((entry) => {
+      if (entry.type !== 'AT' || !entry.recipient) return;
+      const atAddress = resolveAtAddress(entry);
+      if (!atAddress) return;
+      const creator = atCreatorMap.get(atAddress);
+      if (creator && creator === entry.recipient) {
+        atRefunded.add(atAddress);
+      }
+    });
     const isOwnAt = (addr?: string | null, atAddress?: string) => {
       if (!addr || !atAddress) return false;
       return atCreatorMap.get(atAddress) === addr;
     };
+    const isAcctAt = (atAddress?: string) =>
+      atAddress ? atTypeMap.get(atAddress) === 'ACCT' : false;
     const txCountMap = new Map<string, AccountCount>();
     const incomingQortMap = new Map<string, AccountAmount>();
     const boughtQortMap = new Map<string, AccountAmount>();
@@ -327,31 +341,52 @@ const XqloreStatsPage = () => {
         addCount(txCountMap, entry.creatorAddress, 1, entry.creatorName);
       }
       const amount = getQortAmount(entry);
+      const atAddress = resolveAtAddress(entry);
+      if (entry.type === 'DEPLOY_AT' && entry.creatorAddress) {
+        const deployAmount = Number(entry.amount ?? 0) || 0;
+        if (deployAmount > 0 && isAcctAt(atAddress) && !atRefunded.has(atAddress || '')) {
+          addAmount(soldQortMap, entry.creatorAddress, deployAmount, entry.creatorName);
+        }
+      }
+      if (
+        entry.type === 'AT' &&
+        amount > 0 &&
+        entry.creatorAddress &&
+        entry.recipient &&
+        atAddress &&
+        isAcctAt(atAddress) &&
+        entry.recipient === atAddress &&
+        !isOwnAt(entry.creatorAddress, atAddress)
+      ) {
+        addAmount(soldQortMap, entry.creatorAddress, amount, entry.creatorName);
+      }
       if (amount > 0 && entry.recipient) {
         const recipientName =
           entry.tx && typeof entry.tx === 'object' && typeof entry.tx.recipientName === 'string'
             ? entry.tx.recipientName
             : undefined;
-        const atAddress = entry.type === 'AT' ? resolveAtAddress(entry) : undefined;
-        const isSelfAt = entry.type === 'AT' && isOwnAt(entry.recipient, atAddress);
-        if (!isSelfAt) {
+        const isAcctAutomation = isAcctAt(atAddress);
+        const recipientIsOwner = Boolean(entry.recipient && isOwnAt(entry.recipient, atAddress));
+        const recipientIsAtAddress =
+          !!entry.recipient && !!atAddress && entry.recipient === atAddress;
+        const isSelfAt =
+          entry.type === 'AT' &&
+          isAcctAutomation &&
+          recipientIsOwner &&
+          atRefunded.has(atAddress || '');
+        if (!recipientIsAtAddress && !isSelfAt) {
           addAmount(incomingQortMap, entry.recipient, amount, recipientName);
           addCount(consolidatedQortMap, entry.recipient, 1, recipientName);
         }
-        if (entry.type === 'AT') {
-          if (!isSelfAt) {
-            addAmount(boughtQortMap, entry.recipient, amount, recipientName);
-          }
+        if (
+          entry.type === 'AT' &&
+          !recipientIsAtAddress &&
+          !isSelfAt &&
+          isAcctAutomation &&
+          !recipientIsOwner
+        ) {
+          addAmount(boughtQortMap, entry.recipient, amount, recipientName);
         }
-      }
-      if (
-        amount > 0 &&
-        entry.creatorAddress &&
-        entry.recipient &&
-        entry.type !== 'AT' &&
-        isAtAddress(entry.recipient)
-      ) {
-        addAmount(soldQortMap, entry.creatorAddress, amount, entry.creatorName);
       }
     });
 
@@ -702,110 +737,6 @@ const XqloreStatsPage = () => {
   useEffect(() => {
     void loadOverview();
   }, [loadOverview]);
-
-  const nameLookup = useMemo(() => {
-    const map = new Map<string, string>();
-    if (!statsOverview) return map;
-    const collect = (items?: Array<{ address: string; name?: string }>) => {
-      (items ?? []).forEach((item) => {
-        if (!item?.address || !item?.name) return;
-        if (!map.has(item.address)) map.set(item.address, item.name);
-      });
-    };
-    collect(statsOverview.topAccountsByIncomingQort);
-    collect(statsOverview.topAccountsBySoldQort);
-    collect(statsOverview.topAccountsByBoughtQort);
-    collect(statsOverview.topAccountsByConsolidatedQort);
-    collect(statsOverview.topAccountsByTxCount);
-    collect(statsOverview.topAccountsByQdnPublishes);
-    collect(statsOverview.topAccountsByAssetEvents);
-    return map;
-  }, [statsOverview]);
-
-  useEffect(() => {
-    let active = true;
-    const limiter = pLimit(3);
-    setMintedLoading(true);
-    const load = async () => {
-      const minterSet = new Set<string>();
-      let offset = 0;
-      const pageSize = 1000;
-      while (true) {
-        const params = new URLSearchParams({
-          limit: String(pageSize),
-          reverse: 'true',
-          offset: String(offset),
-        });
-        const res = await fetch(`/addresses/rewardshares?${params.toString()}`, {
-          headers: { accept: 'application/json' },
-        });
-        if (!res.ok) break;
-        const rows = await res.json();
-        if (!Array.isArray(rows) || rows.length === 0) break;
-        rows.forEach((row) => {
-          const mintingAccount = String(
-            row?.mintingAccount ?? row?.mintingAddress ?? row?.mintingAccountAddress ?? ''
-          ).trim();
-          if (!mintingAccount || isNullAddress(mintingAccount)) return;
-          const recipient = String(
-            row?.recipient ?? row?.recipientAddress ?? row?.recipientAccount ?? ''
-          ).trim();
-          const share = Number(
-            row?.rewardSharePercent ?? row?.rewardShareRatio ?? row?.sharePercent ?? 0
-          );
-          const matchesRecipient = recipient ? recipient === mintingAccount : true;
-          const matchesShare = Number.isFinite(share) ? share === 0 : true;
-          if (matchesRecipient && matchesShare) {
-            minterSet.add(mintingAccount);
-          }
-        });
-        if (rows.length < pageSize) break;
-        offset += pageSize;
-      }
-
-      if (!minterSet.size) {
-        setMintedLeaders([]);
-        return;
-      }
-
-      const minters = Array.from(minterSet);
-      const results = await Promise.all(
-        minters.map((address) =>
-          limiter(async () => {
-            const cached = mintedCacheRef.current.get(address);
-            if (typeof cached === 'number') {
-              return { address, count: cached, name: nameLookup.get(address) };
-            }
-            try {
-              const res = await fetch(`/addresses/${address}`, {
-                headers: { accept: 'application/json' },
-              });
-              if (!res.ok) throw new Error('Failed to load address data');
-              const data = await res.json();
-              const blocks = Number(data?.blocksMinted ?? 0) || 0;
-              mintedCacheRef.current.set(address, blocks);
-              return { address, count: blocks, name: nameLookup.get(address) };
-            } catch {
-              mintedCacheRef.current.set(address, 0);
-              return { address, count: 0, name: nameLookup.get(address) };
-            }
-          })
-        )
-      );
-      if (!active) return;
-      const leaders = results
-        .filter((item) => item.count > 0)
-        .sort((a, b) => b.count - a.count)
-        .slice(0, MAX_TOP_ACCOUNTS);
-      setMintedLeaders(leaders);
-    };
-    void load().finally(() => {
-      if (active) setMintedLoading(false);
-    });
-    return () => {
-      active = false;
-    };
-  }, [nameLookup]);
 
   useEffect(() => {
     let active = true;
@@ -1410,7 +1341,7 @@ const XqloreStatsPage = () => {
             </Typography>
             <Typography variant="body2" color="text.secondary">
               Aggregated metrics across all published index batches with QORT flow, QDN, and asset
-              activity leaderboards, including minted blocks pulled from address snapshots.
+              activity leaderboards.
             </Typography>
             {!statsOverview ? (
               <Typography variant="body2" color="text.secondary">
@@ -1484,47 +1415,6 @@ const XqloreStatsPage = () => {
                     )}
                   </Paper>
                 ))}
-                <Paper
-                  elevation={0}
-                  sx={{
-                    p: 2,
-                    borderRadius: 2,
-                    border: `1px solid ${alpha(theme.palette.divider, 0.5)}`,
-                  }}
-                >
-                  <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
-                    Most minted blocks
-                  </Typography>
-                  {mintedLoading ? (
-                    <Typography variant="body2" color="text.secondary">
-                      Loading minted block counts...
-                    </Typography>
-                  ) : mintedLeaders && mintedLeaders.length > 0 ? (
-                    <Stack spacing={1}>
-                      {mintedLeaders.slice(0, MAX_TOP_ACCOUNTS).map((item, idx) => (
-                        <Stack
-                          key={item.address}
-                          direction="row"
-                          justifyContent="space-between"
-                          alignItems="center"
-                        >
-                          <MuiLink
-                            component={Link}
-                            to={`/xqlore/accounts/${item.address}`}
-                            underline="hover"
-                          >
-                            #{idx + 1} - {formatAccountLabel(item)}
-                          </MuiLink>
-                          <Typography variant="body2">{formatNumber(item.count)}</Typography>
-                        </Stack>
-                      ))}
-                    </Stack>
-                  ) : (
-                    <Typography variant="body2" color="text.secondary">
-                      No minted block data yet.
-                    </Typography>
-                  )}
-                </Paper>
               </Box>
             )}
           </Stack>

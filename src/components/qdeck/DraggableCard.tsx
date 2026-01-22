@@ -81,12 +81,9 @@ const DraggableCardInner: FC<DraggableProps> = ({
   const [minimized, setMinimized] = useState(false);
 
   useEffect(() => {
-    if (forceMinimized !== undefined) {
-      setMinimized(forceMinimized);
-      return;
-    }
-    const collapsed = isCardCollapsed(cardId, card);
-    setMinimized(Boolean(collapsed));
+    const next =
+      forceMinimized !== undefined ? forceMinimized : Boolean(isCardCollapsed(cardId, card));
+    setMinimized((prev) => (prev === next ? prev : next));
   }, [forceMinimized, cardId, card, isCardCollapsed]);
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
