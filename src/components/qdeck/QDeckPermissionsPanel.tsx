@@ -422,7 +422,7 @@ export default function QDeckPermissionsPanel() {
           entry.visibility ?? 'public'
         );
         if (!resolved) throw new Error('Failed to load board for repair');
-        await repairCardsIndex(resolved.createdBy, resolved);
+        await repairCardsIndex(myName, resolved);
         await loadCardsForBoard(entry);
         setRepairedBoardId(entry.boardId);
       } catch (e: any) {

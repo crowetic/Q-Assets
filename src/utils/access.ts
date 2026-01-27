@@ -30,7 +30,10 @@ export type WikiMenuItem = { id: string; title: string; tags?: string[] };
 
 /* --------------------------- Small address cache ------------------------ */
 const CACHE_TTL_MS = 60_000;
-let _addrCache: { memberAddrs: Set<string>; adminAddrs: Set<string>; at: number } | null = null;
+const _addrCache = new Map<
+  number,
+  { memberAddrs: Set<string>; adminAddrs: Set<string>; at: number }
+>();
 const NAMES_CACHE_TTL_MS = 120_000;
 const _namesCache = new Map<string, { at: number; data: Array<{ name: string; role: Role }> }>();
 
@@ -78,8 +81,10 @@ export async function getGroupAddressSets(): Promise<{
   adminAddrs: Set<string>;
 }> {
   const now = Date.now();
-  if (_addrCache && now - _addrCache.at < CACHE_TTL_MS) {
-    return { memberAddrs: _addrCache.memberAddrs, adminAddrs: _addrCache.adminAddrs };
+  const cacheKey = WIKI_GROUP_ID;
+  const cached = _addrCache.get(cacheKey);
+  if (cached && now - cached.at < CACHE_TTL_MS) {
+    return { memberAddrs: cached.memberAddrs, adminAddrs: cached.adminAddrs };
   }
 
   try {
@@ -87,7 +92,7 @@ export async function getGroupAddressSets(): Promise<{
     const memberAddrs = new Set(membersRaw.map((r) => normAddr(r.member || r.address)));
     const adminAddrs = new Set(adminsRaw.map((r) => normAddr(r.member || r.address)));
     for (const a of adminAddrs) memberAddrs.add(a); // admins are members too
-    _addrCache = { memberAddrs, adminAddrs, at: now };
+    _addrCache.set(cacheKey, { memberAddrs, adminAddrs, at: now });
     return { memberAddrs, adminAddrs };
   } catch (e) {
     console.error('getGroupAddressSets error:', e);
@@ -100,8 +105,10 @@ export async function getGroupAddressSetsById(groupId: number): Promise<{
   adminAddrs: Set<string>;
 }> {
   const now = Date.now();
-  if (_addrCache && now - _addrCache.at < CACHE_TTL_MS) {
-    return { memberAddrs: _addrCache.memberAddrs, adminAddrs: _addrCache.adminAddrs };
+  const cacheKey = groupId;
+  const cached = _addrCache.get(cacheKey);
+  if (cached && now - cached.at < CACHE_TTL_MS) {
+    return { memberAddrs: cached.memberAddrs, adminAddrs: cached.adminAddrs };
   }
 
   try {
@@ -112,7 +119,7 @@ export async function getGroupAddressSetsById(groupId: number): Promise<{
     const memberAddrs = new Set(membersRaw.map((r) => normAddr(r.member || r.address)));
     const adminAddrs = new Set(adminsRaw.map((r) => normAddr(r.member || r.address)));
     for (const a of adminAddrs) memberAddrs.add(a); // admins are members too
-    _addrCache = { memberAddrs, adminAddrs, at: now };
+    _addrCache.set(cacheKey, { memberAddrs, adminAddrs, at: now });
     return { memberAddrs, adminAddrs };
   } catch (e) {
     console.error('getGroupAddressSets error:', e);

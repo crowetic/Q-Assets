@@ -7,6 +7,7 @@ Q-Assets is an asset issuance, management, trading, and information Q-App for th
 - Browse announcements, asset news, and promotions from the home page.
 - Load the news feed on demand so the home page stays snappy.
 - Join the Q-Assets notifications group from the prompt below the header to receive updates.
+- Send Q-Mail notifications in one queued publish to reduce confirmation prompts for large updates.
 
 ## QDN Data Explorer
 

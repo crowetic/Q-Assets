@@ -15,7 +15,7 @@ import { Link } from 'react-router-dom';
 import { useAlert } from '../../components/alerts';
 import { useActiveAccountName } from '../../hooks/useActiveAccountName';
 import { useQdnBatchPublisher } from '../../utils/useQdnBatchPublisher';
-import { isAddressAdminInManagementGroup } from '../../utils/access';
+import { getUserRoles, userHasPermission } from '../../utils/roles';
 import {
   buildAppIndexHeadResource,
   buildAppIndexPublishResources,
@@ -200,13 +200,13 @@ const XqloreAdminPage = () => {
 
   useEffect(() => {
     let active = true;
-    if (!address) {
-      setIsAdmin(false);
-      return undefined;
-    }
     (async () => {
-      const ok = await isAddressAdminInManagementGroup(address);
-      if (active) setIsAdmin(ok);
+      try {
+        const roles = await getUserRoles();
+        if (active) setIsAdmin(userHasPermission(roles, 'permissions.manage.manifest'));
+      } catch {
+        if (active) setIsAdmin(false);
+      }
     })();
     return () => {
       active = false;

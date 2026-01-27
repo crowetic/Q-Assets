@@ -296,12 +296,15 @@ export async function repairCardsIndex(
     });
   }
 
-  const current = (await loadCardsIndex(issuerName, board)) ?? {
-    _type: 'QDECK_CARDS_INDEX' as const,
-    version: 1 as const,
-    boardId: board.boardId,
-    cardIds: [],
-    entries: [],
+  const issuerHints = [issuerName, board.createdBy].filter(Boolean) as string[];
+  const current =
+    (await loadNewestCardsIndex(board, { issuerHints })) ??
+    (await loadCardsIndex(issuerName, board)) ?? {
+      _type: 'QDECK_CARDS_INDEX' as const,
+      version: 1 as const,
+      boardId: board.boardId,
+      cardIds: [],
+      entries: [],
     archivedIds: [],
     updatedAt: 0,
     seq: 0,

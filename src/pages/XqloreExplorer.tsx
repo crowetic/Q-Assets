@@ -27,7 +27,7 @@ import XqloreTxDetailsDialog from '../components/xqlore/XqloreTxDetailsDialog';
 import { useXqloreAppIndex } from '../hooks/useXqloreAppIndex';
 import { useXqloreTxIndex } from '../hooks/useXqloreTxIndex';
 import { XQLORE_TX_TYPES } from '../constants/xqloreTxTypes';
-import { isAddressAdminInManagementGroup } from '../utils/access';
+import { getUserRoles, userHasPermission } from '../utils/roles';
 import { fetchCurrentBlockHeight } from '../utils/blockHeight';
 import { getTransactionInfoBySignature } from '../utils/qortalApi';
 import {
@@ -116,13 +116,13 @@ const XqloreExplorer = () => {
 
   useEffect(() => {
     let active = true;
-    if (!address) {
-      setIsAdmin(false);
-      return undefined;
-    }
     (async () => {
-      const ok = await isAddressAdminInManagementGroup(address);
-      if (active) setIsAdmin(ok);
+      try {
+        const roles = await getUserRoles();
+        if (active) setIsAdmin(userHasPermission(roles, 'permissions.manage.manifest'));
+      } catch {
+        if (active) setIsAdmin(false);
+      }
     })();
     return () => {
       active = false;

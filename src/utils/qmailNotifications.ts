@@ -24,7 +24,6 @@ function buildIdentifier(recipientName: string, address: string) {
   return `${QMAIL_IDENTIFIER_PREFIX}${safeName}_${suffix}_mail_${rand}`;
 }
 
-const DEFAULT_BATCH = 50;
 const DEFAULT_THROTTLE_DELAY = 60_000;
 
 export async function sendQmailNotifications(params: SendQmailParams) {
@@ -37,7 +36,8 @@ export async function sendQmailNotifications(params: SendQmailParams) {
   );
   if (!validRecipients.length) return;
 
-  const batchSize = params.batchSize && params.batchSize > 0 ? params.batchSize : DEFAULT_BATCH;
+  const batchSize =
+    typeof params.batchSize === 'number' && params.batchSize > 0 ? params.batchSize : undefined;
   const total = validRecipients.length;
   const startIndex = Math.min(total, Math.max(0, params.resumeFrom ?? 0));
   if (startIndex >= total) {

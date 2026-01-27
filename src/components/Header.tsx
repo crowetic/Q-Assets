@@ -193,8 +193,9 @@ const Header = () => {
         flexWrap: 'wrap',
         gap: '0.5rem',
         alignItems: 'center',
-        justifyContent: { xs: 'flex-end', md: 'flex-end' },
+        justifyContent: { xs: 'flex-start', md: 'flex-end' },
         minWidth: 0,
+        width: { xs: '100%', md: 'auto' },
       }}
     >
       {utilityButtons.map(({ label, to }) => {
@@ -257,8 +258,9 @@ const Header = () => {
           <Box
             sx={{
               display: 'flex',
-              alignItems: 'center',
-              gap: '0.75rem',
+              alignItems: { xs: 'flex-start', md: 'center' },
+              flexWrap: { xs: 'wrap', md: 'nowrap' },
+              gap: { xs: '0.5rem', md: '0.75rem' },
               minWidth: 0,
             }}
           >
@@ -267,7 +269,9 @@ const Header = () => {
             </Box>
             {/* Manage sits to the right of the logo in compact mode */}
             <LeftButtons size="small" />
-            <Box sx={{ ml: 'auto' }}>{Utilities}</Box>
+            <Box sx={{ ml: { xs: 0, md: 'auto' }, flex: { xs: '1 1 100%', md: '0 1 auto' } }}>
+              {Utilities}
+            </Box>
           </Box>
 
           {/* Row 2: Nav (centered, wraps) */}
@@ -287,15 +291,18 @@ const Header = () => {
           <Box
             sx={{
               display: 'flex',
-              alignItems: 'center',
+              alignItems: { xs: 'flex-start', md: 'center' },
+              flexWrap: { xs: 'wrap', md: 'nowrap' },
               minWidth: 0,
-              gap: 1,
+              gap: { xs: 0.5, md: 1 },
             }}
           >
             <Box sx={{ flex: '0 0 auto' }}>
               <LeftButtons />
             </Box>
-            <Box sx={{ ml: 'auto' }}>{Utilities}</Box>
+            <Box sx={{ ml: { xs: 0, md: 'auto' }, flex: { xs: '1 1 100%', md: '0 1 auto' } }}>
+              {Utilities}
+            </Box>
           </Box>
 
           {/* Centered logo */}
@@ -334,7 +341,7 @@ const ActiveNameSelector = () => {
 
   return (
     <Tooltip title={namesError || 'Active name used for publishing'}>
-      <FormControl size="small" sx={{ minWidth: 170 }}>
+      <FormControl size="small" sx={{ minWidth: { xs: 140, sm: 170 } }}>
         <InputLabel id="active-name-select">Active name</InputLabel>
         <Select
           labelId="active-name-select"

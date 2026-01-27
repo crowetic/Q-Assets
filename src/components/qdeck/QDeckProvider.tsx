@@ -718,14 +718,14 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const repairCardsIndex = useCallback(async () => {
     if (!board) throw new Error('No board loaded');
-    const issuer = board.createdBy || identity.name;
-    if (!issuer) throw new Error('Identity missing for repair');
+    const publisher = identity.name;
+    if (!publisher) throw new Error('Active name required for repair');
     setRepairingIndex(true);
     try {
-      const repairedDoc = await repairCardsIndexDoc(issuer, board);
+      const repairedDoc = await repairCardsIndexDoc(publisher, board);
       setCachedCardsIndexDoc(board.boardId, repairedDoc);
       await alert('Cards index repaired.', 'Repair index', { severity: 'success' });
-      await track(loadCardsForBoard(issuer, board), `qdeck:repair:${board.boardId}`);
+      await track(loadCardsForBoard(publisher, board), `qdeck:repair:${board.boardId}`);
     } catch (e: any) {
       await alert(e?.message || 'Failed to repair cards index', 'Repair index', {
         severity: 'error',

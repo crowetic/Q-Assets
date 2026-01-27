@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.1 - 2026-01-22
+
+- Improved header responsiveness on small screens to prevent horizontal scrolling in compact layouts.
+- Adjusted Q-Mail notification publishing to default to a single queued publish so bulk sends need fewer confirmations.
+- Fixed Q-Deck cards index repairs to publish under the active editor name instead of the board owner.
+- Fixed asset management publishes so primary group updates are included even when no other fields change.
+- Scoped group address caching per group ID to prevent admin/membership lookups from reusing unrelated group data.
+- Aligned Xqlore admin gating with management manifest permissions to match the main admin panel.
+
 ## 0.9.0 - 2026-01-21
 
 - Corrected the Xqlore stats aggregation so AT deposits are treated as sold QORT, AT payouts only count as buys for non-owner accounts, and refunds no longer skew the leaderboards.
