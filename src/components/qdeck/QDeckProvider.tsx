@@ -32,6 +32,7 @@ import {
   buildBoardPublishPayload,
   repairCardsIndex as repairCardsIndexDoc,
   loadNewestCardsIndex,
+  getLatestIdentifierPrefixStamp,
 } from '../../utils/qdeckApi';
 import { useAuth } from 'qapp-core';
 import { deleteBoard as apiDeleteBoard } from '../../utils/qdeckApi'; // path as needed
@@ -57,6 +58,12 @@ type LoadOpts = {
   visibility?: 'public' | 'private';
   groupId?: number;
   isAdmins?: boolean;
+  preserveExisting?: boolean;
+};
+
+type LoadCardsOpts = {
+  preserveOnEmpty?: boolean;
+  skipIfIndexUnchanged?: boolean;
 };
 
 type PublishMode = 'immediate' | 'batch';
@@ -195,6 +202,14 @@ const createEmptyCardsIndexDoc = (boardId: string): CardsIndexDoc => ({
   seq: 0,
 });
 
+const indexSignature = (doc: CardsIndexDoc | null | undefined) => {
+  if (!doc) return '';
+  const entriesCount = doc.entries?.length ?? 0;
+  const cardIdsCount = doc.cardIds?.length ?? 0;
+  const archivedCount = doc.archivedIds?.length ?? 0;
+  return `${doc.updatedAt ?? 0}:${doc.seq ?? 0}:${entriesCount}:${cardIdsCount}:${archivedCount}`;
+};
+
 const getCardTimestamp = (card: QDeckCard) =>
   Math.max(card.updatedAt ?? 0, card.createdAt ?? 0, card.seq ?? 0);
 
@@ -258,14 +273,22 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [cardVariants, setCardVariants] = useState<Record<string, QDeckCard[]>>({});
   const [archivedCardIds, setArchivedCardIds] = useState<Set<string>>(new Set());
   const [comments, setComments] = useState<Record<string, CardCommentThread>>({});
+  const cardsRef = useRef<Record<string, QDeckCard>>({});
+  const cardVariantsRef = useRef<Record<string, QDeckCard[]>>({});
+  const commentsRef = useRef<Record<string, CardCommentThread>>({});
   const [changeLog, setChangeLog] = useState<BoardChangeLog>({
     openedAt: Date.now(),
     entries: [],
   });
   const cardsIndexCacheRef = useRef<Record<string, CardsIndexDoc | null>>({});
+  const cardsIndexSigRef = useRef<Record<string, string>>({});
   const pendingCardsLoadRef = useRef<string | null>(null);
   const cardsLoadRetryRef = useRef<Record<string, number>>({});
   const currentBoardIdRef = useRef<string | null>(null);
+  const pollInFlightRef = useRef(false);
+  const boardStampRef = useRef<Record<string, number>>({});
+  const cardsIndexStampRef = useRef<Record<string, number>>({});
+  const commentsStampRef = useRef<Record<string, number>>({});
   const { publish: publishResources } = useQdnBatchPublisher();
   const { alert } = useAlert();
   const [publishQueue, setPublishQueue] = useState<Record<string, BatchPublishResource[]>>(() =>
@@ -276,12 +299,26 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [repairingIndex, setRepairingIndex] = useState(false);
   const setCachedCardsIndexDoc = useCallback((boardId: string, doc: CardsIndexDoc) => {
     cardsIndexCacheRef.current[boardId] = doc;
+    cardsIndexSigRef.current[boardId] = indexSignature(doc);
     setLocalCardsIndex(boardId, doc);
+    const stamp = Number(doc.updatedAt ?? 0);
+    if (stamp) {
+      cardsIndexStampRef.current[boardId] = Math.max(
+        cardsIndexStampRef.current[boardId] ?? 0,
+        stamp
+      );
+    }
   }, []);
 
   useEffect(() => {
     currentBoardIdRef.current = board?.boardId ?? null;
   }, [board?.boardId]);
+
+  useEffect(() => {
+    cardsRef.current = cards;
+    cardVariantsRef.current = cardVariants;
+    commentsRef.current = comments;
+  }, [cards, cardVariants, comments]);
 
   useEffect(() => {
     const boardId = board?.boardId;
@@ -501,7 +538,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const cardLimiter = useMemo(() => pLimit(2), []);
 
   const loadCardsForBoard = React.useCallback(
-    async (_issuerIgnored: string, b: QDeckBoard) => {
+    async (_issuerIgnored: string, b: QDeckBoard, opts?: LoadCardsOpts) => {
       // 0) Access check
       if (b.visibility === 'private' && !identity.address) {
         pendingCardsLoadRef.current = b.boardId;
@@ -626,6 +663,24 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       let refs: Array<{ name: string; cardId: string }> | null = null;
       let idx: CardsIndexDoc | null = null;
       idx = (await newestIndexPromise) ?? null;
+      const idxStamp = Number(idx?.updatedAt ?? 0);
+      if (idxStamp) {
+        cardsIndexStampRef.current[b.boardId] = Math.max(
+          cardsIndexStampRef.current[b.boardId] ?? 0,
+          idxStamp
+        );
+      }
+      const cachedIndexDoc = cardsIndexCacheRef.current[b.boardId] ?? cachedIndex ?? null;
+      const indexUnchanged =
+        !!idx &&
+        !!cachedIndexDoc &&
+        (idx.seq ?? 0) === (cachedIndexDoc.seq ?? 0) &&
+        (idx.updatedAt ?? 0) === (cachedIndexDoc.updatedAt ?? 0);
+      const hasExisting =
+        Object.keys(cardsRef.current).length > 0 || Object.keys(cardVariantsRef.current).length > 0;
+      if (opts?.skipIfIndexUnchanged && indexUnchanged && hasExisting) {
+        return;
+      }
       if (idx?.entries?.length) {
         refs = idx.entries.slice();
       } else if (idx?.cardIds?.length) {
@@ -679,7 +734,14 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       if (!refs || refs.length === 0) {
+        const indexSaysEmpty =
+          !!idx && !((idx.entries?.length ?? 0) > 0 || (idx.cardIds?.length ?? 0) > 0);
+        if (indexSaysEmpty) {
+          applyLoadedCards([], idx);
+          return;
+        }
         if (showedCached) return;
+        if (opts?.preserveOnEmpty) return;
         setCards({});
         setCardVariants({});
         setArchivedCardIds(new Set());
@@ -690,7 +752,9 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             window.setTimeout(() => {
               if (currentBoardIdRef.current !== b.boardId) return;
               void track(
-                loadCardsForBoard(b.createdBy || identity.name || '', b),
+                loadCardsForBoard(b.createdBy || identity.name || '', b, {
+                  preserveOnEmpty: true,
+                }),
                 `qdeck:cards:retry:${b.boardId}`
               );
             }, 1200);
@@ -701,6 +765,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       // 3) Fetch each card with its *publisher* name
       const usable = await loadDocsForRefs(refs);
+      if (!usable.length && opts?.preserveOnEmpty) return;
       applyLoadedCards(usable, idx);
     },
     [identity.address, identity.name, cardLimiter, track]
@@ -736,20 +801,22 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [alert, board, identity.name, loadCardsForBoard, track]);
 
   const loadBoardById = useCallback<QDeckCtx['loadBoardById']>(
-    async (ns, boardIdOrIdent, visibility /*_opts*/) => {
+    async (ns, boardIdOrIdent, visibility, opts) => {
       const issuer = (ns || '').trim();
       const raw = (boardIdOrIdent || '').trim();
       if (!issuer || !raw) {
         console.log('[Q-Deck] loadBoardById empty issuer/id', { issuer, raw });
         return;
       }
+      const preserveExisting = opts?.preserveExisting === true;
+      const visibilityHint = opts?.visibility ?? visibility;
 
       // Is this a full identifier or a short id?
       const isPrivIdent = raw.startsWith(QDeckId.prefixPrivateBoards);
       const isPubIdent = raw.startsWith(QDeckId.prefixPublicBoards);
 
       // Cache-key should reflect the exact thing we’re trying to open
-      const cacheKey = `${issuer}:${raw}:${visibility ?? 'auto'}`;
+      const cacheKey = `${issuer}:${raw}:${visibilityHint ?? 'auto'}`;
       if (
         lastLoadKey.current === cacheKey &&
         board &&
@@ -762,7 +829,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // 1) If caller gave a full ident, we already know the intent.
       //    Skip heads probing and go straight to resolve (fast-path).
       if (isPubIdent || isPrivIdent) {
-        const probe = await resolveBoardForReadWithMeta(issuer, raw, visibility).catch((e) => {
+        const probe = await resolveBoardForReadWithMeta(issuer, raw, visibilityHint).catch((e) => {
           console.error('[Q-Deck] resolveBoardForReadWithMeta error', e);
           return null;
         });
@@ -774,11 +841,23 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
 
         setBoard(probe.doc);
-        setCards({});
-        setCardVariants({});
-        setArchivedCardIds(new Set());
-        setComments({});
-        void track(loadCardsForBoard(issuer, probe.doc), `${probe.doc}`);
+        boardStampRef.current[probe.doc.boardId] = Math.max(
+          boardStampRef.current[probe.doc.boardId] ?? 0,
+          Number(probe.doc.updatedAt ?? 0)
+        );
+        if (!preserveExisting) {
+          setCards({});
+          setCardVariants({});
+          setArchivedCardIds(new Set());
+          setComments({});
+        }
+        void track(
+          loadCardsForBoard(issuer, probe.doc, {
+            preserveOnEmpty: preserveExisting,
+            skipIfIndexUnchanged: preserveExisting,
+          }),
+          `${probe.doc}`
+        );
         console.log('[Q-Deck] loadBoardById success (ident)', {
           issuer,
           id: raw,
@@ -790,7 +869,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // 2) We have a short id. Prefer supplied hint; otherwise peek heads.
       const shortId = raw;
       const hint =
-        visibility ??
+        visibilityHint ??
         ((await findBoardVisibilityHeads(issuer, shortId).catch(() => null)) || undefined);
 
       // Use the meta-aware resolver (it handles public first, then private probe)
@@ -809,15 +888,27 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       setBoard(resolved);
-      setCards({});
-      setCardVariants({});
-      setArchivedCardIds(new Set());
-      setComments({});
-      void track(loadCardsForBoard(issuer, resolved), `${resolved}`);
+      boardStampRef.current[resolved.boardId] = Math.max(
+        boardStampRef.current[resolved.boardId] ?? 0,
+        Number(resolved.updatedAt ?? 0)
+      );
+      if (!preserveExisting) {
+        setCards({});
+        setCardVariants({});
+        setArchivedCardIds(new Set());
+        setComments({});
+      }
+      void track(
+        loadCardsForBoard(issuer, resolved, {
+          preserveOnEmpty: preserveExisting,
+          skipIfIndexUnchanged: preserveExisting,
+        }),
+        `${resolved}`
+      );
 
       console.debug('[Q-Deck] loadBoardById success', { issuer, shortId, title: resolved.title });
     },
-    [board, loadCardsForBoard] // identity.address not used anymore in this body
+    [board, loadCardsForBoard, track] // identity.address not used anymore in this body
   );
 
   const persistBoard = useCallback<QDeckCtx['persistBoard']>(
@@ -826,29 +917,12 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const boardPayload = await buildBoardPublishPayload(publisher, nextBoard);
       await queueOrPublishResources(nextBoard.boardId, [boardPayload]);
       setBoard(nextBoard);
-    },
-    [identity.name, auth.name, queueOrPublishResources]
-  );
-
-  const refreshBoard = useCallback(
-    async (issuerOverride?: string) => {
-      if (!board) return;
-      // allow re-run of same key
-      lastLoadKey.current = '';
-
-      // issuer namespace: prefer override (e.g., prop from route), else board.createdBy
-      const ns = (issuerOverride && issuerOverride.trim()) || board.createdBy;
-
-      await track(
-        loadBoardById(ns, board.boardId, board.visibility, {
-          visibility: board.visibility,
-          groupId: board.privateMeta?.groupId,
-          isAdmins: board.privateMeta?.isAdmins,
-        }),
-        `qdeck:board:${board.boardId}`
+      boardStampRef.current[nextBoard.boardId] = Math.max(
+        boardStampRef.current[nextBoard.boardId] ?? 0,
+        Number(nextBoard.updatedAt ?? 0)
       );
     },
-    [board, loadBoardById]
+    [identity.name, auth.name, queueOrPublishResources]
   );
 
   const createCard = useCallback<QDeckCtx['createCard']>(
@@ -1353,6 +1427,110 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     [board]
   );
+
+  const refreshLoadedComments = useCallback(async () => {
+    if (!board) return;
+    const cardIds = Object.keys(commentsRef.current);
+    if (!cardIds.length) return;
+    const limit = pLimit(2);
+    await Promise.all(cardIds.map((cardId) => limit(() => loadCommentsForCard(cardId))));
+  }, [board, loadCommentsForCard]);
+
+  const refreshBoard = useCallback(
+    async (issuerOverride?: string) => {
+      if (!board) return;
+      // allow re-run of same key
+      lastLoadKey.current = '';
+
+      // issuer namespace: prefer override (e.g., prop from route), else board.createdBy
+      const ns = (issuerOverride && issuerOverride.trim()) || board.createdBy;
+
+      await track(
+        loadBoardById(ns, board.boardId, board.visibility, {
+          visibility: board.visibility,
+          groupId: board.privateMeta?.groupId,
+          isAdmins: board.privateMeta?.isAdmins,
+          preserveExisting: true,
+        }),
+        `qdeck:board:${board.boardId}`
+      );
+      void refreshLoadedComments();
+    },
+    [board, loadBoardById, refreshLoadedComments, track]
+  );
+
+  const pollBoardUpdates = useCallback(async () => {
+    if (!board) return;
+    const issuer = board.createdBy || identity.name || '';
+    if (!issuer) return;
+    const isPrivate = board.visibility === 'private';
+    const boardId = board.boardId;
+    const commentsPrefix =
+      board.visibility === 'public'
+        ? `qdeck_pub__cmv2__${boardId}__`
+        : `qdeck_priv__cmv2__${boardId}__`;
+
+    const [indexDoc, commentsStamp] = await Promise.all([
+      loadNewestCardsIndex(board, {
+        issuerHints: [board.createdBy, identity.name].filter(Boolean) as string[],
+      }),
+      getLatestIdentifierPrefixStamp(commentsPrefix, isPrivate),
+    ]);
+
+    const cachedIndex = cardsIndexCacheRef.current[boardId] ?? getLocalCardsIndex(boardId) ?? null;
+    const prevCommentsStamp = commentsStampRef.current[boardId] ?? 0;
+    const nextIndexSig = indexSignature(indexDoc ?? cachedIndex);
+    const prevIndexSig = cardsIndexSigRef.current[boardId] ?? indexSignature(cachedIndex);
+    const indexChanged = Boolean(nextIndexSig && nextIndexSig !== prevIndexSig);
+    const commentsChanged = commentsStamp > prevCommentsStamp;
+
+    const noPriorStamps =
+      (cardsIndexStampRef.current[boardId] ?? 0) === 0 &&
+      (commentsStampRef.current[boardId] ?? 0) === 0;
+    if (noPriorStamps) {
+      const idxStamp = Number(indexDoc?.updatedAt ?? 0);
+      if (idxStamp) cardsIndexStampRef.current[boardId] = idxStamp;
+      if (nextIndexSig) cardsIndexSigRef.current[boardId] = nextIndexSig;
+      if (commentsStamp) commentsStampRef.current[boardId] = commentsStamp;
+      return;
+    }
+
+    if (commentsStamp) commentsStampRef.current[boardId] = commentsStamp;
+    if (indexDoc?.updatedAt) {
+      cardsIndexStampRef.current[boardId] = Math.max(
+        cardsIndexStampRef.current[boardId] ?? 0,
+        Number(indexDoc.updatedAt ?? 0)
+      );
+    }
+
+    if (!indexChanged && !commentsChanged) return;
+    if (nextIndexSig) cardsIndexSigRef.current[boardId] = nextIndexSig;
+
+    if (indexChanged) {
+      await track(
+        loadCardsForBoard(issuer, board, {
+          preserveOnEmpty: true,
+          skipIfIndexUnchanged: true,
+        }),
+        `qdeck:poll:cards:${boardId}`
+      );
+    }
+    if (commentsChanged) {
+      await refreshLoadedComments();
+    }
+  }, [board, identity.name, loadCardsForBoard, refreshLoadedComments, track]);
+
+  useEffect(() => {
+    if (!board || typeof window === 'undefined') return;
+    const interval = window.setInterval(() => {
+      if (pollInFlightRef.current) return;
+      pollInFlightRef.current = true;
+      void pollBoardUpdates().finally(() => {
+        pollInFlightRef.current = false;
+      });
+    }, 30_000);
+    return () => window.clearInterval(interval);
+  }, [board?.boardId, pollBoardUpdates]);
 
   const collectBoardChangeReport = useCallback<QDeckCtx['collectBoardChangeReport']>(async () => {
     if (!board) return { openedAt: Date.now(), entries: [], comments: [] };

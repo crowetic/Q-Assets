@@ -218,6 +218,8 @@ export interface QDeckCard {
   createdBy: string; // qortal name/address
   creatorAddress?: string;
   assignees?: string[]; // qortal names
+  workedBy?: string[]; // users who have worked on the task
+  startedFromListId?: string; // list before first start, for cancel-start restores
   overriddenBy?: string; // name of admin that overwrote card if overrides are allowed
   overrideIdentifier?: string; // The Identifier of the card published to override this card. Full identifier
   overrideId?: string; // The shortId of the card that overrides this one.
@@ -230,6 +232,7 @@ export interface QDeckCard {
   collapsedWhenDone?: boolean; // old field kept for compatibility
   isCollapsed?: boolean;
   completedAt?: number;
+  completionComment?: string;
   scheduledStart?: number;
   scheduledEnd?: number;
   scheduledAllDay?: boolean;

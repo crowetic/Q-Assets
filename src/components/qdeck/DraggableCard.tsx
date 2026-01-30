@@ -11,6 +11,11 @@ import {
   Stack,
   Tooltip,
   Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
 } from '@mui/material';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
@@ -18,6 +23,7 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
+import GroupAddIcon from '@mui/icons-material/GroupAdd';
 import ArchiveIcon from '@mui/icons-material/Archive';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
@@ -37,6 +43,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -196,16 +203,48 @@ const DraggableCardInner: FC<DraggableProps> = ({
     [updateCard]
   );
 
+  const [completionDialogOpen, setCompletionDialogOpen] = useState(false);
+  const [completionDraft, setCompletionDraft] = useState('');
+  const completionResolveRef = useRef<((value: string | null) => void) | null>(null);
+
+  const requestCompletionComment = useCallback(() => {
+    setCompletionDraft('');
+    setCompletionDialogOpen(true);
+    return new Promise<string | null>((resolve) => {
+      completionResolveRef.current = resolve;
+    });
+  }, []);
+
+  const closeCompletionDialog = useCallback((value: string | null) => {
+    const resolver = completionResolveRef.current;
+    completionResolveRef.current = null;
+    setCompletionDialogOpen(false);
+    resolver?.(value);
+  }, []);
+
   const handleToggleComplete = useCallback(
     async (event: MouseEvent<HTMLButtonElement>) => {
       event.stopPropagation();
       if (!card) return;
+      const actor = userName?.trim();
       const nextIsDone = !card.isDone;
+      let completionComment: string | undefined;
+      if (nextIsDone) {
+        const note = await requestCompletionComment();
+        if (note === null) return;
+        completionComment = note.trim() || undefined;
+      }
+      const nextWorkedBy =
+        nextIsDone && actor
+          ? Array.from(new Set([...(card.workedBy ?? []), actor]))
+          : card.workedBy;
       const nextCard: typeof card = {
         ...card,
         isDone: nextIsDone,
         updatedAt: Date.now(),
         completedAt: nextIsDone ? Date.now() : undefined,
+        completionComment: nextIsDone ? completionComment : undefined,
+        workedBy: nextIsDone ? nextWorkedBy : card.workedBy,
         isCollapsed: nextIsDone,
         collapsedWhenDone: nextIsDone,
       };
@@ -217,30 +256,45 @@ const DraggableCardInner: FC<DraggableProps> = ({
       }
       await updateCardWithRetry(nextCard, 'toggle complete');
     },
-    [card, cards, doneListId, updateCardWithRetry]
+    [card, cards, doneListId, requestCompletionComment, updateCardWithRetry, userName]
   );
+
+  const me = userName?.trim();
+  const isTaskCompleted = Boolean(card?.isDone);
+  const hasStarted = Boolean(card?.scheduledStart);
+  const isAssignee = Boolean(me && card?.assignees?.includes(me));
+  const canUseTaskAction = Boolean(card && !isTaskCompleted && me);
+  const canJoinTask = Boolean(card && !isTaskCompleted && hasStarted && me && !isAssignee);
+  const canCompleteTask = Boolean(card && !isTaskCompleted && hasStarted && isAssignee);
+  const canCancelStart = Boolean(card && !isTaskCompleted && hasStarted && isAssignee);
 
   const taskButtonLabel = useMemo(() => {
     if (!card) return 'Start task';
-    if (card.isDone) return 'Completed';
-    const me = userName?.trim();
-    const startedByMe = Boolean(me && card.scheduledStart && card.assignees?.includes(me));
-    return startedByMe ? 'Complete task' : 'Start task';
-  }, [card, userName]);
+    if (isTaskCompleted) return 'Completed';
+    if (canCompleteTask) return 'Complete task';
+    if (canJoinTask) return 'Join task';
+    return 'Start task';
+  }, [card, canCompleteTask, canJoinTask, isTaskCompleted]);
 
   const completedAtLabel = useMemo(() => {
     if (!card?.isDone || !card.completedAt) return null;
     return new Date(card.completedAt).toLocaleString();
   }, [card]);
+  const completionComment = card?.completionComment?.trim();
+  const completeMarkerTooltip = card?.isDone
+    ? completionComment
+      ? `Completion note: ${completionComment}`
+      : 'Mark incomplete'
+    : 'Mark complete';
 
-  const canUseTaskAction = Boolean(card && !card.isDone && userName?.trim());
-  const isTaskCompleted = Boolean(card?.isDone);
-  const isTaskInProgress = Boolean(
-    userName?.trim() && card?.scheduledStart && card?.assignees?.includes(userName)
+  const isTaskInProgressForMe = Boolean(
+    me && card?.scheduledStart && card?.assignees?.includes(me)
   );
   const taskIcon = isTaskCompleted ? (
     <CheckCircleIcon fontSize="small" />
-  ) : isTaskInProgress ? (
+  ) : canJoinTask ? (
+    <GroupAddIcon fontSize="small" />
+  ) : isTaskInProgressForMe ? (
     <FlagIcon fontSize="small" />
   ) : (
     <PlayArrowIcon fontSize="small" />
@@ -250,44 +304,111 @@ const DraggableCardInner: FC<DraggableProps> = ({
     async (event: MouseEvent<HTMLButtonElement>) => {
       event.stopPropagation();
       if (!card) return;
-      const me = userName?.trim();
       if (!me) return;
       const now = Date.now();
-      const assignees = Array.from(new Set([...(card.assignees ?? []), me]));
-      const startedByMe = Boolean(card.scheduledStart && assignees.includes(me));
-      const shouldComplete = startedByMe && !card.isDone;
+      if (card.isDone) return;
+      const existingAssignees = card.assignees ?? [];
+      const nextAssignees = Array.from(new Set([...existingAssignees, me]));
+      const nextWorkedBy = Array.from(new Set([...(card.workedBy ?? []), me]));
+      const started = Boolean(card.scheduledStart);
+      const isAlreadyAssignee = existingAssignees.includes(me);
+
+      if (!started) {
+        const nextCard: typeof card = {
+          ...card,
+          assignees: nextAssignees,
+          workedBy: nextWorkedBy,
+          scheduledStart: now,
+          updatedAt: now,
+        };
+        if (inProgressListId && inProgressListId !== card.statusListId) {
+          const inProgressOrder = Object.values(cards).filter(
+            (c) => c.statusListId === inProgressListId
+          ).length;
+          nextCard.startedFromListId = card.statusListId;
+          nextCard.statusListId = inProgressListId;
+          nextCard.order = inProgressOrder;
+        }
+        nextCard.seq = card.seq + 1;
+        await updateCardWithRetry(nextCard, 'start task');
+        return;
+      }
+
+      if (!isAlreadyAssignee) {
+        const nextCard: typeof card = {
+          ...card,
+          assignees: nextAssignees,
+          workedBy: nextWorkedBy,
+          updatedAt: now,
+        };
+        nextCard.seq = card.seq + 1;
+        await updateCardWithRetry(nextCard, 'join task');
+        return;
+      }
+
+      const completionNote = await requestCompletionComment();
+      if (completionNote === null) return;
+      const completionComment = completionNote.trim() || undefined;
       const nextCard: typeof card = {
         ...card,
-        assignees,
+        assignees: nextAssignees,
+        workedBy: nextWorkedBy,
         scheduledStart: card.scheduledStart ?? now,
-        scheduledEnd: shouldComplete ? (card.scheduledEnd ?? now) : card.scheduledEnd,
-        isDone: shouldComplete ? true : card.isDone,
-        completedAt: shouldComplete ? now : card.completedAt,
-        isCollapsed: shouldComplete ? true : card.isCollapsed,
-        collapsedWhenDone: shouldComplete ? true : card.collapsedWhenDone,
+        scheduledEnd: card.scheduledEnd ?? now,
+        isDone: true,
+        completedAt: now,
+        completionComment,
+        isCollapsed: true,
+        collapsedWhenDone: true,
         updatedAt: now,
       };
-      nextCard.seq = card.seq + 1;
-      if (shouldComplete && doneListId && doneListId !== card.statusListId) {
+      if (doneListId && doneListId !== card.statusListId) {
         const doneOrder = Object.values(cards).filter((c) => c.statusListId === doneListId).length;
         nextCard.statusListId = doneListId;
         nextCard.order = doneOrder;
-      } else if (!shouldComplete && inProgressListId && inProgressListId !== card.statusListId) {
-        const inProgressOrder = Object.values(cards).filter(
-          (c) => c.statusListId === inProgressListId
-        ).length;
-        nextCard.statusListId = inProgressListId;
-        nextCard.order = inProgressOrder;
       }
-      await updateCardWithRetry(nextCard, shouldComplete ? 'complete task' : 'start task');
+      nextCard.seq = card.seq + 1;
+      await updateCardWithRetry(nextCard, 'complete task');
     },
-    [card, cards, doneListId, inProgressListId, updateCardWithRetry, userName]
+    [card, cards, doneListId, inProgressListId, me, requestCompletionComment, updateCardWithRetry]
+  );
+
+  const handleCancelStart = useCallback(
+    async (event: MouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation();
+      if (!card || !me) return;
+      if (card.isDone || !card.scheduledStart) return;
+      const now = Date.now();
+      const remaining = (card.assignees ?? []).filter((name) => name !== me);
+      const nextCard: typeof card = {
+        ...card,
+        assignees: remaining,
+        updatedAt: now,
+      };
+      if (remaining.length === 0) {
+        nextCard.scheduledStart = undefined;
+        nextCard.scheduledEnd = undefined;
+        if (card.startedFromListId && inProgressListId && card.statusListId === inProgressListId) {
+          const restoreOrder = Object.values(cards).filter(
+            (c) => c.statusListId === card.startedFromListId
+          ).length;
+          nextCard.statusListId = card.startedFromListId;
+          nextCard.order = restoreOrder;
+        }
+        nextCard.startedFromListId = undefined;
+      }
+      nextCard.seq = card.seq + 1;
+      await updateCardWithRetry(nextCard, 'cancel start');
+    },
+    [card, cards, inProgressListId, me, updateCardWithRetry]
   );
 
   const author = card?.createdBy ?? 'U';
   const initial = author.slice(0, 1).toUpperCase();
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
   const [primaryImg, setPrimaryImg] = useState<string | undefined>();
+  const primaryImgKeyRef = useRef<string>('');
+  const primaryImgUrlRef = useRef<string | undefined>(undefined);
 
   // Resolve avatar
   useEffect(() => {
@@ -308,11 +429,48 @@ const DraggableCardInner: FC<DraggableProps> = ({
   // Resolve primary image (supports url string or encrypted ref)
   useEffect(() => {
     let alive = true;
+    const nextKey = (() => {
+      if (!card) return '';
+      if (card.primaryImageUrl && !card.primaryImage) {
+        return `url:${card.primaryImageUrl}`;
+      }
+      if (card.primaryImage) {
+        const groupId = board?.privateMeta?.groupId ?? '';
+        const isAdmins = board?.privateMeta?.isAdmins ? '1' : '0';
+        return `ref:${card.primaryImage.service}:${card.primaryImage.identifier}:${
+          card.primaryImage.isPrivate ? '1' : '0'
+        }:${groupId}:${isAdmins}`;
+      }
+      return '';
+    })();
+
+    if (!nextKey) {
+      primaryImgKeyRef.current = '';
+      primaryImgUrlRef.current = undefined;
+      if (primaryImg !== undefined) setPrimaryImg(undefined);
+      return () => {
+        alive = false;
+      };
+    }
+
+    if (nextKey === primaryImgKeyRef.current && primaryImgUrlRef.current) {
+      if (primaryImg !== primaryImgUrlRef.current) {
+        setPrimaryImg(primaryImgUrlRef.current);
+      }
+      return () => {
+        alive = false;
+      };
+    }
+
+    primaryImgKeyRef.current = nextKey;
     (async () => {
       try {
         if (!card) return;
         if (card.primaryImageUrl && !card.primaryImage) {
-          if (alive) setPrimaryImg(card.primaryImageUrl);
+          if (alive) {
+            primaryImgUrlRef.current = card.primaryImageUrl;
+            if (primaryImg !== card.primaryImageUrl) setPrimaryImg(card.primaryImageUrl);
+          }
         } else if (card.primaryImage && board) {
           const url = await resolvePrimaryImageDataUrl(
             card.createdBy, // issuerName used for fetch
@@ -320,18 +478,37 @@ const DraggableCardInner: FC<DraggableProps> = ({
             board.privateMeta?.groupId,
             board.privateMeta?.isAdmins
           );
-          if (alive) setPrimaryImg(url);
+          if (alive) {
+            primaryImgUrlRef.current = url || undefined;
+            if (primaryImg !== (url || undefined)) setPrimaryImg(url || undefined);
+          }
         } else {
-          if (alive) setPrimaryImg(undefined);
+          if (alive) {
+            primaryImgUrlRef.current = undefined;
+            if (primaryImg !== undefined) setPrimaryImg(undefined);
+          }
         }
       } catch {
-        if (alive) setPrimaryImg(undefined);
+        if (alive) {
+          primaryImgUrlRef.current = undefined;
+          if (primaryImg !== undefined) setPrimaryImg(undefined);
+        }
       }
     })();
     return () => {
       alive = false;
     };
-  }, [card, board]);
+  }, [
+    board?.privateMeta?.groupId,
+    board?.privateMeta?.isAdmins,
+    card?.createdBy,
+    card?.primaryImageUrl,
+    card?.primaryImage?.identifier,
+    card?.primaryImage?.service,
+    card?.primaryImage?.isPrivate,
+    cardId,
+    primaryImg,
+  ]);
 
   useEffect(() => {
     if (!card || commentThread) return;
@@ -513,7 +690,7 @@ const DraggableCardInner: FC<DraggableProps> = ({
                 </IconButton>
               </span>
             </Tooltip>
-            <Tooltip title={card?.isDone ? 'Mark incomplete' : 'Mark complete'}>
+            <Tooltip title={completeMarkerTooltip}>
               <span style={{ display: 'inline-flex' }}>
                 <IconButton
                   size="small"
@@ -633,11 +810,19 @@ const DraggableCardInner: FC<DraggableProps> = ({
           </Stack>
         ) : null}
 
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: minimized ? 0.25 : 0.6 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'center',
+            mt: minimized ? 0.25 : 0.6,
+            gap: 0.5,
+            flexWrap: 'wrap',
+          }}
+        >
           <Button
             size="small"
-            variant={isTaskCompleted ? 'contained' : 'outlined'}
-            color={isTaskCompleted || isTaskInProgress ? 'success' : 'primary'}
+            variant={isTaskCompleted || isTaskInProgressForMe ? 'contained' : 'outlined'}
+            color={isTaskCompleted || isTaskInProgressForMe ? 'success' : 'primary'}
             startIcon={taskIcon}
             onClick={handleTaskAction}
             disabled={isTaskCompleted ? true : !canUseTaskAction}
@@ -650,10 +835,10 @@ const DraggableCardInner: FC<DraggableProps> = ({
               lineHeight: 1,
               borderRadius: '999px',
               boxShadow: 'none',
-              color: !isTaskCompleted && !isTaskInProgress ? pMeta.border : undefined,
-              borderColor: !isTaskCompleted && !isTaskInProgress ? pMeta.border : undefined,
+              color: !isTaskCompleted && !isTaskInProgressForMe ? pMeta.border : undefined,
+              borderColor: !isTaskCompleted && !isTaskInProgressForMe ? pMeta.border : undefined,
               '&:hover':
-                !isTaskCompleted && !isTaskInProgress
+                !isTaskCompleted && !isTaskInProgressForMe
                   ? { borderColor: pMeta.border, backgroundColor: alpha(pMeta.border, 0.08) }
                   : undefined,
               '&.Mui-disabled': {
@@ -664,21 +849,72 @@ const DraggableCardInner: FC<DraggableProps> = ({
           >
             {taskButtonLabel}
           </Button>
+          {canCancelStart && (
+            <Button
+              size="small"
+              variant="outlined"
+              color="warning"
+              onClick={handleCancelStart}
+              sx={{
+                height: '1.6rem',
+                minWidth: '6rem',
+                px: '0.6rem',
+                textTransform: 'none',
+                fontSize: '0.75rem',
+                lineHeight: 1,
+                borderRadius: '999px',
+                boxShadow: 'none',
+              }}
+            >
+              Cancel start
+            </Button>
+          )}
         </Box>
         {completedAtLabel && (
-          <Typography
-            variant="caption"
-            sx={{
-              mt: 0.35,
-              display: 'block',
-              textAlign: 'center',
-              color: 'text.secondary',
-            }}
+          <Tooltip
+            title={completionComment ? completionComment : ''}
+            disableHoverListener={!completionComment}
           >
-            Completed {completedAtLabel}
-          </Typography>
+            <Typography
+              variant="caption"
+              sx={{
+                mt: 0.35,
+                display: 'block',
+                textAlign: 'center',
+                color: 'text.secondary',
+              }}
+            >
+              Completed {completedAtLabel}
+            </Typography>
+          </Tooltip>
         )}
       </Box>
+      <Dialog
+        open={completionDialogOpen}
+        onClose={() => closeCompletionDialog(null)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>Completion comment</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            fullWidth
+            multiline
+            minRows={3}
+            value={completionDraft}
+            onChange={(event) => setCompletionDraft(event.target.value)}
+            placeholder="Optional note about the completion…"
+            sx={{ mt: 1 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => closeCompletionDialog('')}>Skip</Button>
+          <Button variant="contained" onClick={() => closeCompletionDialog(completionDraft)}>
+            Complete
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Paper>
   );
 };

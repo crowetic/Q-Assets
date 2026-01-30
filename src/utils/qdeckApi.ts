@@ -193,6 +193,41 @@ export async function loadNewestCardsIndex(
   return newest.doc;
 }
 
+const maxHitStamp = (hits: Array<{ created?: number; updated?: number }>) => {
+  let max = 0;
+  for (const hit of hits) {
+    const stamp = Number.isFinite(hit.updated) ? Number(hit.updated) : Number(hit.created) || 0;
+    if (stamp > max) max = stamp;
+  }
+  return max;
+};
+
+export async function getLatestIdentifierStamp(
+  identifier: string,
+  isPrivate?: boolean
+): Promise<number> {
+  if (!identifier) return 0;
+  try {
+    const hits = await searchSimpleByFullId(identifier, isPrivate);
+    return maxHitStamp(hits);
+  } catch {
+    return 0;
+  }
+}
+
+export async function getLatestIdentifierPrefixStamp(
+  identifierPrefix: string,
+  isPrivate?: boolean
+): Promise<number> {
+  if (!identifierPrefix) return 0;
+  try {
+    const hits = await searchSimpleByIdPrefixOnly(identifierPrefix, isPrivate);
+    return maxHitStamp(hits);
+  } catch {
+    return 0;
+  }
+}
+
 type ProjectDocCandidate = {
   name: string;
   doc: QDeckProject;
@@ -297,18 +332,17 @@ export async function repairCardsIndex(
   }
 
   const issuerHints = [issuerName, board.createdBy].filter(Boolean) as string[];
-  const current =
-    (await loadNewestCardsIndex(board, { issuerHints })) ??
+  const current = (await loadNewestCardsIndex(board, { issuerHints })) ??
     (await loadCardsIndex(issuerName, board)) ?? {
       _type: 'QDECK_CARDS_INDEX' as const,
       version: 1 as const,
       boardId: board.boardId,
       cardIds: [],
       entries: [],
-    archivedIds: [],
-    updatedAt: 0,
-    seq: 0,
-  };
+      archivedIds: [],
+      updatedAt: 0,
+      seq: 0,
+    };
   const refs = await discoverCardRefsBySearch(board);
   const limit = opts?.concurrency ? pLimit(opts.concurrency) : pLimit(2);
   const seen = new Set<string>();

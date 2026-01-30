@@ -44,8 +44,10 @@ Q-Assets is an asset issuance, management, trading, and information Q-App for th
 - Switch between My Boards and All Boards with quick links on the boards page.
 - Queue publishes in batch mode and review/remove queued items before publishing.
 - Start tasks and complete them directly from cards to set start/end dates and mark work done.
+- Join in-progress tasks, cancel your start, and add completion notes that appear on hover.
 - Optionally create cards already in progress to prefill the start task status.
 - Search within a board to quickly find cards by title, tags, assignees, or list name.
+- Keep boards current with 30-second polling for new cards, comments, and status updates without blanking the view.
 - Board overviews prioritize recent activity and collapse long group lists with a +N more expander.
 - Reorder lists and customize list colors from the board manager to match your workflow.
 - Rename boards from the board view or the My/All Boards menus.

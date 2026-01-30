@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.2 - 2026-01-27
+
+- Fixed Q-Deck board refreshes so they no longer blank the board while reloading data.
+- Added 30-second Q-Deck polling to surface new cards, comments, and status updates without a full refresh.
+- Reduced Q-Deck card primary-image reloads during refreshes to prevent layout jitter.
+- Added Q-Deck task join/cancel-start actions and completion comments for better task attribution.
+- Optimized Q-Deck polling to compare the latest cards index doc before reloading data.
+- Seeded Q-Deck poll stamps on first pass to avoid an initial refresh burst.
+- Stabilized Q-Deck polling by tracking cards index signatures to prevent repeated reload loops.
+- Fixed CardDialog hook ordering to satisfy React hooks lint rules.
+- Guarded CardDialog board usage to satisfy TypeScript nullability checks.
+
 ## 0.9.1 - 2026-01-22
 
 - Improved header responsiveness on small screens to prevent horizontal scrolling in compact layouts.
