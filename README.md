@@ -47,7 +47,11 @@ Q-Assets is an asset issuance, management, trading, and information Q-App for th
 - Join in-progress tasks, cancel your start, and add completion notes that appear on hover.
 - Optionally create cards already in progress to prefill the start task status.
 - Search within a board to quickly find cards by title, tags, assignees, or list name.
-- Keep boards current with 30-second polling for new cards, comments, and status updates without blanking the view.
+- Check for new board updates in the background and show a “new changes” banner so you can load them on demand.
+- Ignore your own publishes when deciding whether to show the “new changes” banner.
+- Pause Q-Deck polling while batch publish queues have pending changes to avoid overwriting local edits.
+- Pause Q-Deck polling while dialogs are open so active edits aren't interrupted.
+- Pause Q-Deck polling while text inputs are focused to avoid disrupting typing.
 - Board overviews prioritize recent activity and collapse long group lists with a +N more expander.
 - Reorder lists and customize list colors from the board manager to match your workflow.
 - Rename boards from the board view or the My/All Boards menus.

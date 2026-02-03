@@ -1,6 +1,18 @@
 # Changelog
 
-## 0.9.2 - 2026-01-27
+## 0.9.4 - 2026-01-()
+
+- Paused Q-Deck polling while any dialog is open to avoid interrupting active edits.
+- Paused Q-Deck polling while any text input is focused to avoid disrupting in-progress typing.
+- Switched Q-Deck polling to background checks with a “new changes” banner instead of auto-refreshing cards.
+- Suppressed Q-Deck “new changes” notifications for updates published by the active user.
+- Seeded Q-Deck poll state on board entry to avoid showing the update banner on first load.
+
+## 0.9.3 - 2026-01-(29)
+
+- Paused Q-Deck polling while batch publish queues have pending changes to prevent local edits from being overwritten.
+
+## 0.9.2 - 2026-01-(27-29)
 
 - Fixed Q-Deck board refreshes so they no longer blank the board while reloading data.
 - Added 30-second Q-Deck polling to surface new cards, comments, and status updates without a full refresh.

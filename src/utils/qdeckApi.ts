@@ -122,7 +122,7 @@ export async function loadCardsIndex(
   );
 }
 
-type CardsIndexCandidate = {
+export type CardsIndexCandidate = {
   name: string;
   doc: CardsIndexDoc;
   stamp?: number;
@@ -141,10 +141,13 @@ const pickNewestCardsIndex = (a: CardsIndexCandidate, b: CardsIndexCandidate) =>
   return a;
 };
 
-export async function loadNewestCardsIndex(
+const getHitStamp = (hit?: { created?: number; updated?: number }) =>
+  Number.isFinite(hit?.updated) ? Number(hit?.updated) : Number(hit?.created) || 0;
+
+export async function loadNewestCardsIndexWithMeta(
   board: QDeckBoard,
   opts?: { issuerHints?: string[] }
-): Promise<CardsIndexDoc | null> {
+): Promise<CardsIndexCandidate | null> {
   const identifier = QDeckId.cardsIndex(board.boardId);
   const isPrivate = board.visibility === 'private';
   const hits = await searchSimpleByFullId(identifier, isPrivate).catch(() => []);
@@ -159,7 +162,7 @@ export async function loadNewestCardsIndex(
       const normalized = hit.name.trim();
       if (!normalized) continue;
       names.add(normalized);
-      const stamp = Number.isFinite(hit.updated) ? Number(hit.updated) : Number(hit.created) || 0;
+      const stamp = getHitStamp(hit);
       const key = normalized.toLowerCase();
       const prev = hitStamps.get(key) ?? 0;
       if (stamp > prev) hitStamps.set(key, stamp);
@@ -190,13 +193,21 @@ export async function loadNewestCardsIndex(
   for (let i = 1; i < candidates.length; i += 1) {
     newest = pickNewestCardsIndex(newest, candidates[i]);
   }
-  return newest.doc;
+  return newest;
+}
+
+export async function loadNewestCardsIndex(
+  board: QDeckBoard,
+  opts?: { issuerHints?: string[] }
+): Promise<CardsIndexDoc | null> {
+  const meta = await loadNewestCardsIndexWithMeta(board, opts);
+  return meta?.doc ?? null;
 }
 
 const maxHitStamp = (hits: Array<{ created?: number; updated?: number }>) => {
   let max = 0;
   for (const hit of hits) {
-    const stamp = Number.isFinite(hit.updated) ? Number(hit.updated) : Number(hit.created) || 0;
+    const stamp = getHitStamp(hit);
     if (stamp > max) max = stamp;
   }
   return max;
@@ -225,6 +236,25 @@ export async function getLatestIdentifierPrefixStamp(
     return maxHitStamp(hits);
   } catch {
     return 0;
+  }
+}
+
+export async function getLatestIdentifierPrefixMeta(
+  identifierPrefix: string,
+  isPrivate?: boolean
+): Promise<{ name: string; stamp: number } | null> {
+  if (!identifierPrefix) return null;
+  try {
+    const hits = await searchSimpleByIdPrefixOnly(identifierPrefix, isPrivate);
+    let best: { name: string; stamp: number } | null = null;
+    for (const hit of hits) {
+      if (!hit?.name) continue;
+      const stamp = getHitStamp(hit);
+      if (!best || stamp > best.stamp) best = { name: hit.name, stamp };
+    }
+    return best;
+  } catch {
+    return null;
   }
 }
 
@@ -561,7 +591,7 @@ async function encryptPrivatePayload(opts: PrivatePayloadOptions) {
       240_000
     );
     if (!enc) throw new Error('ENCRYPT_QORTAL_GROUP_DATA failed');
-    console.log('encryptedBeforePrivateMagic', enc);
+    // console.log('encryptedBeforePrivateMagic', enc);
     return enc;
   }
   if (!recipients?.length) throw new Error('Direct mode requires recipients');
@@ -598,15 +628,15 @@ async function preparePublishPayload(params: PublishPayloadParams): Promise<Batc
       recipients,
       service: resolvedService,
     });
-    console.log('prepared private payload', {
-      identifier,
-      service: resolvedService,
-      mode: effectiveMode,
-      hasMagic: encrypted.startsWith(PRIVATE_MAGIC_B64),
-      payloadLength: encrypted.length,
-    });
-    console.log('pre-encrypted base64', base64);
-    console.log('encryptedPayloadFromPreparePublishPayload with PrivateMagic', encrypted);
+    // console.log('prepared private payload', {
+    //   identifier,
+    //   service: resolvedService,
+    //   mode: effectiveMode,
+    //   hasMagic: encrypted.startsWith(PRIVATE_MAGIC_B64),
+    //   payloadLength: encrypted.length,
+    // });
+    // console.log('pre-encrypted base64', base64);
+    // console.log('encryptedPayloadFromPreparePublishPayload with PrivateMagic', encrypted);
     return {
       name,
       service: resolvedService,
@@ -1360,7 +1390,7 @@ export async function loadCommentsDoc(issuerName: string, board: QDeckBoard, car
           )
         : QDeckId.commentsPrivate(board.boardId, cardId, 'group', undefined, undefined);
 
-  console.log('identifier in loadCommentsDoc', identifier);
+  // console.log('identifier in loadCommentsDoc', identifier);
 
   if (board.visibility === 'public') {
     return qdeckFetch<CardCommentThread>(issuerName, identifier, false);
@@ -1434,7 +1464,7 @@ export async function loadBoardsIndex(issuerName: string): Promise<BoardsIndexDo
 }
 
 export async function saveBoardsIndex(issuerName: string, doc: BoardsIndexDoc) {
-  console.log('[Q-Deck] saveBoardsIndex', { issuerName, INDEX_ID });
+  // console.log('[Q-Deck] saveBoardsIndex', { issuerName, INDEX_ID });
   return await qdeckPublish(issuerName, INDEX_ID, doc);
 }
 
@@ -1443,7 +1473,7 @@ export async function loadProjectsIndex(issuerName: string): Promise<ProjectsInd
 }
 
 export async function saveProjectsIndex(issuerName: string, doc: ProjectsIndexDoc) {
-  console.log('[Q-Deck] saveProjectsIndex', { issuerName, PROJECTS_INDEX_ID });
+  // console.log('[Q-Deck] saveProjectsIndex', { issuerName, PROJECTS_INDEX_ID });
   return await qdeckPublish(issuerName, PROJECTS_INDEX_ID, doc);
 }
 
@@ -1451,7 +1481,7 @@ export async function createBoardAndIndex(args: CreateBoardArgs) {
   const { issuerName, title, groupsAllowed, usersAllowed, visibility, privateOpts, adminOverride } =
     args;
 
-  console.log('createBoardAndIndex visibility', visibility);
+  // console.log('createBoardAndIndex visibility', visibility);
 
   let myName = issuerName;
   let my = await qortalRequest({ action: 'GET_USER_ACCOUNT' });
@@ -1468,7 +1498,7 @@ export async function createBoardAndIndex(args: CreateBoardArgs) {
   if (!myAddress) throw Error('failed to obtain address in createBoardAndIndex');
   if (!myName) throw Error('failed to obtain name in createBoardAndIndex');
 
-  console.log('sending this visibility to createBoard', visibility);
+  // console.log('sending this visibility to createBoard', visibility);
   // Create the board document (qdeckDefaults.createBoard derives service/isPrivate)
   const board: QDeckBoard = await createBoard({
     title,
@@ -2094,7 +2124,7 @@ export async function discoverCardRefsBySearch(board: QDeckBoard): Promise<CardR
     // de-dupe (some nodes can give dup heads)
     .filter((v, i, a) => a.findIndex((x) => x.name === v.name && x.cardId === v.cardId) === i);
 
-  console.log('refs from discoverCardRefsBySearch', refs);
+  // console.log('refs from discoverCardRefsBySearch', refs);
 
   return refs;
 }
@@ -2239,11 +2269,11 @@ export async function deleteBoardById(
   opts?: { cascadeCards?: boolean; cascadeComments?: boolean }
 ) {
   const me = await qortalRequest({ action: 'GET_USER_ACCOUNT' }).catch(() => null);
-  console.log('me from deleteBoardById', me);
+  // console.log('me from deleteBoardById', me);
   const board = await resolveBoardForRead(issuerName, boardId /*, undefined, me?.address*/).catch(
     () => null
   );
-  console.log('board from deleteBoardById after resolveBoardForRead', board);
+  // console.log('board from deleteBoardById after resolveBoardForRead', board);
 
   if (!board || isTombstone(board)) {
     // prune index as before...

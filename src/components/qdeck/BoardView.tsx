@@ -267,6 +267,9 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
     repairCardsIndex,
     collectBoardChangeReport,
     resetBoardChangeLog,
+    pendingRemoteChanges,
+    applyPendingRemoteChanges,
+    clearPendingRemoteChanges,
   } = useQDeck();
   const navigate = useNavigate();
   const { alert } = useAlert();
@@ -1275,6 +1278,41 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
           </MenuItem>
         </Menu>
       </Box>
+
+      {pendingRemoteChanges && (
+        <Paper
+          elevation={0}
+          sx={{
+            mb: '0.9rem',
+            p: '0.6rem 0.8rem',
+            border: (t) => `1px solid ${t.palette.divider}`,
+            backgroundColor: (t) => t.palette.action.hover,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            flexWrap: 'wrap',
+          }}
+        >
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            New board changes found.
+          </Typography>
+          <Typography variant="caption" sx={{ color: 'text.secondary', flex: '1 1 auto' }}>
+            Load updates when you’re ready.
+          </Typography>
+          <Stack direction="row" spacing={1} sx={{ ml: 'auto' }}>
+            <Button
+              size="small"
+              variant="contained"
+              onClick={() => void applyPendingRemoteChanges()}
+            >
+              Load updates
+            </Button>
+            <Button size="small" variant="text" onClick={clearPendingRemoteChanges}>
+              Dismiss
+            </Button>
+          </Stack>
+        </Paper>
+      )}
 
       {/* ===== Board ===== */}
       {/* <DndContext collisionDetection={closestCenter} onDragEnd={onDragEnd}> */}

@@ -32,7 +32,8 @@ import {
   buildBoardPublishPayload,
   repairCardsIndex as repairCardsIndexDoc,
   loadNewestCardsIndex,
-  getLatestIdentifierPrefixStamp,
+  loadNewestCardsIndexWithMeta,
+  getLatestIdentifierPrefixMeta,
 } from '../../utils/qdeckApi';
 import { useAuth } from 'qapp-core';
 import { deleteBoard as apiDeleteBoard } from '../../utils/qdeckApi'; // path as needed
@@ -181,6 +182,10 @@ type QDeckCtx = {
 
   recordPayment: (line: Parameters<typeof appendPaymentLine>[2]) => Promise<void>;
   deleteBoard: (opts?: { cascadeCards?: boolean; cascadeComments?: boolean }) => Promise<void>;
+
+  pendingRemoteChanges: { cards?: boolean; comments?: boolean; board?: boolean } | null;
+  applyPendingRemoteChanges: () => Promise<void>;
+  clearPendingRemoteChanges: () => void;
 };
 
 // safer default
@@ -289,6 +294,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const boardStampRef = useRef<Record<string, number>>({});
   const cardsIndexStampRef = useRef<Record<string, number>>({});
   const commentsStampRef = useRef<Record<string, number>>({});
+  const pollSeedingRef = useRef<Record<string, boolean>>({});
   const { publish: publishResources } = useQdnBatchPublisher();
   const { alert } = useAlert();
   const [publishQueue, setPublishQueue] = useState<Record<string, BatchPublishResource[]>>(() =>
@@ -297,6 +303,11 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [publishMode, setPublishMode] = useState<PublishMode>(() => readPublishModeFromStorage());
   const [publishingBoardId, setPublishingBoardId] = useState<string | null>(null);
   const [repairingIndex, setRepairingIndex] = useState(false);
+  const [pendingRemoteChanges, setPendingRemoteChanges] = useState<{
+    cards?: boolean;
+    comments?: boolean;
+    board?: boolean;
+  } | null>(null);
   const setCachedCardsIndexDoc = useCallback((boardId: string, doc: CardsIndexDoc) => {
     cardsIndexCacheRef.current[boardId] = doc;
     cardsIndexSigRef.current[boardId] = indexSignature(doc);
@@ -312,6 +323,13 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   useEffect(() => {
     currentBoardIdRef.current = board?.boardId ?? null;
+  }, [board?.boardId]);
+
+  useEffect(() => {
+    setPendingRemoteChanges(null);
+    if (board?.boardId) {
+      pollSeedingRef.current[board.boardId] = false;
+    }
   }, [board?.boardId]);
 
   useEffect(() => {
@@ -1439,6 +1457,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const refreshBoard = useCallback(
     async (issuerOverride?: string) => {
       if (!board) return;
+      setPendingRemoteChanges(null);
       // allow re-run of same key
       lastLoadKey.current = '';
 
@@ -1459,39 +1478,104 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     [board, loadBoardById, refreshLoadedComments, track]
   );
 
+  const clearPendingRemoteChanges = useCallback(() => {
+    setPendingRemoteChanges(null);
+  }, []);
+
+  const applyPendingRemoteChanges = useCallback(async () => {
+    if (!board) return;
+    const issuer = board.createdBy || identity.name || '';
+    if (!issuer) return;
+    const pending = pendingRemoteChanges;
+    if (!pending) return;
+    setPendingRemoteChanges(null);
+
+    if (pending.board) {
+      await refreshBoard(issuer);
+      return;
+    }
+
+    if (pending.cards) {
+      await track(
+        loadCardsForBoard(issuer, board, {
+          preserveOnEmpty: true,
+          skipIfIndexUnchanged: true,
+        }),
+        `qdeck:apply:cards:${board.boardId}`
+      );
+    }
+    if (pending.comments) {
+      await refreshLoadedComments();
+    }
+  }, [
+    board,
+    identity.name,
+    loadCardsForBoard,
+    pendingRemoteChanges,
+    refreshBoard,
+    refreshLoadedComments,
+    track,
+  ]);
+
   const pollBoardUpdates = useCallback(async () => {
     if (!board) return;
     const issuer = board.createdBy || identity.name || '';
     if (!issuer) return;
-    const isPrivate = board.visibility === 'private';
     const boardId = board.boardId;
+    const hasQueuedChanges =
+      publishMode === 'batch' && (pendingPublishCount(boardId) > 0 || isPublishingQueue(boardId));
+    if (hasQueuedChanges) return;
+    if (typeof document !== 'undefined') {
+      const dialogOpen =
+        document.querySelector('.MuiDialog-root') || document.querySelector('[role="dialog"]');
+      if (dialogOpen) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active) {
+        const tag = active.tagName?.toLowerCase();
+        const isEditable =
+          tag === 'input' ||
+          tag === 'textarea' ||
+          (active as HTMLElement).isContentEditable ||
+          active.getAttribute('role') === 'textbox' ||
+          active.getAttribute('contenteditable') === 'true';
+        if (isEditable) return;
+      }
+    }
+    const isPrivate = board.visibility === 'private';
     const commentsPrefix =
       board.visibility === 'public'
         ? `qdeck_pub__cmv2__${boardId}__`
         : `qdeck_priv__cmv2__${boardId}__`;
 
-    const [indexDoc, commentsStamp] = await Promise.all([
-      loadNewestCardsIndex(board, {
+    const [indexMeta, commentsMeta] = await Promise.all([
+      loadNewestCardsIndexWithMeta(board, {
         issuerHints: [board.createdBy, identity.name].filter(Boolean) as string[],
       }),
-      getLatestIdentifierPrefixStamp(commentsPrefix, isPrivate),
+      getLatestIdentifierPrefixMeta(commentsPrefix, isPrivate),
     ]);
 
+    const indexDoc = indexMeta?.doc ?? null;
     const cachedIndex = cardsIndexCacheRef.current[boardId] ?? getLocalCardsIndex(boardId) ?? null;
     const prevCommentsStamp = commentsStampRef.current[boardId] ?? 0;
     const nextIndexSig = indexSignature(indexDoc ?? cachedIndex);
     const prevIndexSig = cardsIndexSigRef.current[boardId] ?? indexSignature(cachedIndex);
     const indexChanged = Boolean(nextIndexSig && nextIndexSig !== prevIndexSig);
+    const commentsStamp = commentsMeta?.stamp ?? 0;
     const commentsChanged = commentsStamp > prevCommentsStamp;
+    const me = identity.name?.trim().toLowerCase();
+    const indexFromMe = !!me && !!indexMeta?.name && indexMeta.name.trim().toLowerCase() === me;
+    const commentsFromMe =
+      !!me && !!commentsMeta?.name && commentsMeta.name.trim().toLowerCase() === me;
 
     const noPriorStamps =
       (cardsIndexStampRef.current[boardId] ?? 0) === 0 &&
       (commentsStampRef.current[boardId] ?? 0) === 0;
-    if (noPriorStamps) {
+    if (noPriorStamps || !pollSeedingRef.current[boardId]) {
       const idxStamp = Number(indexDoc?.updatedAt ?? 0);
       if (idxStamp) cardsIndexStampRef.current[boardId] = idxStamp;
       if (nextIndexSig) cardsIndexSigRef.current[boardId] = nextIndexSig;
       if (commentsStamp) commentsStampRef.current[boardId] = commentsStamp;
+      pollSeedingRef.current[boardId] = true;
       return;
     }
 
@@ -1506,19 +1590,24 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!indexChanged && !commentsChanged) return;
     if (nextIndexSig) cardsIndexSigRef.current[boardId] = nextIndexSig;
 
-    if (indexChanged) {
-      await track(
-        loadCardsForBoard(issuer, board, {
-          preserveOnEmpty: true,
-          skipIfIndexUnchanged: true,
-        }),
-        `qdeck:poll:cards:${boardId}`
-      );
+    const nextPending = {
+      cards: (pendingRemoteChanges?.cards ?? false) || (indexChanged && !indexFromMe),
+      comments: (pendingRemoteChanges?.comments ?? false) || (commentsChanged && !commentsFromMe),
+    };
+    const samePending =
+      pendingRemoteChanges?.cards === nextPending.cards &&
+      pendingRemoteChanges?.comments === nextPending.comments;
+    if (!samePending) {
+      setPendingRemoteChanges(nextPending);
     }
-    if (commentsChanged) {
-      await refreshLoadedComments();
-    }
-  }, [board, identity.name, loadCardsForBoard, refreshLoadedComments, track]);
+  }, [
+    board,
+    identity.name,
+    isPublishingQueue,
+    pendingPublishCount,
+    pendingRemoteChanges,
+    publishMode,
+  ]);
 
   useEffect(() => {
     if (!board || typeof window === 'undefined') return;
@@ -1691,6 +1780,9 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       repairCardsIndex,
       recordPayment,
       deleteBoard: deleteBoardImpl,
+      pendingRemoteChanges,
+      applyPendingRemoteChanges,
+      clearPendingRemoteChanges,
     }),
     [
       identity,
@@ -1727,6 +1819,9 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       repairCardsIndex,
       recordPayment,
       deleteBoardImpl,
+      pendingRemoteChanges,
+      applyPendingRemoteChanges,
+      clearPendingRemoteChanges,
     ]
   );
 
