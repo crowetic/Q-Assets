@@ -1,6 +1,18 @@
 # Changelog
 
-## 0.9.4 - 2026-01-()
+## 0.9.5
+
+- Merged Q-Deck cards indexes across all discovered publishers for a board so multi-editor boards keep card refs, status metadata, and archive state in sync.
+- Switched Q-Deck board/project/permissions views to consume merged cards indexes instead of a single newest publisher index.
+- Added publisher permission checks when hydrating cards from index entries to ignore unauthorized index rows.
+- Fixed card update publishes to stamp variants with the acting publisher so cross-user in-progress/completed updates stay visible and attributable.
+- Updated Q-Deck polling to compare merged cards indexes so remote multi-publisher changes are detected consistently.
+- Hardened Q-Deck index writes to merge remote-latest index state with local queued state before publishing, reducing stale overwrite risk during concurrent edits.
+- Blocked card creation until the board card/index hydration pass completes to prevent publishing partial “impatient publisher” indexes.
+- Increased Q-Deck card hydration concurrency and added per-list loading placeholders to improve perceived board load speed.
+- Fixed Q-Deck board cascade deletes to resolve cards from merged multi-publisher indexes (including per-entry publishers) before tombstoning.
+
+## 0.9.4 - 2026-01-(30)
 
 - Paused Q-Deck polling while any dialog is open to avoid interrupting active edits.
 - Paused Q-Deck polling while any text input is focused to avoid disrupting in-progress typing.

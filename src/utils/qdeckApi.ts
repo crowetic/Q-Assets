@@ -42,7 +42,6 @@ import {
   collectRecipientPublicKeys,
   canPublisherPublishToBoard,
   canPublisherPublishToProject,
-  cardAuthHeaderMatchesPublisher,
 } from './qdeckAccess';
 import { LruTtl } from './cache';
 import type { BatchPublishResource } from './useQdnBatchPublisher';
@@ -128,26 +127,51 @@ export type CardsIndexCandidate = {
   stamp?: number;
 };
 
-const pickNewestCardsIndex = (a: CardsIndexCandidate, b: CardsIndexCandidate) => {
-  const aStamp = a.stamp ?? 0;
-  const bStamp = b.stamp ?? 0;
-  if (aStamp !== bStamp) return aStamp > bStamp ? a : b;
+const compareCardsIndexCandidates = (a: CardsIndexCandidate, b: CardsIndexCandidate) => {
+  const aStamp = Math.max(a.stamp ?? 0, a.doc.updatedAt ?? 0);
+  const bStamp = Math.max(b.stamp ?? 0, b.doc.updatedAt ?? 0);
+  if (aStamp !== bStamp) return aStamp - bStamp;
   const aSeq = a.doc.seq ?? 0;
   const bSeq = b.doc.seq ?? 0;
-  if (aSeq !== bSeq) return aSeq > bSeq ? a : b;
+  if (aSeq !== bSeq) return aSeq - bSeq;
   const aUpdated = a.doc.updatedAt ?? 0;
   const bUpdated = b.doc.updatedAt ?? 0;
-  if (aUpdated !== bUpdated) return aUpdated > bUpdated ? a : b;
-  return a;
+  if (aUpdated !== bUpdated) return aUpdated - bUpdated;
+  return 0;
 };
 
 const getHitStamp = (hit?: { created?: number; updated?: number }) =>
   Number.isFinite(hit?.updated) ? Number(hit?.updated) : Number(hit?.created) || 0;
 
-export async function loadNewestCardsIndexWithMeta(
+const emptyCardsIndexDoc = (boardId: string): CardsIndexDoc => ({
+  _type: 'QDECK_CARDS_INDEX',
+  version: 1,
+  boardId,
+  cardIds: [],
+  entries: [],
+  archivedIds: [],
+  updatedAt: 0,
+  seq: 0,
+});
+
+type IndexEntry = NonNullable<CardsIndexDoc['entries']>[number];
+
+const mergeIndexEntry = (base: IndexEntry | undefined, incoming: IndexEntry): IndexEntry => ({
+  name: incoming.name || base?.name || '',
+  cardId: incoming.cardId || base?.cardId || '',
+  title: incoming.title ?? base?.title,
+  statusListId: incoming.statusListId ?? base?.statusListId,
+  scheduledStart: incoming.scheduledStart ?? base?.scheduledStart,
+  scheduledEnd: incoming.scheduledEnd ?? base?.scheduledEnd,
+  scheduledAllDay: incoming.scheduledAllDay ?? base?.scheduledAllDay,
+  completedAt: incoming.completedAt ?? base?.completedAt,
+  isDone: incoming.isDone ?? base?.isDone,
+});
+
+export async function loadCardsIndexCandidates(
   board: QDeckBoard,
   opts?: { issuerHints?: string[] }
-): Promise<CardsIndexCandidate | null> {
+): Promise<CardsIndexCandidate[]> {
   const identifier = QDeckId.cardsIndex(board.boardId);
   const isPrivate = board.visibility === 'private';
   const hits = await searchSimpleByFullId(identifier, isPrivate).catch(() => []);
@@ -158,17 +182,16 @@ export async function loadNewestCardsIndexWithMeta(
     if (trimmed) names.add(trimmed);
   }
   for (const hit of hits) {
-    if (hit?.name) {
-      const normalized = hit.name.trim();
-      if (!normalized) continue;
-      names.add(normalized);
-      const stamp = getHitStamp(hit);
-      const key = normalized.toLowerCase();
-      const prev = hitStamps.get(key) ?? 0;
-      if (stamp > prev) hitStamps.set(key, stamp);
-    }
+    if (!hit?.name) continue;
+    const normalized = hit.name.trim();
+    if (!normalized) continue;
+    names.add(normalized);
+    const stamp = getHitStamp(hit);
+    const key = normalized.toLowerCase();
+    const prev = hitStamps.get(key) ?? 0;
+    if (stamp > prev) hitStamps.set(key, stamp);
   }
-  if (names.size === 0) return null;
+  if (names.size === 0) return [];
 
   const limit = pLimit(2);
   const candidates = (
@@ -188,12 +211,129 @@ export async function loadNewestCardsIndexWithMeta(
     )
   ).filter(Boolean) as CardsIndexCandidate[];
 
-  if (!candidates.length) return null;
-  let newest = candidates[0];
-  for (let i = 1; i < candidates.length; i += 1) {
-    newest = pickNewestCardsIndex(newest, candidates[i]);
-  }
-  return newest;
+  candidates.sort((a, b) => compareCardsIndexCandidates(b, a));
+  return candidates;
+}
+
+const mergeCardsIndexCandidates = (
+  boardId: string,
+  candidates: CardsIndexCandidate[]
+): CardsIndexDoc => {
+  if (!candidates.length) return emptyCardsIndexDoc(boardId);
+
+  // Merge oldest -> newest so latest publishers override metadata for the same entry key.
+  const ordered = [...candidates].sort((a, b) => compareCardsIndexCandidates(a, b));
+  const cardIds = new Set<string>();
+  const entryState = new Map<string, { entry: IndexEntry; rank: number; order: number }>();
+  const archiveState = new Map<string, { archived: boolean; rank: number; order: number }>();
+  let order = 0;
+
+  ordered.forEach((candidate, rank) => {
+    const doc = candidate.doc;
+    const mentioned = new Set<string>();
+    const archived = new Set((doc.archivedIds ?? []).filter(Boolean));
+
+    for (const cardId of doc.cardIds ?? []) {
+      if (!cardId) continue;
+      cardIds.add(cardId);
+      mentioned.add(cardId);
+    }
+
+    for (const raw of doc.entries ?? []) {
+      const name = (raw?.name || '').trim();
+      const cardId = (raw?.cardId || '').trim();
+      if (!name || !cardId) continue;
+      cardIds.add(cardId);
+      mentioned.add(cardId);
+      const key = `${name.toLowerCase()}::${cardId}`;
+      const prev = entryState.get(key);
+      const merged = mergeIndexEntry(prev?.entry, { ...raw, name, cardId });
+      entryState.set(key, {
+        entry: merged,
+        rank,
+        order: order++,
+      });
+    }
+
+    for (const cardId of archived) {
+      cardIds.add(cardId);
+      mentioned.add(cardId);
+      const prev = archiveState.get(cardId);
+      if (!prev || rank >= prev.rank) {
+        archiveState.set(cardId, { archived: true, rank, order: order++ });
+      }
+    }
+
+    for (const cardId of mentioned) {
+      if (archived.has(cardId)) continue;
+      const prev = archiveState.get(cardId);
+      if (!prev || rank >= prev.rank) {
+        archiveState.set(cardId, { archived: false, rank, order: order++ });
+      }
+    }
+  });
+
+  const entries = Array.from(entryState.values())
+    .sort((a, b) => (a.rank !== b.rank ? a.rank - b.rank : a.order - b.order))
+    .map((value) => value.entry);
+
+  const archivedIds = Array.from(archiveState.entries())
+    .filter(([, state]) => state.archived)
+    .sort((a, b) => {
+      const aState = archiveState.get(a[0])!;
+      const bState = archiveState.get(b[0])!;
+      if (aState.rank !== bState.rank) return aState.rank - bState.rank;
+      return a[0].localeCompare(b[0]);
+    })
+    .map(([cardId]) => cardId);
+
+  const updatedAt = ordered.reduce(
+    (max, candidate) => Math.max(max, candidate.stamp ?? 0, candidate.doc.updatedAt ?? 0),
+    0
+  );
+  const seq = ordered.reduce((max, candidate) => Math.max(max, candidate.doc.seq ?? 0), 0);
+
+  return {
+    _type: 'QDECK_CARDS_INDEX',
+    version: 1,
+    boardId,
+    cardIds: Array.from(cardIds),
+    entries,
+    archivedIds,
+    updatedAt,
+    seq,
+  };
+};
+
+export function mergeCardsIndexDocs(
+  boardId: string,
+  docs: Array<CardsIndexDoc | null | undefined>
+): CardsIndexDoc {
+  const candidates: CardsIndexCandidate[] = docs
+    .filter((doc): doc is CardsIndexDoc => !!doc && doc.boardId === boardId)
+    .map((doc, idx) => ({
+      name: `merge_doc_${idx}`,
+      doc,
+      // Preserve caller order for conflict resolution (later docs win) while still
+      // allowing real timestamps to drive freshness metadata.
+      stamp: idx + 1,
+    }));
+  if (!candidates.length) return emptyCardsIndexDoc(boardId);
+  return mergeCardsIndexCandidates(boardId, candidates);
+}
+
+export type MergedCardsIndexMeta = {
+  doc: CardsIndexDoc;
+  newest: CardsIndexCandidate;
+  candidates: CardsIndexCandidate[];
+};
+
+export async function loadNewestCardsIndexWithMeta(
+  board: QDeckBoard,
+  opts?: { issuerHints?: string[] }
+): Promise<CardsIndexCandidate | null> {
+  const candidates = await loadCardsIndexCandidates(board, opts);
+  return candidates[0] ?? null;
 }
 
 export async function loadNewestCardsIndex(
@@ -201,6 +341,27 @@ export async function loadNewestCardsIndex(
   opts?: { issuerHints?: string[] }
 ): Promise<CardsIndexDoc | null> {
   const meta = await loadNewestCardsIndexWithMeta(board, opts);
+  return meta?.doc ?? null;
+}
+
+export async function loadMergedCardsIndexWithMeta(
+  board: QDeckBoard,
+  opts?: { issuerHints?: string[] }
+): Promise<MergedCardsIndexMeta | null> {
+  const candidates = await loadCardsIndexCandidates(board, opts);
+  if (!candidates.length) return null;
+  return {
+    doc: mergeCardsIndexCandidates(board.boardId, candidates),
+    newest: candidates[0],
+    candidates,
+  };
+}
+
+export async function loadMergedCardsIndex(
+  board: QDeckBoard,
+  opts?: { issuerHints?: string[] }
+): Promise<CardsIndexDoc | null> {
+  const meta = await loadMergedCardsIndexWithMeta(board, opts);
   return meta?.doc ?? null;
 }
 
@@ -362,7 +523,7 @@ export async function repairCardsIndex(
   }
 
   const issuerHints = [issuerName, board.createdBy].filter(Boolean) as string[];
-  const current = (await loadNewestCardsIndex(board, { issuerHints })) ??
+  const current = (await loadMergedCardsIndex(board, { issuerHints })) ??
     (await loadCardsIndex(issuerName, board)) ?? {
       _type: 'QDECK_CARDS_INDEX' as const,
       version: 1 as const,
@@ -388,7 +549,6 @@ export async function repairCardsIndex(
         try {
           const doc = await loadCardDoc(ref.name, board, ref.cardId);
           if (!doc || (doc as any)._type === 'QDECK_TOMBSTONE') return;
-          if (!cardAuthHeaderMatchesPublisher(doc as QDeckCard, ref.name)) return;
           if (!(await canPublisherPublishToBoard(board, { name: ref.name }))) return;
           entries.push({
             name: ref.name,
@@ -431,19 +591,15 @@ export async function addCardToIndex(
   publisherName?: string, // the *card's* publisher (defaults to issuerName for legacy)
   opts?: { skipPublish?: boolean; currentDoc?: CardsIndexDoc; card?: QDeckCard }
 ): Promise<CardsIndexDoc> {
-  const doc =
-    opts?.currentDoc ??
-    (await loadCardsIndex(issuerName, board)) ??
-    ({
-      _type: 'QDECK_CARDS_INDEX' as const,
-      version: 1 as const,
-      boardId: board.boardId,
-      cardIds: [],
-      entries: [],
-      archivedIds: [],
-      updatedAt: 0,
-      seq: 0,
-    } as CardsIndexDoc);
+  const issuerHints = [issuerName, publisherName, board.createdBy].filter(Boolean) as string[];
+  const remoteMerged =
+    (await loadMergedCardsIndex(board, { issuerHints })) ??
+    (await loadCardsIndex(issuerName, board));
+  const doc = mergeCardsIndexDocs(board.boardId, [
+    remoteMerged,
+    opts?.currentDoc,
+    emptyCardsIndexDoc(board.boardId),
+  ]);
 
   const pub = publisherName || issuerName;
 
@@ -484,11 +640,14 @@ export async function addCardToIndex(
 }
 
 export async function removeCardFromIndex(issuerName: string, board: QDeckBoard, cardId: string) {
-  const doc = await loadCardsIndex(issuerName, board);
+  const doc =
+    (await loadMergedCardsIndex(board, { issuerHints: [issuerName, board.createdBy] })) ??
+    (await loadCardsIndex(issuerName, board));
   if (!doc) return;
   const next = {
     ...doc,
     cardIds: doc.cardIds.filter((id) => id !== cardId),
+    entries: (doc.entries ?? []).filter((entry) => entry.cardId !== cardId),
     archivedIds: (doc.archivedIds || []).filter((id) => id !== cardId),
     updatedAt: Date.now(),
     seq: (doc.seq ?? 0) + 1,
@@ -502,16 +661,10 @@ export async function updateCardArchiveState(
   cardId: string,
   archived: boolean
 ) {
-  const doc = (await loadCardsIndex(issuerName, board)) ?? {
-    _type: 'QDECK_CARDS_INDEX' as const,
-    version: 1 as const,
-    boardId: board.boardId,
-    cardIds: [],
-    entries: [],
-    archivedIds: [],
-    updatedAt: 0,
-    seq: 0,
-  };
+  const doc =
+    (await loadMergedCardsIndex(board, { issuerHints: [issuerName, board.createdBy] })) ??
+    (await loadCardsIndex(issuerName, board)) ??
+    emptyCardsIndexDoc(board.boardId);
   const archivedIds = new Set(doc.archivedIds || []);
   if (archived) archivedIds.add(cardId);
   else archivedIds.delete(cardId);
@@ -2296,10 +2449,18 @@ export async function deleteBoardById(
   // cascade as before...
   let cards: QDeckCard[] | undefined;
   if (opts?.cascadeCards) {
-    const idx = await loadCardsIndex(issuerName, board).catch(() => null);
-    if (idx?.cardIds?.length) {
+    const idx = await loadMergedCardsIndex(board, {
+      issuerHints: [issuerName, board.createdBy].filter(Boolean) as string[],
+    }).catch(() => null);
+    const refs =
+      idx?.entries?.length && idx.entries.some((entry) => entry?.name && entry?.cardId)
+        ? idx.entries
+            .filter((entry) => entry?.name && entry?.cardId)
+            .map((entry) => ({ name: entry.name, cardId: entry.cardId }))
+        : (idx?.cardIds ?? []).map((cardId) => ({ name: board.createdBy, cardId }));
+    if (refs.length) {
       const docs = await Promise.all(
-        idx.cardIds.map((cid) => loadCardDoc(issuerName, board, cid).catch(() => null))
+        refs.map((ref) => loadCardDoc(ref.name, board, ref.cardId).catch(() => null))
       );
       cards = (docs.filter(Boolean) as QDeckCard[]).filter((d) => !isTombstone(d));
     } else {

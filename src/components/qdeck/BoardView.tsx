@@ -54,6 +54,7 @@ import {
   InputLabel,
   Select,
   Stack,
+  Skeleton,
   ToggleButton,
   ToggleButtonGroup,
   useTheme,
@@ -102,6 +103,7 @@ type AddCardInlineProps = {
   onCancel: () => void;
   onSubmit: (draft: NewCardDraft) => void;
   canStartInProgress?: boolean;
+  disabled?: boolean;
 };
 
 type AddPosition = 'top' | 'bottom';
@@ -131,6 +133,7 @@ export const AddCardInline = memo(function AddCardInline({
   onCancel,
   onSubmit,
   canStartInProgress,
+  disabled,
 }: AddCardInlineProps) {
   const [title, setTitle] = useState('');
   const [quick, setQuick] = useState('');
@@ -170,6 +173,7 @@ export const AddCardInline = memo(function AddCardInline({
         size="small"
         placeholder="Card title…"
         value={title}
+        disabled={disabled}
         onChange={(e) => setTitle(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && title.trim()) submit();
@@ -180,6 +184,7 @@ export const AddCardInline = memo(function AddCardInline({
         size="small"
         placeholder="Quick description (plain text)…"
         value={quick}
+        disabled={disabled}
         onChange={(e) => setQuick(e.target.value)}
         multiline
         minRows={2}
@@ -192,6 +197,7 @@ export const AddCardInline = memo(function AddCardInline({
             labelId={`prio-${listId}`}
             label="Priority"
             value={priority}
+            disabled={disabled}
             onChange={(e) => setPriority((e.target as HTMLSelectElement).value as Priority)}
           >
             <option value="CRITICAL">CRITICAL</option>
@@ -206,6 +212,7 @@ export const AddCardInline = memo(function AddCardInline({
           inputProps={{ min: 0 }}
           label="ETA (min)"
           value={eta}
+          disabled={disabled}
           onChange={(e) => setEta(e.target.value === '' ? '' : Number(e.target.value))}
           sx={{ width: '9rem' }}
         />
@@ -215,6 +222,7 @@ export const AddCardInline = memo(function AddCardInline({
         label="Tags (comma-separated)"
         placeholder="ui, qortal, v1"
         value={tagsCsv}
+        disabled={disabled}
         onChange={(e) => setTagsCsv(e.target.value)}
       />
       <FormControlLabel
@@ -222,7 +230,7 @@ export const AddCardInline = memo(function AddCardInline({
           <Checkbox
             checked={startInProgress}
             onChange={(e) => setStartInProgress(e.target.checked)}
-            disabled={!canStartInProgress}
+            disabled={disabled || !canStartInProgress}
           />
         }
         label="Create this card already in progress"
@@ -231,7 +239,12 @@ export const AddCardInline = memo(function AddCardInline({
         <Button size="small" onClick={onCancel}>
           Cancel
         </Button>
-        <Button size="small" variant="contained" onClick={submit} disabled={!title.trim()}>
+        <Button
+          size="small"
+          variant="contained"
+          onClick={submit}
+          disabled={disabled || !title.trim()}
+        >
           Add
         </Button>
       </Stack>
@@ -250,6 +263,7 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
     cards,
     cardVariants,
     archivedCardIds,
+    cardsLoading,
     moveCard,
     createCard,
     // updateCard,
@@ -833,6 +847,14 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
 
   const handleCreateCard = useCallback(
     async (listId: string, position: AddPosition, draft: NewCardDraft) => {
+      if (cardsLoading) {
+        await alert(
+          'Cards are still loading. Please wait for the board to finish hydrating before creating a card.',
+          'Board still loading',
+          { severity: 'info' }
+        );
+        return;
+      }
       const inProgressListId =
         draft.startInProgress && board
           ? board.lists.find((l) => {
@@ -912,6 +934,7 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
     },
     [
       alert,
+      cardsLoading,
       createCard,
       editorGroupIds,
       editorGroups,
@@ -1411,7 +1434,9 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
                         variant="outlined"
                         onClick={() => setAddingForList({ listId: list.listId, position: 'top' })}
                         disabled={
-                          addingForList?.listId === list.listId && addingForList.position === 'top'
+                          cardsLoading ||
+                          (addingForList?.listId === list.listId &&
+                            addingForList.position === 'top')
                         }
                         sx={{ textTransform: 'none' }}
                       >
@@ -1436,6 +1461,7 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
                       onCancel={() => setAddingForList(null)}
                       onSubmit={(draft) => handleCreateCard(list.listId, 'top', draft)}
                       canStartInProgress={Boolean(identity?.name)}
+                      disabled={cardsLoading}
                     />
                   </Box>
                 )}
@@ -1455,14 +1481,29 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
                         pr: '0.25rem',
                       }}
                     >
-                      <ListColumn
-                        issuerName={issuerName}
-                        list={list}
-                        cardIds={listCardIds}
-                        onCardClick={openCard}
-                        onManualReorder={markManualReorder}
-                        forceMinimized={isMinimalView}
-                      />
+                      {cardsLoading && listCardIds.length === 0 ? (
+                        <Stack spacing={1} sx={{ px: '0.25rem', pt: '0.25rem' }}>
+                          {[0, 1, 2].map((idx) => (
+                            <Paper
+                              key={`${list.listId}-placeholder-${idx}`}
+                              variant="outlined"
+                              sx={{ p: 1 }}
+                            >
+                              <Skeleton variant="text" width="70%" />
+                              <Skeleton variant="text" width="45%" />
+                            </Paper>
+                          ))}
+                        </Stack>
+                      ) : (
+                        <ListColumn
+                          issuerName={issuerName}
+                          list={list}
+                          cardIds={listCardIds}
+                          onCardClick={openCard}
+                          onManualReorder={markManualReorder}
+                          forceMinimized={isMinimalView}
+                        />
+                      )}
                     </Box>
                   </SortableContext>
                 </ListDroppable>
@@ -1473,12 +1514,14 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
                       onCancel={() => setAddingForList(null)}
                       onSubmit={(draft) => handleCreateCard(list.listId, 'bottom', draft)}
                       canStartInProgress={Boolean(identity?.name)}
+                      disabled={cardsLoading}
                     />
                   ) : (
                     <Button
                       size="small"
                       variant="outlined"
                       onClick={() => setAddingForList({ listId: list.listId, position: 'bottom' })}
+                      disabled={cardsLoading}
                     >
                       Add card
                     </Button>

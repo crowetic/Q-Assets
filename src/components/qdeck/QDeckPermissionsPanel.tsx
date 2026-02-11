@@ -34,13 +34,14 @@ import {
   saveBoardDoc,
   updateCardArchiveState,
   repairCardsIndex,
-  loadNewestCardsIndex,
+  loadMergedCardsIndex,
 } from '../../utils/qdeckApi';
 import { useAuth } from 'qapp-core';
 import pLimit from 'p-limit';
 import { getAccountGroups, type GroupSummary } from '../../utils/qortalApi';
 import { fetchGroupMembers } from '../../utils/access';
 import { isQAddressFormat } from '../../utils/address';
+import { canPublisherPublishToBoard } from '../../utils/qdeckAccess';
 
 declare function qortalRequest<T = any>(request: any): Promise<T>;
 
@@ -358,7 +359,7 @@ export default function QDeckPermissionsPanel() {
       const resolved = await resolveBoardForRead(myName, entry.boardId, entry.visibility as any);
       if (!resolved) throw new Error('Failed to load board doc');
       const idx =
-        (await loadNewestCardsIndex(resolved, {
+        (await loadMergedCardsIndex(resolved, {
           issuerHints: [resolved.createdBy, myName].filter(Boolean) as string[],
         })) ?? null;
       const refs =
@@ -366,9 +367,22 @@ export default function QDeckPermissionsPanel() {
           ? idx.entries
           : idx?.cardIds?.map((cid) => ({ name: resolved.createdBy, cardId: cid })) || [];
       const archived = new Set(idx?.archivedIds ?? []);
+      const allowedRefs = (
+        await Promise.all(
+          refs.map(async (ref) => {
+            const publisher = (ref.name || '').trim();
+            if (!publisher || !ref.cardId) return null;
+            const canPublish = await canPublisherPublishToBoard(resolved, {
+              name: publisher,
+            }).catch(() => false);
+            if (!canPublish) return null;
+            return { name: publisher, cardId: ref.cardId };
+          })
+        )
+      ).filter(Boolean) as Array<{ name: string; cardId: string }>;
 
       const cards = await Promise.all(
-        refs.map((r) =>
+        allowedRefs.map((r) =>
           limit(async () => {
             try {
               const doc = await loadCardDoc(r.name, resolved, r.cardId);

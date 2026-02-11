@@ -47,6 +47,9 @@ Q-Assets is an asset issuance, management, trading, and information Q-App for th
 - Join in-progress tasks, cancel your start, and add completion notes that appear on hover.
 - Optionally create cards already in progress to prefill the start task status.
 - Search within a board to quickly find cards by title, tags, assignees, or list name.
+- Keep multi-publisher board statuses consistent by merging authorized card indexes, so in-progress/completed changes stay aligned across different users and views.
+- Prevent publishing a new card before board hydration finishes, avoiding partial indexes when opening busy boards.
+- Show list-level loading placeholders while board cards hydrate for faster perceived load feedback.
 - Check for new board updates in the background and show a “new changes” banner so you can load them on demand.
 - Ignore your own publishes when deciding whether to show the “new changes” banner.
 - Pause Q-Deck polling while batch publish queues have pending changes to avoid overwriting local edits.

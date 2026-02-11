@@ -32,13 +32,13 @@ import {
   resolveBoardForReadWithMeta,
   buildProjectPublishPayload,
   buildProjectsIndexPublishPayload,
-  loadNewestCardsIndex,
+  loadMergedCardsIndex,
   loadCardDoc,
   createBoardAndIndex,
   canEncryptToGroup,
 } from '../utils/qdeckApi';
 import { boardUrl } from '../utils/qdeckApi';
-import { canUserEditProject } from '../utils/qdeckAccess';
+import { canPublisherPublishToBoard, canUserEditProject } from '../utils/qdeckAccess';
 import { QDeckId } from '../constants/qdeckIdentifiers';
 import { searchSimpleByIdPrefixOnly } from '../utils/searchSimple';
 import { useAlert } from '../components/alerts';
@@ -434,7 +434,7 @@ export default function QDeckProjectPage() {
         if (!probe?.doc) continue;
         const board = probe.doc;
         details[`${ref.issuerName}:${ref.boardId}`] = board;
-        const index = await loadNewestCardsIndex(board, {
+        const index = await loadMergedCardsIndex(board, {
           issuerHints: [ref.issuerName, board.createdBy].filter(Boolean),
         }).catch(() => null);
         if (!index) continue;
@@ -445,9 +445,30 @@ export default function QDeckProjectPage() {
           index.entries?.length && index.entries.some((e) => e.cardId && e.name)
             ? index.entries
             : (index.cardIds ?? []).map((cardId) => ({ name: board.createdBy, cardId }));
-        const activeEntries = entries.filter(
-          (entry) => entry.cardId && !archived.has(entry.cardId)
-        );
+        const publisherOkCache = new Map<string, Promise<boolean>>();
+        const canPublisher = (publisherName: string) => {
+          const key = publisherName.trim().toLowerCase();
+          const existing = publisherOkCache.get(key);
+          if (existing) return existing;
+          const next = canPublisherPublishToBoard(board, { name: publisherName }).catch(
+            () => false
+          );
+          publisherOkCache.set(key, next);
+          return next;
+        };
+        const activeEntries = (
+          await Promise.all(
+            entries.map(async (entry) => {
+              const cardId = (entry.cardId || '').trim();
+              if (!cardId || archived.has(cardId)) return null;
+              const publisher = (entry.name || board.createdBy || '').trim();
+              if (!publisher) return null;
+              const allowed = await canPublisher(publisher);
+              if (!allowed) return null;
+              return { ...entry, cardId, name: publisher };
+            })
+          )
+        ).filter(Boolean) as Array<IndexEntry & { name: string; cardId: string }>;
         const isDetailedEntry = (entry: IndexEntry): entry is DetailedEntry =>
           'title' in entry ||
           'statusListId' in entry ||
@@ -477,9 +498,7 @@ export default function QDeckProjectPage() {
         const toFetch = activeEntries.filter((entry) => !hasIndexSchedule(entry));
         const cards = await Promise.all(
           toFetch.map((entry) =>
-            limit(() => loadCardDoc(entry.name || board.createdBy, board, entry.cardId)).catch(
-              () => null
-            )
+            limit(() => loadCardDoc(entry.name, board, entry.cardId)).catch(() => null)
           )
         );
         const byId = new Map<string, ProjectCardInfo>();
