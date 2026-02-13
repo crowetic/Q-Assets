@@ -2,7 +2,7 @@
 
 Q-Assets is an asset issuance, management, trading, and information Q-App for the Qortal Blockchain.
 
-- Open pages faster with route-level lazy loading and deferred background startup tasks.
+- Improve startup reliability by bundling core pages eagerly and deferring background startup tasks.
 - Reduce startup request spikes by batching notification refreshes and staggering background scanner boot timing.
 
 ## News & Notifications

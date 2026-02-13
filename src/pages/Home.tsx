@@ -1,10 +1,9 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import HoverPanel from '../components/HoverPanel';
 import { Box, Skeleton } from '@mui/material';
+import QAssetsNewsSection from '../components/news/QAssetsNewsSection';
 // import { Grid } from '@mui/material';
-
-const LazyNewsSection = lazy(() => import('../components/news/QAssetsNewsSection'));
 
 const NewsLoadingPlaceholder = () => (
   <Box sx={{ width: '100%', maxWidth: '95%', mt: 4 }}>
@@ -94,13 +93,7 @@ const Home = () => {
 
       {/* Q-Assets News hub (list/detail toggles live inside this component) */}
       <Box ref={newsAnchorRef} sx={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
-        {showNews ? (
-          <Suspense fallback={<NewsLoadingPlaceholder />}>
-            <LazyNewsSection />
-          </Suspense>
-        ) : (
-          <NewsLoadingPlaceholder />
-        )}
+        {showNews ? <QAssetsNewsSection /> : <NewsLoadingPlaceholder />}
       </Box>
     </Box>
   );

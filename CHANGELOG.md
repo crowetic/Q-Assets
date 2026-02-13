@@ -9,7 +9,7 @@
 - Expanded private-board view checks to include explicit owner/editor allowlists before group fallback.
 - Added explicit effective permission summaries (view/edit/admin behavior) to Q-Deck board and project permissions panels.
 - Parallelized board/project permissions panel doc hydration so large admin pages load faster.
-- Switched route pages to lazy loading with suspense fallbacks and tuned Vite manual chunking to reduce initial JavaScript payload.
+- Switched route pages back to eager loading to prevent intermittent `failed to fetch dynamically imported module` errors on unreliable gateways.
 - Fixed a production bundling regression where split vendor chunks could initialize in a circular order and crash startup with `Cannot read properties of undefined (reading 'useState')`.
 - Deferred startup background pollers (notifications/unconfirmed tx scanner) and staggered their boot timing to avoid startup request spikes.
 - Added batched notification scope refreshes so auto-fetch cycles process fewer scopes per interval on busy accounts.
