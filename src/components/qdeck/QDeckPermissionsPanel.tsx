@@ -38,12 +38,15 @@ import {
 } from '../../utils/qdeckApi';
 import { useAuth } from 'qapp-core';
 import pLimit from 'p-limit';
-import { getAccountGroups, type GroupSummary } from '../../utils/qortalApi';
+import {
+  getAccountDataCached,
+  getAccountGroups,
+  getNameDataCached,
+  type GroupSummary,
+} from '../../utils/qortalApi';
 import { fetchGroupMembers } from '../../utils/access';
 import { isQAddressFormat } from '../../utils/address';
-import { canPublisherPublishToBoard } from '../../utils/qdeckAccess';
-
-declare function qortalRequest<T = any>(request: any): Promise<T>;
+import { canPublisherPublishToBoard, describeBoardPermissions } from '../../utils/qdeckAccess';
 
 type EditableBoard = QDeckBoard & {
   isDirty?: boolean;
@@ -75,7 +78,7 @@ export default function QDeckPermissionsPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cardsState, setCardsState] = useState<Record<string, BoardCardsState>>({});
-  const limit = useMemo(() => pLimit(2), []);
+  const limit = useMemo(() => pLimit(4), []);
   const [myGroups, setMyGroups] = useState<GroupSummary[]>([]);
   const [repairingBoards, setRepairingBoards] = useState<Record<string, boolean>>({});
   const [repairedBoardId, setRepairedBoardId] = useState<string | null>(null);
@@ -94,7 +97,7 @@ export default function QDeckPermissionsPanel() {
       return trimmed;
     }
     try {
-      const data = await qortalRequest({ action: 'GET_NAME_DATA', name: trimmed });
+      const data = await getNameDataCached(trimmed);
       const owner = data?.owner;
       if (typeof owner === 'string' && owner.trim()) {
         const addr = owner.trim();
@@ -113,7 +116,7 @@ export default function QDeckPermissionsPanel() {
     const cached = publicKeyCacheRef.current.get(trimmed);
     if (cached) return cached;
     try {
-      const data = await qortalRequest({ action: 'GET_ACCOUNT_DATA', address: trimmed });
+      const data = await getAccountDataCached(trimmed);
       const publicKey = data?.publicKey;
       if (typeof publicKey === 'string' && publicKey.trim()) {
         const pk = publicKey.trim();
@@ -215,43 +218,48 @@ export default function QDeckPermissionsPanel() {
       if (!myName) throw new Error('Authenticate to load your boards');
       const idx = await loadBoardsIndex(myName);
       const entries = idx?.boards ?? [];
-      const mapped: EditableBoard[] = [];
+      const mapped = (
+        await Promise.all(
+          entries.map((entry) =>
+            limit(async () => {
+              const issuer = entry.issuerName || idx?.issuerName || myName;
+              const resolved = await resolveBoardForRead(
+                issuer,
+                entry.boardId,
+                entry.visibility
+              ).catch(() => null);
 
-      for (const entry of entries) {
-        const issuer = entry.issuerName || idx?.issuerName || myName;
-        // load full board doc for accurate perms (skip private for now)
-        const resolved = await resolveBoardForRead(issuer, entry.boardId, entry.visibility).catch(
-          () => null
-        );
+              const base = resolved || (entry as any);
+              const ownerGroups = base.ownerGroups || [];
+              const editorGroups = Array.from(
+                new Set([...(base.editorGroups || base.groupsAllowed || []), ...ownerGroups])
+              );
+              const privMode =
+                base.privateMeta?.mode ??
+                (base.privateMeta?.groupId != null ? 'group' : entry.mode);
 
-        const base = resolved || (entry as any);
-        const ownerGroups = base.ownerGroups || [];
-        const editorGroups = Array.from(
-          new Set([...(base.editorGroups || base.groupsAllowed || []), ...ownerGroups])
-        );
-        const privMode =
-          base.privateMeta?.mode ?? (base.privateMeta?.groupId != null ? 'group' : entry.mode);
-
-        mapped.push({
-          ...(base as any),
-          visibility: base.visibility ?? entry.visibility,
-          owners: base.owners || [base.createdBy || issuer || myName],
-          ownerGroups,
-          editors: base.editors || base.usersAllowed || [],
-          editorGroups,
-          featureFlags: base.featureFlags || {},
-          createdBy: base.createdBy || issuer || myName,
-          // show encryption mode for private boards
-          encryption:
-            entry.visibility === 'private'
-              ? privMode === 'direct'
-                ? 'Direct'
-                : privMode === 'group'
-                  ? 'Group'
-                  : 'Private'
-              : undefined,
-        });
-      }
+              return {
+                ...(base as any),
+                visibility: base.visibility ?? entry.visibility,
+                owners: base.owners || [base.createdBy || issuer || myName],
+                ownerGroups,
+                editors: base.editors || base.usersAllowed || [],
+                editorGroups,
+                featureFlags: base.featureFlags || {},
+                createdBy: base.createdBy || issuer || myName,
+                encryption:
+                  entry.visibility === 'private'
+                    ? privMode === 'direct'
+                      ? 'Direct'
+                      : privMode === 'group'
+                        ? 'Group'
+                        : 'Private'
+                    : undefined,
+              } as EditableBoard;
+            })
+          )
+        )
+      ).filter(Boolean) as EditableBoard[];
       setBoards(mapped);
     } catch (e: any) {
       setError(e?.message || 'Failed to load boards index');
@@ -604,6 +612,7 @@ export default function QDeckPermissionsPanel() {
                   } can be added, and encryption settings stay fixed.`
                 : 'Private board uses direct encryption; only existing recipients can be added.'
               : null;
+            const permissionSummary = describeBoardPermissions(b);
             return (
               <Card key={b.boardId} variant="outlined">
                 {privateNote && (
@@ -626,6 +635,50 @@ export default function QDeckPermissionsPanel() {
                       <Chip size="small" color="warning" label="Unsaved" sx={{ fontWeight: 600 }} />
                     )}
                   </Box>
+
+                  <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
+                    <Chip
+                      size="small"
+                      color={permissionSummary.modeLabel === 'Enhanced' ? 'primary' : 'default'}
+                      label={`Permissions: ${permissionSummary.modeLabel}`}
+                    />
+                    <Chip
+                      size="small"
+                      color={b.adminOverride ? 'warning' : 'default'}
+                      label={b.adminOverride ? 'Admin override on' : 'Admin override off'}
+                    />
+                  </Stack>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', mt: 0.75 }}
+                  >
+                    {permissionSummary.viewRule}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', mt: 0.25 }}
+                  >
+                    {permissionSummary.editRule}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', mt: 0.25 }}
+                  >
+                    {permissionSummary.adminRule}
+                  </Typography>
+                  {permissionSummary.notes.map((note) => (
+                    <Typography
+                      key={`${b.boardId}:${note}`}
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ display: 'block', mt: 0.25 }}
+                    >
+                      {note}
+                    </Typography>
+                  ))}
 
                   <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ mt: 1 }}>
                     <Box sx={{ flex: 1 }}>

@@ -21,14 +21,32 @@ const DEBUG = false;
 
 export const UnconfirmedTxAutoScanner: React.FC<{
   intervalMs?: number;
+  hiddenIntervalMs?: number;
+  startDelayMs?: number;
   missGoneThreshold?: number;
   limit?: number;
-}> = ({ intervalMs = 1000, missGoneThreshold = 2, limit = 200 }) => {
+}> = ({
+  intervalMs = 1000,
+  hiddenIntervalMs = 15_000,
+  startDelayMs = 400,
+  missGoneThreshold = 2,
+  limit = 200,
+}) => {
   const { upsertSeen, incrementMissesAndConfirmGone } = useTxTracker();
   const { address: authAddr, authenticateUser } = useAuth() as any;
 
   const [scanAddress, setScanAddress] = useState<string | null>(null);
+  const [isVisible, setIsVisible] = useState<boolean>(
+    typeof document === 'undefined' ? true : document.visibilityState === 'visible'
+  );
   const authKickoff = useRef(false);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const onVisibility = () => setIsVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
 
   // 1) Try to authenticate exactly once if we have no address yet
   useEffect(() => {
@@ -144,18 +162,22 @@ export const UnconfirmedTxAutoScanner: React.FC<{
       incrementMissesAndConfirmGone(seen, missGoneThreshold, now);
 
       if (!cancelled) {
-        t = setTimeout(loop, intervalMs + Math.floor(Math.random() * 1000));
+        const baseInterval = isVisible ? intervalMs : hiddenIntervalMs;
+        t = setTimeout(loop, baseInterval + Math.floor(Math.random() * 1000));
       }
     };
 
-    t = setTimeout(loop, 400);
+    t = setTimeout(loop, startDelayMs);
     return () => {
       cancelled = true;
       if (t) clearTimeout(t);
     };
   }, [
     scanAddress,
+    isVisible,
     intervalMs,
+    hiddenIntervalMs,
+    startDelayMs,
     missGoneThreshold,
     limit,
     upsertSeen,

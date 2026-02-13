@@ -41,45 +41,200 @@ export interface GroupSummary {
   isAdmin: boolean;
 }
 
+const ACCOUNT_GROUPS_CACHE_TTL_MS = 45_000;
+const accountGroupsCache = new Map<string, { expiresAt: number; data: GroupSummary[] }>();
+const accountGroupsInFlight = new Map<string, Promise<GroupSummary[]>>();
+
+const NAME_DATA_CACHE_TTL_MS = 120_000;
+const ACCOUNT_DATA_CACHE_TTL_MS = 45_000;
+const PRIMARY_NAME_CACHE_TTL_MS = 120_000;
+const nameDataCache = new Map<string, { expiresAt: number; data: any }>();
+const nameDataInFlight = new Map<string, Promise<any>>();
+const accountDataCache = new Map<string, { expiresAt: number; data: any }>();
+const accountDataInFlight = new Map<string, Promise<any>>();
+const primaryNameCache = new Map<string, { expiresAt: number; data: string }>();
+const primaryNameInFlight = new Map<string, Promise<string>>();
+
+const cloneValue = <T>(value: T): T => {
+  if (Array.isArray(value)) return [...value] as T;
+  if (value && typeof value === 'object') return { ...(value as any) } as T;
+  return value;
+};
+
+const getCachedRequestValue = <T>(
+  cache: Map<string, { expiresAt: number; data: T }>,
+  key: string
+): T | undefined => {
+  const cached = cache.get(key);
+  if (!cached) return undefined;
+  if (cached.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return undefined;
+  }
+  return cloneValue(cached.data);
+};
+
+const setCachedRequestValue = <T>(
+  cache: Map<string, { expiresAt: number; data: T }>,
+  key: string,
+  value: T,
+  ttlMs: number
+) => {
+  cache.set(key, { expiresAt: Date.now() + ttlMs, data: cloneValue(value) });
+};
+
+export async function getNameDataCached(name: string): Promise<any> {
+  const normalized = (name || '').trim();
+  if (!normalized) throw new Error('name is required');
+  const key = normalized.toLowerCase();
+  const cached = getCachedRequestValue(nameDataCache, key);
+  if (cached !== undefined) return cached;
+
+  const inFlight = nameDataInFlight.get(key);
+  if (inFlight) return cloneValue(await inFlight);
+
+  const request = Promise.resolve().then(() =>
+    qortalRequest({ action: 'GET_NAME_DATA', name: normalized })
+  );
+  nameDataInFlight.set(key, request);
+
+  try {
+    const data = await request;
+    setCachedRequestValue(nameDataCache, key, data, NAME_DATA_CACHE_TTL_MS);
+    return cloneValue(data);
+  } finally {
+    nameDataInFlight.delete(key);
+  }
+}
+
+export async function getAccountDataCached(address: string): Promise<any> {
+  const normalized = (address || '').trim();
+  if (!normalized) throw new Error('address is required');
+  const key = normalized;
+  const cached = getCachedRequestValue(accountDataCache, key);
+  if (cached !== undefined) return cached;
+
+  const inFlight = accountDataInFlight.get(key);
+  if (inFlight) return cloneValue(await inFlight);
+
+  const request = Promise.resolve().then(() =>
+    qortalRequest({ action: 'GET_ACCOUNT_DATA', address: normalized })
+  );
+  accountDataInFlight.set(key, request);
+
+  try {
+    const data = await request;
+    setCachedRequestValue(accountDataCache, key, data, ACCOUNT_DATA_CACHE_TTL_MS);
+    return cloneValue(data);
+  } finally {
+    accountDataInFlight.delete(key);
+  }
+}
+
+export async function getPrimaryNameCached(address: string): Promise<string> {
+  const normalized = (address || '').trim();
+  if (!normalized) throw new Error('address is required');
+  const key = normalized;
+  const cached = getCachedRequestValue(primaryNameCache, key);
+  if (cached !== undefined) return cached;
+
+  const inFlight = primaryNameInFlight.get(key);
+  if (inFlight) return await inFlight;
+
+  const request = Promise.resolve().then(async () => {
+    const res = await qortalRequest({ action: 'GET_PRIMARY_NAME', address: normalized });
+    return typeof res === 'string' ? res : '';
+  });
+  primaryNameInFlight.set(key, request);
+
+  try {
+    const value = await request;
+    setCachedRequestValue(primaryNameCache, key, value, PRIMARY_NAME_CACHE_TTL_MS);
+    return value;
+  } finally {
+    primaryNameInFlight.delete(key);
+  }
+}
+
+const cloneGroupSummaries = (groups: GroupSummary[]): GroupSummary[] =>
+  groups.map((group) => ({ ...group }));
+
 // Low-level call to REST endpoint
 export async function getAccountGroups(
   address: string,
   opts?: { signal?: AbortSignal }
 ): Promise<GroupSummary[]> {
-  if (!address) throw new Error('address is required');
-  const url = `/groups/member/${encodeURIComponent(address)}`;
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: { Accept: 'application/json' },
-    signal: opts?.signal,
-  });
+  const trimmedAddress = (address || '').trim();
+  if (!trimmedAddress) throw new Error('address is required');
+  const cacheKey = trimmedAddress;
+  const canUseCache = !opts?.signal;
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(
-      `GET ${url} failed: ${res.status} ${res.statusText}${text ? ` — ${text}` : ''}`
-    );
+  if (canUseCache) {
+    const cached = accountGroupsCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cloneGroupSummaries(cached.data);
+    }
+    const inFlight = accountGroupsInFlight.get(cacheKey);
+    if (inFlight) {
+      const groups = await inFlight;
+      return cloneGroupSummaries(groups);
+    }
   }
 
-  const data = await res.json();
-  if (!Array.isArray(data)) {
-    throw new Error(`GET ${url} returned non-array payload`);
+  const request = (async () => {
+    const url = `/groups/member/${encodeURIComponent(trimmedAddress)}`;
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: opts?.signal,
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(
+        `GET ${url} failed: ${res.status} ${res.statusText}${text ? ` — ${text}` : ''}`
+      );
+    }
+
+    const data = await res.json();
+    if (!Array.isArray(data)) {
+      throw new Error(`GET ${url} returned non-array payload`);
+    }
+
+    return data.map((g: any) => ({
+      groupId: Number(g.groupId),
+      owner: String(g.owner),
+      groupName: String(g.groupName ?? ''),
+      description: String(g.description ?? ''),
+      created: Number(g.created ?? 0),
+      isOpen: Boolean(g.isOpen),
+      approvalThreshold: String(g.approvalThreshold ?? ''),
+      minimumBlockDelay: Number(g.minimumBlockDelay ?? 0),
+      maximumBlockDelay: Number(g.maximumBlockDelay ?? 0),
+      memberCount: Number(g.memberCount ?? 0),
+      isAdmin: Boolean(g.isAdmin),
+      updated: Number(g.updated ?? g.created ?? 0),
+    })) as GroupSummary[];
+  })();
+
+  if (canUseCache) {
+    accountGroupsInFlight.set(cacheKey, request);
   }
 
-  return data.map((g: any) => ({
-    groupId: Number(g.groupId),
-    owner: String(g.owner),
-    groupName: String(g.groupName ?? ''),
-    description: String(g.description ?? ''),
-    created: Number(g.created ?? 0),
-    isOpen: Boolean(g.isOpen),
-    approvalThreshold: String(g.approvalThreshold ?? ''),
-    minimumBlockDelay: Number(g.minimumBlockDelay ?? 0),
-    maximumBlockDelay: Number(g.maximumBlockDelay ?? 0),
-    memberCount: Number(g.memberCount ?? 0),
-    isAdmin: Boolean(g.isAdmin),
-    updated: Number(g.updated ?? g.created ?? 0),
-  })) as GroupSummary[];
+  try {
+    const groups = await request;
+    if (canUseCache) {
+      accountGroupsCache.set(cacheKey, {
+        expiresAt: Date.now() + ACCOUNT_GROUPS_CACHE_TTL_MS,
+        data: cloneGroupSummaries(groups),
+      });
+    }
+    return cloneGroupSummaries(groups);
+  } finally {
+    if (canUseCache) {
+      accountGroupsInFlight.delete(cacheKey);
+    }
+  }
 }
 
 export async function getGroupById(
@@ -164,7 +319,7 @@ async function resolveRecipientToAddress(recipient: string): Promise<string> {
 
   // Treat as Qortal name → owner address
   try {
-    const data = await qortalRequest({ action: 'GET_NAME_DATA', name: recipient.trim() });
+    const data = await getNameDataCached(recipient.trim());
     const addr = data?.owner;
     if (typeof addr === 'string' && addr.startsWith('Q')) return addr;
   } catch {
@@ -246,10 +401,7 @@ export async function transferAsset(
 
 export const getPrimaryAccountName = async (address: string): Promise<string> => {
   try {
-    const name = await qortalRequest({
-      action: 'GET_PRIMARY_NAME',
-      address,
-    });
+    const name = await getPrimaryNameCached(address);
     return name ?? '';
   } catch (err) {
     console.error(`Failed to get primary name for ${address}:`, err);
@@ -258,7 +410,7 @@ export const getPrimaryAccountName = async (address: string): Promise<string> =>
 };
 
 export async function getAccount(address: string): Promise<any> {
-  return await qortalRequest({ action: 'GET_ACCOUNT_DATA', address });
+  return await getAccountDataCached(address);
 }
 
 export async function getAllAccountNames(address: string): Promise<string[]> {

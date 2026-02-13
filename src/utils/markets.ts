@@ -1,5 +1,6 @@
 // src/utils/markets.ts
 import { getAssetBalances } from '../utils/qortalAssetRequests';
+import { getAccountDataCached } from './qortalApi';
 
 /* =========================
     Types
@@ -111,7 +112,7 @@ export function fromBaseUnits(base: bigint | number | string, decimals: number):
 }
 
 async function getAccountData(address: string) {
-  return await qortalRequest({ action: 'GET_ACCOUNT_DATA', address });
+  return await getAccountDataCached(address);
 }
 
 async function getPublicKeyFor(address: string): Promise<string> {

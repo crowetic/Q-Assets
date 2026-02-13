@@ -29,7 +29,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import AttachFileIcon from '@mui/icons-material/AttachFile';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import FlagIcon from '@mui/icons-material/Flag';
-import { fetchAccountAvatarDataUrl } from '../../utils/qdnAvatar';
+import { fetchAccountAvatarDataUrl, peekAccountAvatarDataUrl } from '../../utils/qdnAvatar';
 import { resolvePrimaryImageDataUrl } from '../../utils/qdeckApi';
 import { priorityMeta, formatMinutes } from './ui';
 import { useTheme } from '@mui/material';
@@ -75,13 +75,24 @@ const DraggableCardInner: FC<DraggableProps> = ({
     updateCard,
     isCardCollapsed,
     setCardCollapsed,
+    archivedCardIds,
     comments,
-    loadCommentsForCard,
+    commentHeads,
+    boardLastVisitTs,
   } = useQDeck();
   const { name: userName } = useAuth();
   const card = cards[cardId];
   const commentThread = comments[cardId];
   const commentCount = commentThread?.comments?.length ?? 0;
+  const commentHead = commentHeads[cardId];
+  const hasLoadedComments = commentCount > 0;
+  const hasIndexedComments = Boolean(commentHead && commentHead.latestStamp > 0);
+  const hasComments = hasLoadedComments || hasIndexedComments;
+  const hasNewComments = Boolean(
+    commentHead && boardLastVisitTs > 0 && commentHead.latestStamp > boardLastVisitTs
+  );
+  const isArchived = archivedCardIds.has(cardId) || Boolean(card?.archived);
+  const showCommentChip = hasComments && !isArchived;
   const attachmentCount = card?.attachments?.length ?? 0;
   const [loadedAssignees, setLoadedAssignees] = useState<string[] | null>(null);
 
@@ -403,20 +414,36 @@ const DraggableCardInner: FC<DraggableProps> = ({
     [card, cards, inProgressListId, me, updateCardWithRetry]
   );
 
-  const author = card?.createdBy ?? 'U';
-  const initial = author.slice(0, 1).toUpperCase();
-  const [avatarUrl, setAvatarUrl] = useState<string | undefined>();
+  const author = (card?.createdBy ?? '').trim();
+  const initial = (author || 'U').slice(0, 1).toUpperCase();
+  const [avatarUrl, setAvatarUrl] = useState<string | undefined>(() => {
+    const cached = peekAccountAvatarDataUrl(author);
+    return cached || undefined;
+  });
   const [primaryImg, setPrimaryImg] = useState<string | undefined>();
   const primaryImgKeyRef = useRef<string>('');
   const primaryImgUrlRef = useRef<string | undefined>(undefined);
 
   // Resolve avatar
   useEffect(() => {
+    if (!author) {
+      setAvatarUrl((current) => (current === undefined ? current : undefined));
+      return;
+    }
+    const cached = peekAccountAvatarDataUrl(author);
+    if (cached !== undefined) {
+      const next = cached || undefined;
+      setAvatarUrl((current) => (current === next ? current : next));
+      return;
+    }
+    setAvatarUrl((current) => (current === undefined ? current : undefined));
     let alive = true;
     (async () => {
       try {
-        const url = await fetchAccountAvatarDataUrl(encodeURIComponent(author));
-        if (alive) setAvatarUrl(url || undefined);
+        const url = await fetchAccountAvatarDataUrl(author);
+        if (!alive) return;
+        const next = url || undefined;
+        setAvatarUrl((current) => (current === next ? current : next));
       } catch {
         /* noop */
       }
@@ -509,14 +536,6 @@ const DraggableCardInner: FC<DraggableProps> = ({
     cardId,
     primaryImg,
   ]);
-
-  useEffect(() => {
-    if (!card || commentThread) return;
-    const timer = window.setTimeout(() => {
-      void loadCommentsForCard(cardId);
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [card, cardId, commentThread, loadCommentsForCard]);
 
   useEffect(() => {
     if (!card) {
@@ -717,7 +736,7 @@ const DraggableCardInner: FC<DraggableProps> = ({
           </Stack>
         </Stack>
 
-        {!minimized && (commentThread !== undefined || (loadedAssignees?.length ?? 0) > 0) && (
+        {!minimized && (showCommentChip || (loadedAssignees?.length ?? 0) > 0) && (
           <Stack
             direction="row"
             spacing={0.35}
@@ -726,10 +745,17 @@ const DraggableCardInner: FC<DraggableProps> = ({
             flexWrap="wrap"
             sx={{ mb: minimized ? 0 : 0.4 }}
           >
-            {commentThread && (
+            {showCommentChip && (
               <Chip
                 size="small"
-                label={`${commentCount} ${commentCount === 1 ? 'comment' : 'comments'}`}
+                color={hasNewComments ? 'warning' : 'default'}
+                label={
+                  hasLoadedComments
+                    ? `${commentCount} ${commentCount === 1 ? 'comment' : 'comments'}${hasNewComments ? ' • new' : ''}`
+                    : hasNewComments
+                      ? 'comments • new'
+                      : 'comments'
+                }
                 variant="outlined"
                 sx={{ height: '1.35rem' }}
               />

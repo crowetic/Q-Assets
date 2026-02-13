@@ -19,6 +19,8 @@ import { AuthTracker } from './AuthTracker';
 import { useActiveAccountName } from '../hooks/useActiveAccountName';
 import { useAuth } from 'qapp-core';
 
+const HEADER_FONT_FAMILY = '"Exo2", "Inter", "NataSans", sans-serif';
+
 const Header = () => {
   const theme = useTheme();
   const isMdDown = useMediaQuery(theme.breakpoints.down('md'));
@@ -98,7 +100,7 @@ const Header = () => {
     py: '0.55em',
     fontSize: { xs: '0.95rem', md: '1.05rem' },
     fontWeight: 700,
-    fontFamily: 'Orbitron',
+    fontFamily: HEADER_FONT_FAMILY,
     textTransform: 'none' as const,
     color: active ? theme.palette.primary.contrastText : theme.palette.text.primary,
     borderColor: theme.palette.text.secondary,
@@ -113,6 +115,7 @@ const Header = () => {
     px: '0.85em',
     py: '0.45em',
     fontSize: { xs: '0.9rem', md: '0.95rem' },
+    fontFamily: HEADER_FONT_FAMILY,
     textTransform: 'none' as const,
     color: active ? theme.palette.primary.contrastText : theme.palette.text.primary,
     borderColor: theme.palette.text.secondary,
@@ -234,6 +237,7 @@ const Header = () => {
     <Box
       component="header"
       sx={{
+        fontFamily: HEADER_FONT_FAMILY,
         backgroundColor: theme.palette.background.default,
         borderBottom: `1px solid ${theme.palette.divider}`,
         display: 'flex',
@@ -341,7 +345,10 @@ const ActiveNameSelector = () => {
 
   return (
     <Tooltip title={namesError || 'Active name used for publishing'}>
-      <FormControl size="small" sx={{ minWidth: { xs: 140, sm: 170 } }}>
+      <FormControl
+        size="small"
+        sx={{ minWidth: { xs: 140, sm: 170 }, '& *': { fontFamily: HEADER_FONT_FAMILY } }}
+      >
         <InputLabel id="active-name-select">Active name</InputLabel>
         <Select
           labelId="active-name-select"

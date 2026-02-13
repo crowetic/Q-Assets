@@ -301,7 +301,7 @@ export default function QDeckProjectPage() {
         ]);
         if (!alive) return;
 
-        const limit = pLimit(2);
+        const limit = pLimit(4);
         const options: Array<{ boardId: string; title: string; issuerName: string }> = [];
         const seen = new Set<string>();
         const isTombstone = (size?: number) =>
@@ -419,7 +419,7 @@ export default function QDeckProjectPage() {
     }
     const token = ++loadTokenRef.current;
     setCalendarLoading(true);
-    const limit = pLimit(2);
+    const limit = pLimit(4);
     const rows: Array<{
       board: QDeckBoard;
       card: ProjectCardInfo;
@@ -627,7 +627,7 @@ export default function QDeckProjectPage() {
     if (!targets.length) return;
 
     let alive = true;
-    const limit = pLimit(2);
+    const limit = pLimit(4);
 
     (async () => {
       await Promise.all(

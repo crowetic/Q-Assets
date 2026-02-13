@@ -88,6 +88,12 @@ import { useAlert } from '../alerts';
 import { useNavigate } from 'react-router-dom';
 import { publishScopedNotification } from '../../utils/notificationPublisher';
 import ClearIcon from '@mui/icons-material/Clear';
+import {
+  getLatestQDeckBoardLoadSample,
+  isQDeckPerfEnabled,
+  setQDeckPerfEnabled,
+  subscribeQDeckBoardLoadPerf,
+} from '../../utils/qdeckPerf';
 
 type NewCardDraft = {
   title: string;
@@ -287,6 +293,40 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
   } = useQDeck();
   const navigate = useNavigate();
   const { alert } = useAlert();
+  const [perfEnabled, setPerfEnabled] = useState(() => isQDeckPerfEnabled());
+  const [perfSample, setPerfSample] = useState(() =>
+    perfEnabled ? getLatestQDeckBoardLoadSample(board?.boardId) : null
+  );
+
+  useEffect(() => {
+    if (!perfEnabled) return;
+    const sync = () => {
+      setPerfSample(getLatestQDeckBoardLoadSample(board?.boardId));
+    };
+    sync();
+    return subscribeQDeckBoardLoadPerf(sync);
+  }, [board?.boardId, perfEnabled]);
+
+  const perfPhaseSummary = useMemo(() => {
+    if (!perfSample?.phases?.length) return '';
+    return perfSample.phases
+      .map((phase) => `${phase.name}: ${Math.round(phase.durationMs)}ms`)
+      .join(' | ');
+  }, [perfSample?.phases]);
+
+  const togglePerfDiagnostics = useCallback(async () => {
+    const next = !perfEnabled;
+    setQDeckPerfEnabled(next);
+    setPerfEnabled(next);
+    if (next) {
+      setPerfSample(getLatestQDeckBoardLoadSample(board?.boardId));
+    } else {
+      setPerfSample(null);
+    }
+    await alert(`Q-Deck load diagnostics ${next ? 'enabled' : 'disabled'}.`, 'Q-Deck diagnostics', {
+      severity: 'info',
+    });
+  }, [alert, board?.boardId, perfEnabled]);
 
   const editorGroupIds = useMemo(() => {
     if (!board) return [] as number[];
@@ -1291,6 +1331,20 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
             </ListItemIcon>
             Permissions panel…
           </MenuItem>
+          <MenuItem
+            onClick={() => {
+              handleCloseMenu();
+              void togglePerfDiagnostics();
+            }}
+            sx={{ opacity: 0.66, minHeight: '2rem' }}
+          >
+            <ListItemText
+              primary={perfEnabled ? 'Disable load diagnostics' : 'Enable load diagnostics'}
+              secondary="Hidden dev tool"
+              primaryTypographyProps={{ variant: 'caption' }}
+              secondaryTypographyProps={{ variant: 'caption' }}
+            />
+          </MenuItem>
           <Divider />
           <MenuItem
             onClick={() => setConfirmDeleteOpen(true)}
@@ -1334,6 +1388,32 @@ export const BoardView: FC<BoardViewProps> = ({ issuerName }) => {
               Dismiss
             </Button>
           </Stack>
+        </Paper>
+      )}
+
+      {perfEnabled && perfSample && (
+        <Paper
+          elevation={0}
+          sx={{
+            mb: '0.75rem',
+            p: '0.55rem 0.7rem',
+            border: (t) => `1px dashed ${t.palette.divider}`,
+            backgroundColor: (t) => t.palette.action.hover,
+          }}
+        >
+          <Typography variant="caption" sx={{ fontWeight: 700, display: 'block' }}>
+            Q-Deck load timing ({perfSample.status})
+            {typeof perfSample.totalMs === 'number' ? `: ${Math.round(perfSample.totalMs)}ms` : ''}
+          </Typography>
+          {perfPhaseSummary ? (
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+              {perfPhaseSummary}
+            </Typography>
+          ) : (
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+              Waiting for timing phases...
+            </Typography>
+          )}
         </Paper>
       )}
 

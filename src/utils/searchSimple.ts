@@ -1,5 +1,6 @@
 // utils/qdnSearchSimple.ts
 import type { Service } from 'qapp-core';
+import pLimit from 'p-limit';
 import { getGroupResourceServices, LEGACY_GROUP_ENCRYPTION_SERVICE } from './groupEncryption';
 
 export interface SimpleHit {
@@ -50,6 +51,30 @@ const toServiceArray = (service: string | string[]): string[] => {
   return [service];
 };
 
+const SEARCH_SIMPLE_TTL_MS = 12_000;
+const SEARCH_SIMPLE_ERROR_TTL_MS = 3_000;
+const SEARCH_SIMPLE_MAX_CONCURRENCY = 4;
+const searchSimpleLimiter = pLimit(SEARCH_SIMPLE_MAX_CONCURRENCY);
+const searchSimpleCache = new Map<string, { expiresAt: number; hits: SimpleHit[] }>();
+const searchSimpleInFlight = new Map<string, Promise<SimpleHit[]>>();
+
+const getCachedSearchSimple = (url: string): SimpleHit[] | null => {
+  const hit = searchSimpleCache.get(url);
+  if (!hit) return null;
+  if (hit.expiresAt <= Date.now()) {
+    searchSimpleCache.delete(url);
+    return null;
+  }
+  return hit.hits;
+};
+
+const setCachedSearchSimple = (url: string, hits: SimpleHit[], ttlMs: number) => {
+  searchSimpleCache.set(url, {
+    expiresAt: Date.now() + ttlMs,
+    hits,
+  });
+};
+
 async function resolveSearchServices(
   isPrivate?: boolean,
   servicesOverride?: string | string[]
@@ -62,19 +87,40 @@ async function resolveSearchServices(
 }
 
 async function fetchSearchSimple(url: string): Promise<SimpleHit[]> {
-  try {
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: { accept: 'application/json' },
-    });
-    if (!res.ok) {
-      console.warn(`searchsimple failed: ${res.status} ${res.statusText}`);
+  const cached = getCachedSearchSimple(url);
+  if (cached) return cached;
+  const inFlight = searchSimpleInFlight.get(url);
+  if (inFlight) return inFlight;
+
+  const request = searchSimpleLimiter(async () => {
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+      });
+      if (!res.ok) {
+        console.warn(`searchsimple failed: ${res.status} ${res.statusText}`);
+        setCachedSearchSimple(url, [], SEARCH_SIMPLE_ERROR_TTL_MS);
+        return [];
+      }
+      const data = await res.json();
+      const hits = normalizeHits(data);
+      setCachedSearchSimple(url, hits, SEARCH_SIMPLE_TTL_MS);
+      return hits;
+    } catch (e) {
+      console.warn('searchSimple request failed', e);
+      setCachedSearchSimple(url, [], SEARCH_SIMPLE_ERROR_TTL_MS);
       return [];
+    } finally {
+      searchSimpleInFlight.delete(url);
     }
-    const data = await res.json();
-    return normalizeHits(data);
-  } catch (e) {
-    console.warn('searchSimple request failed', e);
+  });
+
+  searchSimpleInFlight.set(url, request);
+
+  try {
+    return await request;
+  } catch {
     return [];
   }
 }

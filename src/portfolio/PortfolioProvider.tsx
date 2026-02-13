@@ -16,6 +16,7 @@ import {
   ensureAssetMini,
   readAssetsIndexSync,
 } from '../bootstrap/assetsBootstrap';
+import { getAccountDataCached, getNameDataCached, getPrimaryNameCached } from '../utils/qortalApi';
 
 type Action =
   | { type: 'INIT_START' }
@@ -134,7 +135,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   async function resolveNameToAddress(name: string): Promise<string | null> {
     try {
-      const data = await qortalRequest({ action: 'GET_NAME_DATA', name });
+      const data = await getNameDataCached(name);
       const owner = data?.owner;
       return typeof owner === 'string' && owner.startsWith('Q') ? owner : null;
     } catch {
@@ -145,7 +146,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   async function normalizeAndVerifyAddress(addr: string): Promise<string | null> {
     // Some nodes throw for empty accounts; still accept valid-looking addresses
     try {
-      const acc = await qortalRequest({ action: 'GET_ACCOUNT_DATA', address: addr });
+      const acc = await getAccountDataCached(addr);
       if (acc?.address && typeof acc.address === 'string') return acc.address; // canonicalize
       return addr;
     } catch {
@@ -168,7 +169,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         // Optional: show the user's primary name if it exists
         try {
-          const n = await qortalRequest({ action: 'GET_PRIMARY_NAME', address: finalAddress });
+          const n = await getPrimaryNameCached(finalAddress);
           if (typeof n === 'string' && n) resolvedName = n;
         } catch {
           /* ignore */
@@ -232,7 +233,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
       } catch {
         const assetIds = Object.keys(state.assetsIndex).map(Number);
-        const limit = pLimit(2);
+        const limit = pLimit(4);
         const chunkSize = 400;
         const chunks: number[][] = [];
         for (let i = 0; i < assetIds.length; i += chunkSize)
@@ -269,7 +270,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         .map(Number)
         .filter((id) => !state.assetsIndex[id]);
       if (missingIds.length) {
-        const limit = pLimit(2);
+        const limit = pLimit(4);
         const fetched = await Promise.all(
           missingIds.map((id) =>
             limit(async () => {

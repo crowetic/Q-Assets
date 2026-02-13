@@ -1,5 +1,5 @@
 import { Q_ASSETS_MANAGEMENT_GROUP_ID } from '../constants/qdnConstants';
-import { getAccountGroups } from './qortalApi';
+import { getAccountGroups, getNameDataCached } from './qortalApi';
 
 const nameAddressCache = new Map<string, string | null>();
 const adminCache = new Map<string, boolean>();
@@ -19,7 +19,7 @@ export async function resolvePublisherAddress(publisher?: string): Promise<strin
   }
 
   try {
-    const data = await qortalRequest({ action: 'GET_NAME_DATA', name: publisher });
+    const data = await getNameDataCached(publisher);
     const owner = data?.owner ? String(data.owner) : null;
     nameAddressCache.set(key, owner);
     return owner;

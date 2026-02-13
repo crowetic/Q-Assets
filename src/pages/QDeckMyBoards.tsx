@@ -384,7 +384,7 @@ export default function MyBoards() {
     const missing = Array.from(ids).filter((id) => Number.isFinite(id) && !groupNameMap[id]);
     if (!missing.length) return;
     const token = ++groupNameTokenRef.current;
-    const limit = pLimit(2);
+    const limit = pLimit(4);
     Promise.all(
       missing.map((gid) =>
         limit(async () => {

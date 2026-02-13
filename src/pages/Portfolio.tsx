@@ -415,7 +415,7 @@ export default function PortfolioPage() {
   // Progressive avatar load for assets present in holdings
   useEffect(() => {
     let cancelled = false;
-    const limit = pLimit(2);
+    const limit = pLimit(4);
     const nameCache = new Map<string, string | null>();
 
     const getIssuer = async (addr: string) => {

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.9.6
+
+- Switched header typography from Orbitron to Exo2 for improved readability while keeping a futuristic look.
+- Added short-lived dedupe caching for `searchsimple` requests and Q-Deck resource reads to cut duplicate API calls during board loads.
+- Added cached/deduped account-group lookups used by permission checks to reduce repeated `/groups/member` requests.
+- Normalized Q-Deck permission identity matching (name/address comparisons) to avoid case/format mismatches causing inconsistent edit visibility.
+- Expanded private-board view checks to include explicit owner/editor allowlists before group fallback.
+- Added explicit effective permission summaries (view/edit/admin behavior) to Q-Deck board and project permissions panels.
+- Parallelized board/project permissions panel doc hydration so large admin pages load faster.
+- Switched route pages to lazy loading with suspense fallbacks and tuned Vite manual chunking to reduce initial JavaScript payload.
+- Deferred startup background pollers (notifications/unconfirmed tx scanner) and staggered their boot timing to avoid startup request spikes.
+- Added batched notification scope refreshes so auto-fetch cycles process fewer scopes per interval on busy accounts.
+- Added visibility-aware unconfirmed tx polling cadence (slower while hidden) plus configurable startup delay.
+- Added shared cached/deduped wrappers for `GET_NAME_DATA`, `GET_ACCOUNT_DATA`, and `GET_PRIMARY_NAME`, then wired startup-heavy call sites to use them.
+- Updated font loading to use `font-display: swap` and preload primary UI fonts earlier during bootstrap.
+- Stabilized Q-Deck card avatars during board hydration by reusing cached avatar URLs immediately and deduping in-flight avatar fetches.
+- Added optional Q-Deck board-load phase diagnostics (`?qdeckPerf=1`) with in-app timing summaries and console logging to pinpoint slow hydration paths.
+- Added a hidden Board Actions menu toggle to enable/disable Q-Deck load diagnostics without manually editing query params.
+- Improved Q-Deck diagnostics to capture first-load/retry paths and map identifier-based opens to the resolved board ID so initial-load timings appear without manual refresh.
+- Optimized Q-Deck QDN fetches to attempt fast `rebuild=false` reads first, with automatic rebuild fallback only when needed, reducing card-doc hydration latency on first board load.
+- Reworked Q-Deck card comment chips to use board-level comment-head discovery instead of per-card thread hydration during initial board load.
+- Deferred archived-card comment thread loading until the card/comment UI is opened.
+- Added per-board “new comments” chip indicators based on the last board-visit timestamp stored locally.
+
 ## 0.9.5
 
 - Merged Q-Deck cards indexes across all discovered publishers for a board so multi-editor boards keep card refs, status metadata, and archive state in sync.

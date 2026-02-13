@@ -323,7 +323,7 @@ export async function fetchLatestAssetNews(
       }
     };
 
-    const limiter = pLimit(2);
+    const limiter = pLimit(4);
     const tasks = dedupedHits.map((hit) =>
       limiter(async () => {
         ensureNotAborted();

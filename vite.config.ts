@@ -52,6 +52,24 @@ export default defineConfig({
         chunkFileNames: '[hash].js',
         entryFileNames: '[hash].js',
         assetFileNames: '[hash][extname]',
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+
+          if (id.includes('@mui') || id.includes('@emotion')) return 'vendor-mui';
+          if (
+            id.includes('react-router-dom') ||
+            id.includes('react-dom') ||
+            id.includes('/react/')
+          ) {
+            return 'vendor-react';
+          }
+          if (id.includes('@tiptap')) return 'vendor-editor';
+          if (id.includes('recharts') || id.includes('lightweight-charts')) {
+            return 'vendor-charts';
+          }
+          if (id.includes('qapp-core')) return 'vendor-qapp-core';
+          return undefined;
+        },
       },
     },
   },

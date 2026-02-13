@@ -36,7 +36,7 @@ import { getLocalProjectDoc, setLocalProjectDoc } from './qdeckProjectDocCache';
 import { searchSimpleByFullId, searchSimpleByIdPrefixOnly } from './searchSimple';
 import { fileToBase64 } from './data';
 import { guessImageMimeFromBase64 } from './fetchAssetAvatar';
-import { transferAsset } from './qortalApi';
+import { getNameDataCached, transferAsset } from './qortalApi';
 import {
   canUserDeleteBoard,
   collectRecipientPublicKeys,
@@ -101,7 +101,91 @@ export function requireName(u: QUserIdentity) {
   return u.name;
 }
 
-// const cardFetchLimit = pLimit(2);
+const QDECK_FETCH_CACHE_TTL_MS = 12_000;
+const QDECK_FETCH_MAX_CONCURRENCY = 4;
+const qdeckFetchLimiter = pLimit(QDECK_FETCH_MAX_CONCURRENCY);
+const qdeckFetchCache = new Map<string, { expiresAt: number; value: unknown }>();
+const qdeckFetchInFlight = new Map<string, Promise<unknown>>();
+
+const extractBase64Payload = (res: unknown): string | null => {
+  if (typeof res === 'string') {
+    return res.length ? res : null;
+  }
+  if (res && typeof res === 'object') {
+    const maybe = (res as any).data64 ?? (res as any).base64;
+    if (typeof maybe === 'string' && maybe.length) return maybe;
+  }
+  return null;
+};
+
+const fetchQdnResourceBase64 = async (args: {
+  name: string;
+  service: string;
+  identifier: string;
+}): Promise<string | null> => {
+  const request = async (rebuild: boolean) => {
+    try {
+      const res = await qortalRequest({
+        action: 'FETCH_QDN_RESOURCE',
+        name: args.name,
+        service: args.service as Service,
+        identifier: args.identifier,
+        encoding: 'base64',
+        rebuild,
+      });
+      return extractBase64Payload(res);
+    } catch {
+      return null;
+    }
+  };
+
+  const quick = await request(false);
+  if (quick) return quick;
+  return request(true);
+};
+
+const qdeckFetchKey = (args: {
+  name: string;
+  identifier: string;
+  isPrivate: boolean;
+  mode?: 'group' | 'direct';
+  groupId?: number;
+  isAdmins?: boolean;
+}) =>
+  [
+    (args.name || '').trim().toLowerCase(),
+    args.identifier,
+    args.isPrivate ? '1' : '0',
+    args.mode ?? '',
+    Number.isFinite(args.groupId) ? String(args.groupId) : '',
+    args.isAdmins ? '1' : '0',
+  ].join('|');
+
+const getCachedQdeckFetch = <T>(key: string): T | undefined => {
+  const hit = qdeckFetchCache.get(key);
+  if (!hit) return undefined;
+  if (hit.expiresAt <= Date.now()) {
+    qdeckFetchCache.delete(key);
+    return undefined;
+  }
+  return hit.value as T;
+};
+
+const setCachedQdeckFetch = (key: string, value: unknown) => {
+  qdeckFetchCache.set(key, {
+    expiresAt: Date.now() + QDECK_FETCH_CACHE_TTL_MS,
+    value,
+  });
+};
+
+const invalidateQdeckFetchCache = (name: string, identifier: string) => {
+  const prefix = `${(name || '').trim().toLowerCase()}|${identifier}|`;
+  for (const key of qdeckFetchCache.keys()) {
+    if (key.startsWith(prefix)) qdeckFetchCache.delete(key);
+  }
+};
+
+// const cardFetchLimit = pLimit(4);
 
 export async function loadCardsIndex(
   issuerName: string,
@@ -193,7 +277,7 @@ export async function loadCardsIndexCandidates(
   }
   if (names.size === 0) return [];
 
-  const limit = pLimit(2);
+  const limit = pLimit(4);
   const candidates = (
     await Promise.all(
       Array.from(names).map((name) =>
@@ -444,13 +528,15 @@ export async function saveCardsIndex(issuerName: string, board: QDeckBoard, doc:
   if (!payloadBase64) throw new Error('saveCardsIndex: empty payload');
 
   if (board.visibility !== 'private') {
-    return qortalRequest({
+    const published = await qortalRequest({
       action: 'PUBLISH_QDN_RESOURCE',
       service: 'DOCUMENT',
       name: issuerName,
       identifier,
       base64: payloadBase64,
     });
+    invalidateQdeckFetchCache(issuerName, identifier);
+    return published;
   }
 
   const mode = board.privateMeta?.mode ?? 'group';
@@ -468,19 +554,21 @@ export async function saveCardsIndex(issuerName: string, board: QDeckBoard, doc:
     );
     const service = resolveGroupPublishService('group');
     const encrypted = enc;
-    return qortalRequest({
+    const published = await qortalRequest({
       action: 'PUBLISH_QDN_RESOURCE',
       service,
       name: issuerName,
       identifier,
       base64: encrypted,
     });
+    invalidateQdeckFetchCache(issuerName, identifier);
+    return published;
   }
 
   // direct
   let recipients = board.privateMeta?.recipients;
   if (!recipients?.length) {
-    const issNameData = await qortalRequest({ action: 'GET_NAME_DATA', name: issuerName });
+    const issNameData = await getNameDataCached(issuerName);
     const issuerAddress = issNameData?.owner;
     if (!issuerAddress) throw new Error('saveCardsIndex: cannot resolve issuer address');
 
@@ -495,13 +583,15 @@ export async function saveCardsIndex(issuerName: string, board: QDeckBoard, doc:
 
   const enc = await encryptForRecipients(payloadBase64, recipients);
   const data64 = enc;
-  return qortalRequest({
+  const published = await qortalRequest({
     action: 'PUBLISH_QDN_RESOURCE',
     service: resolveGroupPublishService('direct'),
     name: issuerName,
     identifier,
     base64: data64,
   });
+  invalidateQdeckFetchCache(issuerName, identifier);
+  return published;
 }
 
 export async function repairCardsIndex(
@@ -535,7 +625,7 @@ export async function repairCardsIndex(
       seq: 0,
     };
   const refs = await discoverCardRefsBySearch(board);
-  const limit = opts?.concurrency ? pLimit(opts.concurrency) : pLimit(2);
+  const limit = opts?.concurrency ? pLimit(opts.concurrency) : pLimit(4);
   const seen = new Set<string>();
   const entries: NonNullable<CardsIndexDoc['entries']> = [];
   const cardIds = new Set<string>(current.cardIds ?? []);
@@ -964,13 +1054,15 @@ async function publishPrivate(opts: {
 
       const service = resolveGroupPublishService('group');
       const data64 = enc;
-      return qortalRequest({
+      const published = await qortalRequest({
         action: 'PUBLISH_QDN_RESOURCE',
         service,
         name: issuerName,
         identifier,
         base64: data64,
       });
+      invalidateQdeckFetchCache(issuerName, identifier);
+      return published;
     } catch (e: any) {
       if (isGroupKeyMissing(e)) throw new GroupKeyMissingError();
       throw e;
@@ -981,13 +1073,15 @@ async function publishPrivate(opts: {
   if (!recipients?.length) throw new Error('Direct mode requires recipients');
   const enc = await encryptForRecipients(payloadBase64, recipients);
   const data64 = enc;
-  return qortalRequest({
+  const published = await qortalRequest({
     action: 'PUBLISH_QDN_RESOURCE',
     service: resolveGroupPublishService('direct'),
     name: issuerName,
     identifier,
     base64: data64,
   });
+  invalidateQdeckFetchCache(issuerName, identifier);
+  return published;
 }
 
 async function migrateLegacyGroupResourceToPublic(opts: {
@@ -1016,15 +1110,11 @@ async function migrateLegacyGroupResourceToPublic(opts: {
       return false;
     }
 
-    const legacyRes = await qortalRequest({
-      action: 'FETCH_QDN_RESOURCE',
+    const legacyData = await fetchQdnResourceBase64({
       name: issuerName,
       service: LEGACY_GROUP_ENCRYPTION_SERVICE,
       identifier,
-      encoding: 'base64',
     });
-    const legacyData =
-      typeof legacyRes === 'string' ? legacyRes : (legacyRes?.data64 ?? legacyRes?.base64);
     if (!legacyData || typeof legacyData !== 'string') return false;
     const encryptedPayload = stripPrivateMagic(legacyData);
     const decrypted = await qortalRequest({
@@ -1068,21 +1158,15 @@ async function fetchPrivate<T>(opts: {
   let base64: string | null = null;
   let fetchedService: Service | null = null;
   for (const svc of services) {
-    try {
-      const res = await qortalRequest({
-        action: 'FETCH_QDN_RESOURCE',
-        name: issuerName,
-        service: svc,
-        identifier,
-        encoding: 'base64',
-      });
-      if (res) {
-        base64 = res;
-        fetchedService = svc;
-        break;
-      }
-    } catch {
-      /* try next */
+    const res = await fetchQdnResourceBase64({
+      name: issuerName,
+      service: svc,
+      identifier,
+    });
+    if (res) {
+      base64 = res;
+      fetchedService = svc;
+      break;
     }
   }
   if (!base64 || !fetchedService) return null;
@@ -1128,38 +1212,67 @@ export async function qdeckFetch<T>(
   isAdmins?: boolean,
   privateMode?: 'group' | 'direct'
 ): Promise<T | null> {
-  if (isPrivate) {
-    const mode: 'group' | 'direct' = privateMode ?? (groupId != null ? 'group' : 'direct');
-    return fetchPrivate<T>({
-      identifier,
-      issuerName: name,
-      mode,
-      groupId,
-      isAdmins,
-    });
-  }
-  // console.log('passed service',service)
+  const mode: 'group' | 'direct' | undefined = isPrivate
+    ? (privateMode ?? (groupId != null ? 'group' : 'direct'))
+    : undefined;
+  const key = qdeckFetchKey({
+    name,
+    identifier,
+    isPrivate: !!isPrivate,
+    mode,
+    groupId,
+    isAdmins,
+  });
+  const cached = getCachedQdeckFetch<T | null>(key);
+  if (cached !== undefined) return cached;
 
-  // PUBLIC: fetch + decode JSON
-  let res: string | null = null;
-  try {
-    res = await qortalRequest({
-      action: 'FETCH_QDN_RESOURCE',
+  const inFlight = qdeckFetchInFlight.get(key);
+  if (inFlight) return (await inFlight) as T | null;
+
+  const request = qdeckFetchLimiter(async () => {
+    let out: T | null = null;
+    if (isPrivate) {
+      out = await fetchPrivate<T>({
+        identifier,
+        issuerName: name,
+        mode: mode || 'group',
+        groupId,
+        isAdmins,
+      });
+      setCachedQdeckFetch(key, out);
+      return out;
+    }
+
+    // PUBLIC: fetch + decode JSON
+    const res = await fetchQdnResourceBase64({
       name,
       service: 'DOCUMENT',
       identifier,
-      encoding: 'base64',
     });
-  } catch {
-    return null;
-  }
-  if (!res) return null;
+    if (!res) {
+      setCachedQdeckFetch(key, null);
+      return null;
+    }
+
+    try {
+      const obj = await base64ToObject(res);
+      out = obj && typeof obj === 'object' ? (obj as T) : null;
+      setCachedQdeckFetch(key, out);
+      return out;
+    } catch {
+      // non-JSON = tombstone or opaque
+      setCachedQdeckFetch(key, null);
+      return null;
+    }
+  }).finally(() => {
+    qdeckFetchInFlight.delete(key);
+  });
+
+  qdeckFetchInFlight.set(key, request);
 
   try {
-    const obj = await base64ToObject(res);
-    return obj && typeof obj === 'object' ? (obj as T) : null;
+    return (await request) as T | null;
   } catch {
-    // non-JSON = tombstone or opaque
     return null;
   }
 }
@@ -1210,13 +1323,15 @@ export async function qdeckPublish(
       payloadLength: payload.base64.length,
     });
   }
-  return qortalRequest({
+  const published = await qortalRequest({
     action: 'PUBLISH_QDN_RESOURCE',
     service: payload.service,
     name,
     identifier,
     data64: payload.base64,
   });
+  invalidateQdeckFetchCache(name, identifier);
+  return published;
 }
 
 /* --------------------------------- Access --------------------------------- */
@@ -1265,6 +1380,7 @@ export async function saveBoardDoc(issuerName: string, board: QDeckBoard) {
       identifier,
       base64,
     });
+    invalidateQdeckFetchCache(issuerName, identifier);
     return res;
   }
 
@@ -1337,13 +1453,15 @@ export async function saveProjectDoc(issuerName: string, project: QDeckProject) 
 
   if (project.visibility === 'public') {
     project.service = 'DOCUMENT';
-    return qortalRequest({
+    const res = await qortalRequest({
       action: 'PUBLISH_QDN_RESOURCE',
       service: 'DOCUMENT',
       name: issuerName,
       identifier,
       base64,
     });
+    invalidateQdeckFetchCache(issuerName, identifier);
+    return res;
   }
 
   await publishPrivate({
@@ -1419,7 +1537,7 @@ export async function saveCardDoc(issuerName: string, board: QDeckBoard, card: Q
 
   if (mode === 'direct') {
     // derive recipients (assignees + allowed + self)
-    const issNameData = await qortalRequest({ action: 'GET_NAME_DATA', name: issuerName });
+    const issNameData = await getNameDataCached(issuerName);
     const issuerAddress = issNameData?.owner;
     if (!issuerAddress) throw new Error('Cannot resolve issuer address for direct card');
 
@@ -1499,7 +1617,7 @@ export async function saveCommentsDoc(
   const payloadBase64 = await objectToBase64(thread!);
 
   if (mode === 'direct') {
-    const issNameData = await qortalRequest({ action: 'GET_NAME_DATA', name: issuerName });
+    const issNameData = await getNameDataCached(issuerName);
     const issuerAddress = issNameData?.owner;
     if (!issuerAddress) throw new Error('Cannot resolve issuer address for direct comments');
 
@@ -1591,6 +1709,50 @@ export async function discoverComments(
   return refs;
 }
 
+export type BoardCommentHead = {
+  cardId: string;
+  name: string;
+  stamp: number;
+};
+
+const parseCommentCardIdForBoard = (board: QDeckBoard, identifier: string): string | null => {
+  if (!identifier) return null;
+  if (board.visibility === 'public') {
+    const prefix = `qdeck_pub__cmv2__${board.boardId}__`;
+    if (!identifier.startsWith(prefix)) return null;
+    const cardId = identifier.slice(prefix.length).trim();
+    return cardId || null;
+  }
+  const parsed = QDeckCommentsId.parsePrivateV2(identifier);
+  if (!parsed || parsed.boardId !== board.boardId) return null;
+  return parsed.cardId || null;
+};
+
+export async function discoverCommentHeadsByBoard(board: QDeckBoard): Promise<BoardCommentHead[]> {
+  const prefix =
+    board.visibility === 'public'
+      ? `qdeck_pub__cmv2__${board.boardId}__`
+      : `qdeck_priv__cmv2__${board.boardId}__`;
+  const hits = await searchSimpleByIdPrefixOnly(prefix, board.visibility === 'private').catch(
+    () => []
+  );
+  const byCard = new Map<string, BoardCommentHead>();
+  for (const hit of hits) {
+    const cardId = parseCommentCardIdForBoard(board, hit.identifier || '');
+    if (!cardId) continue;
+    const stamp = Number(hit.updated ?? hit.created ?? 0);
+    const prev = byCard.get(cardId);
+    if (!prev || stamp >= prev.stamp) {
+      byCard.set(cardId, {
+        cardId,
+        name: hit.name,
+        stamp,
+      });
+    }
+  }
+  return Array.from(byCard.values());
+}
+
 // qdeckApi.ts
 export async function canEncryptToGroup(groupId: number, isAdmins?: boolean): Promise<boolean> {
   try {
@@ -1642,10 +1804,7 @@ export async function createBoardAndIndex(args: CreateBoardArgs) {
 
   let myAddress = my.address;
   if (!myAddress && myName) {
-    const nameData = await qortalRequest({
-      action: 'GET_NAME_DATA',
-      name: myName,
-    });
+    const nameData = await getNameDataCached(myName);
     myAddress = nameData.owner;
   }
   if (!myAddress) throw Error('failed to obtain address in createBoardAndIndex');
@@ -1734,10 +1893,7 @@ export async function createProjectAndIndex(args: CreateProjectArgs) {
 
   let myAddress = my.address;
   if (!myAddress && myName) {
-    const nameData = await qortalRequest({
-      action: 'GET_NAME_DATA',
-      name: myName,
-    });
+    const nameData = await getNameDataCached(myName);
     myAddress = nameData.owner;
   }
   if (!myAddress) throw Error('failed to obtain address in createProjectAndIndex');
@@ -1898,10 +2054,7 @@ export async function publishPrimaryImageForCard(
       let recipients = board.privateMeta?.recipients;
 
       if (!recipients?.length) {
-        const issNameData = await qortalRequest({
-          action: 'GET_NAME_DATA',
-          name: issuerName,
-        });
+        const issNameData = await getNameDataCached(issuerName);
         const issuerAddress = issNameData?.owner;
         if (!issuerAddress)
           throw new Error('Cannot resolve issuer address for direct image upload');
@@ -2057,10 +2210,7 @@ export async function buildCardAttachmentPublishPayload(
       if (!board.privateMeta?.groupId)
         throw new Error('private board missing groupId for attachment upload');
     } else if (!recipients?.length) {
-      const issNameData = await qortalRequest({
-        action: 'GET_NAME_DATA',
-        name: issuerName,
-      });
+      const issNameData = await getNameDataCached(issuerName);
       const issuerAddress = issNameData?.owner;
       if (!issuerAddress) throw new Error('Cannot resolve issuer address for direct attachments');
 
@@ -2724,7 +2874,7 @@ async function loadNewestAuthorizedProjectDoc(
   }
 
   const mode = meta.mode ?? (meta.groupId != null ? 'group' : 'direct');
-  const limit = pLimit(2);
+  const limit = pLimit(4);
   const baseCandidate: ProjectDocCandidate = {
     name: (opts?.issuerHints?.[0] ?? base.createdBy ?? '').trim(),
     doc: base,

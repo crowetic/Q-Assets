@@ -1,16 +1,42 @@
 import { QDeckBoard, QDeckCard, QDeckProject } from '../types/qdeck';
 import { fetchGroupMembers } from './access';
 import { qdeckFetch } from './qdeckApi';
-import { getAccountGroupIds, getAccountGroups } from './qortalApi';
+import {
+  getAccountDataCached,
+  getAccountGroupIds,
+  getAccountGroups,
+  getNameDataCached,
+} from './qortalApi';
 import { getCached, setCached } from './cache';
 import pLimit from 'p-limit';
 
 function eq(a?: string, b?: string) {
   if (!a || !b) return false;
-  return a === b;
+  const left = a.trim();
+  const right = b.trim();
+  if (!left || !right) return false;
+  if (looksLikeAddress(left) || looksLikeAddress(right)) return left === right;
+  return left.toLowerCase() === right.toLowerCase();
 }
 
-async function userInAllowedGroupsList(groupsAllowed: number[] | undefined, viewerAddress?: string) {
+const normalizePrincipal = (value?: string) => {
+  const trimmed = (value || '').trim();
+  if (!trimmed) return '';
+  return looksLikeAddress(trimmed) ? trimmed : trimmed.toLowerCase();
+};
+
+const toPrincipalSet = (values: Array<string | undefined | null>) =>
+  new Set(values.map((value) => normalizePrincipal(value ?? '')).filter(Boolean));
+
+const principalSetHas = (set: Set<string>, value?: string) => {
+  const key = normalizePrincipal(value);
+  return key ? set.has(key) : false;
+};
+
+async function userInAllowedGroupsList(
+  groupsAllowed: number[] | undefined,
+  viewerAddress?: string
+) {
   const need = new Set(groupsAllowed ?? []);
   if (!need.size || !viewerAddress) return false;
   const mineKey = `qdeck:groups:${viewerAddress}`;
@@ -54,11 +80,11 @@ export async function canUserEditBoard(
   if (cached !== undefined) return cached;
 
   const useEnhanced = board.featureFlags?.enhancedPerms === true;
-  const owners = new Set(
-    (board.owners && board.owners.length ? board.owners : [board.createdBy]).map((s) => s.trim())
+  const owners = toPrincipalSet(
+    board.owners && board.owners.length ? board.owners : [board.createdBy]
   );
   const ownerGroups = new Set(board.ownerGroups ?? []);
-  const editors = new Set(board.editors ?? board.usersAllowed ?? []);
+  const editors = toPrincipalSet(board.editors ?? board.usersAllowed ?? []);
   const editorGroups = new Set(
     board.editorGroups && board.editorGroups.length
       ? board.editorGroups
@@ -66,8 +92,8 @@ export async function canUserEditBoard(
   );
 
   if (
-    (viewer.name && owners.has(viewer.name)) ||
-    (viewer.address && owners.has(viewer.address)) ||
+    principalSetHas(owners, viewer.name) ||
+    principalSetHas(owners, viewer.address) ||
     (viewer.address && ownerGroups.size && (await isAdminOfAnyGroup(viewer.address, ownerGroups)))
   ) {
     setCached(permKey, true, 60_000);
@@ -76,8 +102,8 @@ export async function canUserEditBoard(
 
   if (useEnhanced) {
     if (
-      (viewer.name && editors.has(viewer.name)) ||
-      (viewer.address && editors.has(viewer.address)) ||
+      principalSetHas(editors, viewer.name) ||
+      principalSetHas(editors, viewer.address) ||
       (viewer.address &&
         editorGroups.size &&
         (await isMemberOfAnyGroup(viewer.address, editorGroups)))
@@ -128,13 +154,11 @@ export async function canUserEditProject(
   const cached = getCached<boolean>(permKey);
   if (cached !== undefined) return cached;
 
-  const owners = new Set(
-    (project.owners && project.owners.length ? project.owners : [project.createdBy]).map((s) =>
-      s.trim()
-    )
+  const owners = toPrincipalSet(
+    project.owners && project.owners.length ? project.owners : [project.createdBy]
   );
   const ownerGroups = new Set(project.ownerGroups ?? []);
-  const editors = new Set(project.editors ?? project.usersAllowed ?? []);
+  const editors = toPrincipalSet(project.editors ?? project.usersAllowed ?? []);
   const editorGroups = new Set(
     project.editorGroups && project.editorGroups.length
       ? project.editorGroups
@@ -142,8 +166,8 @@ export async function canUserEditProject(
   );
 
   if (
-    (viewer.name && owners.has(viewer.name)) ||
-    (viewer.address && owners.has(viewer.address)) ||
+    principalSetHas(owners, viewer.name) ||
+    principalSetHas(owners, viewer.address) ||
     (viewer.address && ownerGroups.size && (await isAdminOfAnyGroup(viewer.address, ownerGroups)))
   ) {
     setCached(permKey, true, 60_000);
@@ -158,8 +182,8 @@ export async function canUserEditProject(
   }
 
   if (
-    (viewer.name && editors.has(viewer.name)) ||
-    (viewer.address && editors.has(viewer.address)) ||
+    principalSetHas(editors, viewer.name) ||
+    principalSetHas(editors, viewer.address) ||
     (viewer.address &&
       editorGroups.size &&
       (await isMemberOfAnyGroup(viewer.address, editorGroups)))
@@ -194,21 +218,34 @@ export async function canUserEditProject(
 }
 
 /** VIEW permission rules — ONLY board visibility matters. */
-export async function canUserViewBoard(board: QDeckBoard, viewer: { address?: string }) {
+export async function canUserViewBoard(
+  board: QDeckBoard,
+  viewer: { name?: string; address?: string }
+) {
   const permKey = `qdeck:perm:view:${board.boardId}:${board.updatedAt || board.seq || ''}:${
-    viewer.address || ''
-  }`;
+    viewer.name || ''
+  }:${viewer.address || ''}`;
   const cached = getCached<boolean>(permKey);
   if (cached !== undefined) return cached;
 
   const useEnhanced = board.featureFlags?.enhancedPerms === true;
+  const owners = toPrincipalSet(
+    board.owners && board.owners.length ? board.owners : [board.createdBy]
+  );
+  const editors = toPrincipalSet(board.editors ?? board.usersAllowed ?? []);
 
   if (board.visibility === 'public') {
     setCached(permKey, true, 60_000);
     return true;
   }
-  // private → must be in the one private group
-  if (userInUsersAllowlist(board, viewer.address, viewer.address)) {
+
+  if (
+    principalSetHas(owners, viewer.name) ||
+    principalSetHas(owners, viewer.address) ||
+    principalSetHas(editors, viewer.name) ||
+    principalSetHas(editors, viewer.address) ||
+    userInUsersAllowlist(board, viewer.name, viewer.address)
+  ) {
     setCached(permKey, true, 60_000);
     return true;
   }
@@ -245,6 +282,111 @@ export async function canUserDeleteBoard(
   const groups = await getAccountGroups(addr).catch(() => []);
   const editorSet = new Set(board.groupsAllowed ?? []);
   return groups.some((g) => g.isAdmin && editorSet.has(g.groupId));
+}
+
+export type BoardPermissionSummary = {
+  modeLabel: string;
+  viewRule: string;
+  editRule: string;
+  adminRule: string;
+  notes: string[];
+};
+
+export function describeBoardPermissions(board: QDeckBoard): BoardPermissionSummary {
+  const useEnhanced = board.featureFlags?.enhancedPerms === true;
+  const owners = board.owners?.length ? board.owners : [board.createdBy];
+  const ownerGroups = board.ownerGroups ?? [];
+  const editors = useEnhanced ? (board.editors ?? []) : (board.usersAllowed ?? []);
+  const editorGroups = useEnhanced ? (board.editorGroups ?? []) : (board.groupsAllowed ?? []);
+  const hasExplicitEditors = Boolean(editors.length || editorGroups.length);
+  const isOpenPublic = board.visibility === 'public' && !hasExplicitEditors;
+  const privateMode =
+    board.privateMeta?.mode ?? (board.privateMeta?.groupId != null ? 'group' : 'direct');
+
+  const viewRule =
+    board.visibility === 'public'
+      ? 'Anyone can view this board.'
+      : privateMode === 'group'
+        ? `Private group board: viewers must be allowlisted or in group #${board.privateMeta?.groupId ?? 'unknown'}.`
+        : 'Private direct board: viewers must be allowlisted or explicitly included as recipients.';
+
+  const editRule = isOpenPublic
+    ? 'Open public board: anyone can edit.'
+    : hasExplicitEditors
+      ? `Editors are restricted to ${editors.length} explicit user(s) and ${editorGroups.length} editor group(s).`
+      : 'Editors follow legacy board access lists (usersAllowed/groupsAllowed).';
+
+  const adminRule = board.adminOverride
+    ? 'Admin override enabled: eligible group admins can override board data.'
+    : 'Admin override disabled: only owners/editors can change board data.';
+
+  const notes: string[] = [];
+  notes.push(
+    `Owners: ${owners.length} name(s)${ownerGroups.length ? ` + ${ownerGroups.length} owner group(s)` : ''}.`
+  );
+  notes.push(
+    useEnhanced
+      ? 'Enhanced permissions are enabled (owners/editors fields are authoritative).'
+      : 'Enhanced permissions are disabled (legacy usersAllowed/groupsAllowed remain active).'
+  );
+
+  return {
+    modeLabel: useEnhanced ? 'Enhanced' : 'Legacy',
+    viewRule,
+    editRule,
+    adminRule,
+    notes,
+  };
+}
+
+export type ProjectPermissionSummary = {
+  modeLabel: string;
+  viewRule: string;
+  editRule: string;
+  adminRule: string;
+  notes: string[];
+};
+
+export function describeProjectPermissions(project: QDeckProject): ProjectPermissionSummary {
+  const owners = project.owners?.length ? project.owners : [project.createdBy];
+  const ownerGroups = project.ownerGroups ?? [];
+  const editors = project.editors ?? project.usersAllowed ?? [];
+  const editorGroups = project.editorGroups ?? project.groupsAllowed ?? [];
+  const hasExplicitEditors = Boolean(editors.length || editorGroups.length);
+  const isOpenPublic = project.visibility === 'public' && !hasExplicitEditors;
+  const privateMode =
+    project.privateMeta?.mode ?? (project.privateMeta?.groupId != null ? 'group' : 'direct');
+
+  const viewRule =
+    project.visibility === 'public'
+      ? 'Anyone can view this project.'
+      : privateMode === 'group'
+        ? `Private group project: viewers must be allowlisted or in group #${project.privateMeta?.groupId ?? 'unknown'}.`
+        : 'Private direct project: viewers must be allowlisted or explicitly included as recipients.';
+
+  const editRule = isOpenPublic
+    ? 'Open public project: anyone can edit.'
+    : hasExplicitEditors
+      ? `Editors are restricted to ${editors.length} explicit user(s) and ${editorGroups.length} editor group(s).`
+      : 'Editors follow legacy project access lists (usersAllowed/groupsAllowed).';
+
+  const adminRule = project.adminOverride
+    ? 'Admin override enabled: eligible group admins can override project data.'
+    : 'Admin override disabled: only owners/editors can change project data.';
+
+  const notes: string[] = [];
+  notes.push(
+    `Owners: ${owners.length} name(s)${ownerGroups.length ? ` + ${ownerGroups.length} owner group(s)` : ''}.`
+  );
+  notes.push('Projects always use owners/editors fields when present.');
+
+  return {
+    modeLabel: 'Enhanced',
+    viewRule,
+    editRule,
+    adminRule,
+    notes,
+  };
 }
 
 type NameOrAddress = string;
@@ -285,13 +427,13 @@ export type RecipientResolution = {
   }>;
 };
 
-const limit = pLimit(2);
+const limit = pLimit(4);
 
 // --- Qortal helpers ---------------------------------------------------------
 
 async function getNameData(name: string): Promise<{ name: string; owner: string } | null> {
   try {
-    const res = await qortalRequest({ action: 'GET_NAME_DATA', name });
+    const res = await getNameDataCached(name);
     if (res?.owner) return { name, owner: res.owner };
   } catch {
     /* empty */
@@ -301,7 +443,7 @@ async function getNameData(name: string): Promise<{ name: string; owner: string 
 
 async function getAccountPublicKey(address: string): Promise<string | null> {
   try {
-    const data = await qortalRequest({ action: 'GET_ACCOUNT_DATA', address });
+    const data = await getAccountDataCached(address);
     if (data?.publicKey) return data.publicKey;
   } catch {
     /* empty */
@@ -531,7 +673,7 @@ export async function resolveNameAddress(name: string): Promise<string | undefin
   const cached = getCached<string>(key);
   if (cached !== undefined) return cached;
   try {
-    const data = await qortalRequest({ action: 'GET_NAME_DATA', name });
+    const data = await getNameDataCached(name);
     const owner = data?.owner;
     if (owner) setCached(key, owner, 300_000);
     return owner; // address

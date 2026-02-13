@@ -25,6 +25,7 @@ import {
   discoverCardRefsBySearch,
   resolveBoardForReadWithMeta,
   discoverComments,
+  discoverCommentHeadsByBoard,
   loadCommentsDoc,
   buildCardPublishPayload,
   buildCardAttachmentPublishPayload,
@@ -53,6 +54,11 @@ import { useQdnBatchPublisher } from '../../utils/useQdnBatchPublisher';
 import type { BatchPublishResource } from '../../utils/useQdnBatchPublisher';
 import { useActiveAccountName } from '../../hooks/useActiveAccountName';
 import { getLocalCardsIndex, setLocalCardsIndex } from '../../utils/qdeckCardsIndexCache';
+import {
+  beginQDeckBoardLoadTrace,
+  finishQDeckBoardLoadTrace,
+  markQDeckBoardLoadPhase,
+} from '../../utils/qdeckPerf';
 // import QDeckPermissionsPanel from './QDeckPermissionsPanel';
 
 // ---- Types ----
@@ -66,14 +72,39 @@ type LoadOpts = {
 type LoadCardsOpts = {
   preserveOnEmpty?: boolean;
   skipIfIndexUnchanged?: boolean;
+  perfTraceId?: string | null;
 };
 
 type PublishMode = 'immediate' | 'batch';
 const QUEUE_STORAGE_KEY = 'qdeck_publish_queue_v1';
 const PUBLISH_MODE_STORAGE_KEY = 'qdeck_publish_mode_v1';
 const PUBLISH_MODE_BY_BOARD_STORAGE_KEY = 'qdeck_publish_mode_by_board_v1';
+const BOARD_LAST_VISIT_STORAGE_PREFIX = 'qdeck_board_last_visit_v1::';
 const publishQueueKey = (res: BatchPublishResource) =>
   `${res.service}::${(res.name || '').toLowerCase()}::${res.identifier}`;
+
+const readBoardLastVisit = (boardId?: string | null): number => {
+  if (!boardId || typeof window === 'undefined') return 0;
+  try {
+    const raw = window.localStorage.getItem(`${BOARD_LAST_VISIT_STORAGE_PREFIX}${boardId}`);
+    const stamp = Number(raw ?? 0);
+    return Number.isFinite(stamp) ? stamp : 0;
+  } catch {
+    return 0;
+  }
+};
+
+const writeBoardLastVisit = (boardId?: string | null, stamp?: number) => {
+  if (!boardId || typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      `${BOARD_LAST_VISIT_STORAGE_PREFIX}${boardId}`,
+      String(Number(stamp ?? Date.now()) || Date.now())
+    );
+  } catch {
+    /* ignore */
+  }
+};
 
 const readPublishQueueFromStorage = (): Record<string, BatchPublishResource[]> => {
   if (typeof window === 'undefined') return {};
@@ -139,6 +170,8 @@ type QDeckCtx = {
   archivedCardIds: Set<string>;
   cardsLoading: boolean;
   comments: Record<string, CardCommentThread>;
+  commentHeads: Record<string, { latestStamp: number; newestPublisher?: string }>;
+  boardLastVisitTs: number;
   changeLog: BoardChangeLog;
   isCardCollapsed: (cardId: string, card?: QDeckCard) => boolean;
   setCardCollapsed: (cardId: string, collapsed: boolean) => void;
@@ -168,6 +201,7 @@ type QDeckCtx = {
   ) => Promise<void>;
 
   loadCommentsForCard: (cardId: string) => Promise<void>;
+  refreshCommentHeads: () => Promise<void>;
   collectBoardChangeReport: () => Promise<BoardChangeReport>;
   resetBoardChangeLog: () => void;
 
@@ -231,6 +265,15 @@ const pickNewestVariant = (variants: QDeckCard[]) => {
   });
 };
 
+const getThreadLatestCommentStamp = (thread: CardCommentThread | null | undefined): number => {
+  if (!thread || !Array.isArray(thread.comments) || thread.comments.length === 0) return 0;
+  let latest = Number(thread.updatedAt ?? 0);
+  for (const comment of thread.comments) {
+    latest = Math.max(latest, Number(comment.createdAt ?? 0), Number(comment.updatedAt ?? 0));
+  }
+  return latest;
+};
+
 type BoardChangeType =
   | 'created'
   | 'moved'
@@ -281,6 +324,10 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [archivedCardIds, setArchivedCardIds] = useState<Set<string>>(new Set());
   const [cardsLoading, setCardsLoading] = useState(false);
   const [comments, setComments] = useState<Record<string, CardCommentThread>>({});
+  const [commentHeads, setCommentHeads] = useState<
+    Record<string, { latestStamp: number; newestPublisher?: string }>
+  >({});
+  const [boardLastVisitTs, setBoardLastVisitTs] = useState(0);
   const cardsRef = useRef<Record<string, QDeckCard>>({});
   const cardVariantsRef = useRef<Record<string, QDeckCard[]>>({});
   const commentsRef = useRef<Record<string, CardCommentThread>>({});
@@ -336,6 +383,13 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       cardsReadyRef.current[board.boardId] = false;
       setCardsLoading(true);
       pollSeedingRef.current[board.boardId] = false;
+      setCommentHeads({});
+      const previousVisit = readBoardLastVisit(board.boardId);
+      setBoardLastVisitTs(previousVisit);
+      writeBoardLastVisit(board.boardId, Date.now());
+    } else {
+      setCommentHeads({});
+      setBoardLastVisitTs(0);
     }
   }, [board?.boardId]);
 
@@ -566,24 +620,54 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     async (_issuerIgnored: string, b: QDeckBoard, opts?: LoadCardsOpts) => {
       const loadToken = ++cardsLoadTokenRef.current;
       setCardsLoading(true);
+      const perfTraceId =
+        opts?.perfTraceId ??
+        beginQDeckBoardLoadTrace({
+          issuer: (_issuerIgnored || b.createdBy || identity.name || '').trim() || 'unknown',
+          boardId: b.boardId,
+          loadKey: `cards:${b.boardId}:${Date.now()}`,
+          meta: {
+            source: 'cards-only',
+            preserveOnEmpty: opts?.preserveOnEmpty ?? false,
+            skipIfIndexUnchanged: opts?.skipIfIndexUnchanged ?? false,
+          },
+        });
+      let perfStatus: 'ok' | 'error' | 'cancelled' = 'ok';
+      let perfRefsCount = 0;
+      let perfUsableCount = 0;
+      let perfVariantCount = 0;
+      let perfUsedDiscovery = false;
+      let perfShowedCached = false;
+      let perfIndexEntries = 0;
+      let perfIndexCardIds = 0;
+      let perfSkippedByUnchanged = false;
       let markReady = false;
       try {
+        markQDeckBoardLoadPhase(perfTraceId, 'cards.load.start');
         // 0) Access check
         if (b.visibility === 'private' && !identity.address) {
           pendingCardsLoadRef.current = b.boardId;
+          perfStatus = 'cancelled';
+          markQDeckBoardLoadPhase(perfTraceId, 'cards.load.waiting-auth');
           return;
         }
-        const canView = await canUserViewBoard(b, { address: identity.address });
+        const canView = await canUserViewBoard(b, {
+          name: identity.name,
+          address: identity.address,
+        });
         if (!canView) {
           pendingCardsLoadRef.current = null;
           console.error('[Q-Deck] viewer not allowed; cannot open board');
           setCards({});
           setCardVariants({});
           setArchivedCardIds(new Set());
+          perfStatus = 'cancelled';
+          markQDeckBoardLoadPhase(perfTraceId, 'cards.load.viewer-denied');
           markReady = true;
           return;
         }
         markReady = true;
+        markQDeckBoardLoadPhase(perfTraceId, 'cards.load.access-ok');
 
         const prefetchedDocs = new Map<string, QDeckCard>();
         const refKey = (name: string, cardId: string) => `${name}::${cardId}`;
@@ -656,6 +740,13 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           setCards(byId);
           setCardVariants(variants);
           setArchivedCardIds(archivedSet);
+          perfUsableCount = usable.length;
+          perfVariantCount = Object.keys(variants).length;
+          markQDeckBoardLoadPhase(perfTraceId, 'cards.load.applied', {
+            usable: usable.length,
+            variants: Object.keys(variants).length,
+            archived: archivedSet.size,
+          });
         };
         const loadDocsForRefs = async (refs: Array<{ name: string; cardId: string }>) => {
           const loaded = await Promise.all(
@@ -691,6 +782,10 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           cardsIndexCacheRef.current[b.boardId] = cachedIndex;
         }
         const cachedRefs = cachedIndex ? refsFromIndex(cachedIndex) : [];
+        markQDeckBoardLoadPhase(perfTraceId, 'cards.load.cache-checked', {
+          hasCachedIndex: Boolean(cachedIndex),
+          cachedRefs: cachedRefs.length,
+        });
         const newestIndexPromise = loadMergedCardsIndex(b, {
           issuerHints: [b.createdBy, identity.name].filter(Boolean) as string[],
         }).catch((e) => {
@@ -704,6 +799,10 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (cachedDocs.length) {
             applyLoadedCards(cachedDocs, cachedIndex, { cache: false });
             showedCached = true;
+            perfShowedCached = true;
+            markQDeckBoardLoadPhase(perfTraceId, 'cards.load.cached-preview', {
+              cachedDocs: cachedDocs.length,
+            });
           }
         }
 
@@ -711,6 +810,12 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         let refs: Array<{ name: string; cardId: string }> | null = null;
         let idx: CardsIndexDoc | null = null;
         idx = (await newestIndexPromise) ?? null;
+        perfIndexEntries = idx?.entries?.length ?? 0;
+        perfIndexCardIds = idx?.cardIds?.length ?? 0;
+        markQDeckBoardLoadPhase(perfTraceId, 'cards.load.index-ready', {
+          entries: perfIndexEntries,
+          cardIds: perfIndexCardIds,
+        });
         const idxStamp = Number(idx?.updatedAt ?? 0);
         if (idxStamp) {
           cardsIndexStampRef.current[b.boardId] = Math.max(
@@ -728,6 +833,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           Object.keys(cardsRef.current).length > 0 ||
           Object.keys(cardVariantsRef.current).length > 0;
         if (opts?.skipIfIndexUnchanged && indexUnchanged && hasExisting) {
+          perfSkippedByUnchanged = true;
+          markQDeckBoardLoadPhase(perfTraceId, 'cards.load.index-unchanged-skip');
           return;
         }
         if (idx?.entries?.length) {
@@ -741,6 +848,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
         // 2) Fallback discovery across *all* issuers
         if (!refs || refs.length === 0) {
+          perfUsedDiscovery = true;
+          markQDeckBoardLoadPhase(perfTraceId, 'cards.load.discovery-start');
           try {
             const all = await discoverCardRefsBySearch(b);
 
@@ -778,6 +887,9 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             console.warn('[Q-Deck] discovery failed', e);
             refs = [];
           }
+          markQDeckBoardLoadPhase(perfTraceId, 'cards.load.discovery-ready', {
+            refs: refs?.length ?? 0,
+          });
         }
 
         if (!refs || refs.length === 0) {
@@ -785,10 +897,17 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             !!idx && !((idx.entries?.length ?? 0) > 0 || (idx.cardIds?.length ?? 0) > 0);
           if (indexSaysEmpty) {
             applyLoadedCards([], idx);
+            markQDeckBoardLoadPhase(perfTraceId, 'cards.load.index-empty');
             return;
           }
-          if (showedCached) return;
-          if (opts?.preserveOnEmpty) return;
+          if (showedCached) {
+            markQDeckBoardLoadPhase(perfTraceId, 'cards.load.no-refs-using-cached');
+            return;
+          }
+          if (opts?.preserveOnEmpty) {
+            markQDeckBoardLoadPhase(perfTraceId, 'cards.load.no-refs-preserve-existing');
+            return;
+          }
           setCards({});
           setCardVariants({});
           setArchivedCardIds(new Set());
@@ -807,13 +926,30 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               }, 1200);
             }
           }
+          markQDeckBoardLoadPhase(perfTraceId, 'cards.load.no-refs-cleared');
           return;
         }
+        perfRefsCount = refs.length;
+        markQDeckBoardLoadPhase(perfTraceId, 'cards.load.refs-ready', {
+          refs: refs.length,
+        });
 
         // 3) Fetch each card with its *publisher* name
         const usable = await loadDocsForRefs(refs);
-        if (!usable.length && opts?.preserveOnEmpty) return;
+        markQDeckBoardLoadPhase(perfTraceId, 'cards.load.docs-ready', {
+          usable: usable.length,
+        });
+        if (!usable.length && opts?.preserveOnEmpty) {
+          markQDeckBoardLoadPhase(perfTraceId, 'cards.load.empty-preserve-existing');
+          return;
+        }
         applyLoadedCards(usable, idx);
+      } catch (error) {
+        perfStatus = 'error';
+        markQDeckBoardLoadPhase(perfTraceId, 'cards.load.error', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
       } finally {
         if (markReady) {
           cardsReadyRef.current[b.boardId] = true;
@@ -821,6 +957,18 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (cardsLoadTokenRef.current === loadToken) {
           setCardsLoading(false);
         }
+        finishQDeckBoardLoadTrace(perfTraceId, perfStatus, {
+          boardId: b.boardId,
+          refs: perfRefsCount,
+          usable: perfUsableCount,
+          variants: perfVariantCount,
+          usedDiscovery: perfUsedDiscovery,
+          showedCached: perfShowedCached,
+          indexEntries: perfIndexEntries,
+          indexCardIds: perfIndexCardIds,
+          skippedByUnchanged: perfSkippedByUnchanged,
+          markReady,
+        });
       }
     },
     [identity.address, identity.name, cardLimiter, track]
@@ -872,33 +1020,121 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       // Cache-key should reflect the exact thing we’re trying to open
       const cacheKey = `${issuer}:${raw}:${visibilityHint ?? 'auto'}`;
+      const traceId = beginQDeckBoardLoadTrace({
+        issuer,
+        boardId: raw,
+        loadKey: cacheKey,
+        meta: {
+          preserveExisting,
+          visibilityHint: visibilityHint ?? 'auto',
+          inputType: isPubIdent || isPrivIdent ? 'identifier' : 'short-id',
+        },
+      });
+      markQDeckBoardLoadPhase(traceId, 'board.load.start');
       if (
         lastLoadKey.current === cacheKey &&
         board &&
         (board.boardId === raw || isPrivIdent || isPubIdent)
       ) {
+        finishQDeckBoardLoadTrace(traceId, 'cancelled', { reason: 'duplicate-load-key' });
         return;
       }
       lastLoadKey.current = cacheKey;
 
-      // 1) If caller gave a full ident, we already know the intent.
-      //    Skip heads probing and go straight to resolve (fast-path).
-      if (isPubIdent || isPrivIdent) {
-        const probe = await resolveBoardForReadWithMeta(issuer, raw, visibilityHint).catch((e) => {
-          console.error('[Q-Deck] resolveBoardForReadWithMeta error', e);
-          return null;
-        });
+      try {
+        // 1) If caller gave a full ident, we already know the intent.
+        //    Skip heads probing and go straight to resolve (fast-path).
+        if (isPubIdent || isPrivIdent) {
+          markQDeckBoardLoadPhase(traceId, 'board.resolve.ident.start');
+          const probe = await resolveBoardForReadWithMeta(issuer, raw, visibilityHint).catch(
+            (e) => {
+              console.error('[Q-Deck] resolveBoardForReadWithMeta error', e);
+              return null;
+            }
+          );
+          markQDeckBoardLoadPhase(traceId, 'board.resolve.ident.done', {
+            found: Boolean(probe?.doc),
+          });
 
-        if (lastLoadKey.current !== cacheKey) return; // race guard
-        if (!probe?.doc) {
-          console.error('[Q-Deck] Board not found/inaccessible (ident)', { issuer, ident: raw });
+          if (lastLoadKey.current !== cacheKey) {
+            finishQDeckBoardLoadTrace(traceId, 'cancelled', { reason: 'superseded' });
+            return;
+          } // race guard
+          if (!probe?.doc) {
+            console.error('[Q-Deck] Board not found/inaccessible (ident)', { issuer, ident: raw });
+            finishQDeckBoardLoadTrace(traceId, 'error', { reason: 'board-not-found-ident' });
+            return;
+          }
+
+          setBoard(probe.doc);
+          markQDeckBoardLoadPhase(traceId, 'board.state.applied', {
+            boardId: probe.doc.boardId,
+          });
+          boardStampRef.current[probe.doc.boardId] = Math.max(
+            boardStampRef.current[probe.doc.boardId] ?? 0,
+            Number(probe.doc.updatedAt ?? 0)
+          );
+          if (!preserveExisting) {
+            setCards({});
+            setCardVariants({});
+            setArchivedCardIds(new Set());
+            setComments({});
+          }
+          void track(
+            loadCardsForBoard(issuer, probe.doc, {
+              preserveOnEmpty: preserveExisting,
+              skipIfIndexUnchanged: preserveExisting,
+              perfTraceId: traceId,
+            }),
+            `${probe.doc}`
+          );
+          console.log('[Q-Deck] loadBoardById success (ident)', {
+            issuer,
+            id: raw,
+            title: probe.doc.title,
+          });
           return;
         }
 
-        setBoard(probe.doc);
-        boardStampRef.current[probe.doc.boardId] = Math.max(
-          boardStampRef.current[probe.doc.boardId] ?? 0,
-          Number(probe.doc.updatedAt ?? 0)
+        // 2) We have a short id. Prefer supplied hint; otherwise peek heads.
+        const shortId = raw;
+        markQDeckBoardLoadPhase(traceId, 'board.resolve.short.hint.start');
+        const hint =
+          visibilityHint ??
+          ((await findBoardVisibilityHeads(issuer, shortId).catch(() => null)) || undefined);
+        markQDeckBoardLoadPhase(traceId, 'board.resolve.short.hint.done', {
+          hint: hint ?? null,
+        });
+
+        // Use the meta-aware resolver (it handles public first, then private probe)
+        const resolved = await track(
+          resolveBoardForRead(issuer, shortId, hint).catch((e) => {
+            console.error('[Q-Deck] resolveBoardForRead error', e);
+            return null;
+          }),
+          `qdeck:cards:${shortId}`
+        );
+        markQDeckBoardLoadPhase(traceId, 'board.resolve.short.done', {
+          found: Boolean(resolved),
+        });
+
+        if (lastLoadKey.current !== cacheKey) {
+          finishQDeckBoardLoadTrace(traceId, 'cancelled', { reason: 'superseded' });
+          return;
+        } // race guard
+        if (!resolved) {
+          console.error('[Q-Deck] Board not found or inaccessible', { issuer, shortId, hint });
+          finishQDeckBoardLoadTrace(traceId, 'error', { reason: 'board-not-found-short' });
+          return;
+        }
+
+        setBoard(resolved);
+        markQDeckBoardLoadPhase(traceId, 'board.state.applied', {
+          boardId: resolved.boardId,
+        });
+        boardStampRef.current[resolved.boardId] = Math.max(
+          boardStampRef.current[resolved.boardId] ?? 0,
+          Number(resolved.updatedAt ?? 0)
         );
         if (!preserveExisting) {
           setCards({});
@@ -907,61 +1143,22 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           setComments({});
         }
         void track(
-          loadCardsForBoard(issuer, probe.doc, {
+          loadCardsForBoard(issuer, resolved, {
             preserveOnEmpty: preserveExisting,
             skipIfIndexUnchanged: preserveExisting,
+            perfTraceId: traceId,
           }),
-          `${probe.doc}`
+          `${resolved}`
         );
-        console.log('[Q-Deck] loadBoardById success (ident)', {
-          issuer,
-          id: raw,
-          title: probe.doc.title,
+
+        console.debug('[Q-Deck] loadBoardById success', { issuer, shortId, title: resolved.title });
+      } catch (error) {
+        finishQDeckBoardLoadTrace(traceId, 'error', {
+          reason: 'load-board-exception',
+          message: error instanceof Error ? error.message : String(error),
         });
-        return;
+        throw error;
       }
-
-      // 2) We have a short id. Prefer supplied hint; otherwise peek heads.
-      const shortId = raw;
-      const hint =
-        visibilityHint ??
-        ((await findBoardVisibilityHeads(issuer, shortId).catch(() => null)) || undefined);
-
-      // Use the meta-aware resolver (it handles public first, then private probe)
-      const resolved = await track(
-        resolveBoardForRead(issuer, shortId, hint).catch((e) => {
-          console.error('[Q-Deck] resolveBoardForRead error', e);
-          return null;
-        }),
-        `qdeck:cards:${shortId}`
-      );
-
-      if (lastLoadKey.current !== cacheKey) return; // race guard
-      if (!resolved) {
-        console.error('[Q-Deck] Board not found or inaccessible', { issuer, shortId, hint });
-        return;
-      }
-
-      setBoard(resolved);
-      boardStampRef.current[resolved.boardId] = Math.max(
-        boardStampRef.current[resolved.boardId] ?? 0,
-        Number(resolved.updatedAt ?? 0)
-      );
-      if (!preserveExisting) {
-        setCards({});
-        setCardVariants({});
-        setArchivedCardIds(new Set());
-        setComments({});
-      }
-      void track(
-        loadCardsForBoard(issuer, resolved, {
-          preserveOnEmpty: preserveExisting,
-          skipIfIndexUnchanged: preserveExisting,
-        }),
-        `${resolved}`
-      );
-
-      console.debug('[Q-Deck] loadBoardById success', { issuer, shortId, title: resolved.title });
     },
     [board, loadCardsForBoard, track] // identity.address not used anymore in this body
   );
@@ -1428,6 +1625,13 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         seq: thread.seq + 1,
       };
       setComments((prev) => ({ ...prev, [cardId]: next }));
+      setCommentHeads((prev) => ({
+        ...prev,
+        [cardId]: {
+          latestStamp: now,
+          newestPublisher: publisher,
+        },
+      }));
       await saveCommentsDoc(publisher, board, cardId, next);
     },
     [board, comments, identity.name, identity.address, auth.name]
@@ -1469,6 +1673,46 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return base;
   }
 
+  const refreshCommentHeads = useCallback(async () => {
+    if (!board) return;
+    const boardId = board.boardId;
+    try {
+      const heads = await discoverCommentHeadsByBoard(board);
+      if (currentBoardIdRef.current && currentBoardIdRef.current !== boardId) return;
+      const next: Record<string, { latestStamp: number; newestPublisher?: string }> = {};
+      for (const head of heads) {
+        if (!head?.cardId) continue;
+        const stamp = Number(head.stamp ?? 0);
+        const prev = next[head.cardId];
+        if (!prev || stamp >= prev.latestStamp) {
+          next[head.cardId] = {
+            latestStamp: stamp,
+            newestPublisher: head.name,
+          };
+        }
+      }
+      for (const [cardId, thread] of Object.entries(commentsRef.current)) {
+        const stamp = getThreadLatestCommentStamp(thread);
+        if (!stamp) continue;
+        const prev = next[cardId];
+        if (!prev || stamp > prev.latestStamp) {
+          next[cardId] = {
+            latestStamp: stamp,
+            newestPublisher: prev?.newestPublisher,
+          };
+        }
+      }
+      setCommentHeads(next);
+    } catch (error) {
+      console.warn('[Q-Deck] refreshCommentHeads failed', { boardId, error });
+    }
+  }, [board]);
+
+  useEffect(() => {
+    if (!board || cardsLoading) return;
+    void refreshCommentHeads();
+  }, [board?.boardId, cardsLoading, refreshCommentHeads]);
+
   const loadCommentsForCard = React.useCallback(
     async (cardId: string) => {
       if (!board) return;
@@ -1494,6 +1738,24 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         // 3) merge + cache
         const merged = mergeThreads(threads);
         setComments((prev) => ({ ...prev, [cardId]: merged }));
+        const latest = getThreadLatestCommentStamp(merged);
+        setCommentHeads((prev) => {
+          const existing = prev[cardId];
+          if (!latest) {
+            if (!existing) return prev;
+            const next = { ...prev };
+            delete next[cardId];
+            return next;
+          }
+          if (existing && existing.latestStamp >= latest) return prev;
+          return {
+            ...prev,
+            [cardId]: {
+              latestStamp: latest,
+              newestPublisher: existing?.newestPublisher,
+            },
+          };
+        });
       } catch (e) {
         console.warn('[Q-Deck] loadCommentsForCard failed', { cardId, e });
         // best-effort empty cache so UI renders deterministically
@@ -1521,7 +1783,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!board) return;
     const cardIds = Object.keys(commentsRef.current);
     if (!cardIds.length) return;
-    const limit = pLimit(2);
+    const limit = pLimit(4);
     await Promise.all(cardIds.map((cardId) => limit(() => loadCommentsForCard(cardId))));
   }, [board, loadCommentsForCard]);
 
@@ -1576,6 +1838,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       );
     }
     if (pending.comments) {
+      await refreshCommentHeads();
       await refreshLoadedComments();
     }
   }, [
@@ -1583,6 +1846,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     identity.name,
     loadCardsForBoard,
     pendingRemoteChanges,
+    refreshCommentHeads,
     refreshBoard,
     refreshLoadedComments,
     track,
@@ -1729,7 +1993,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       });
     }
 
-    const commentLimit = pLimit(2);
+    const commentLimit = pLimit(4);
     const commentCardIds = new Set<string>();
     Object.keys(cardVariants).forEach((id) => commentCardIds.add(id));
     Object.keys(cards).forEach((id) => commentCardIds.add(id));
@@ -1813,6 +2077,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setCardVariants({});
       setArchivedCardIds(new Set());
       setComments({});
+      setCommentHeads({});
+      setBoardLastVisitTs(0);
     },
     [board, cards, auth.name, identity.name]
   );
@@ -1826,6 +2092,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       archivedCardIds,
       cardsLoading,
       comments,
+      commentHeads,
+      boardLastVisitTs,
       changeLog,
       isCardCollapsed,
       setCardCollapsed,
@@ -1840,6 +2108,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setPreferredVariant,
       addComment,
       loadCommentsForCard,
+      refreshCommentHeads,
       collectBoardChangeReport,
       resetBoardChangeLog,
       publishMode,
@@ -1866,6 +2135,8 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       archivedCardIds,
       cardsLoading,
       comments,
+      commentHeads,
+      boardLastVisitTs,
       changeLog,
       isCardCollapsed,
       setCardCollapsed,
@@ -1880,6 +2151,7 @@ export const QDeckProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setPreferredVariant,
       addComment,
       loadCommentsForCard,
+      refreshCommentHeads,
       collectBoardChangeReport,
       resetBoardChangeLog,
       publishMode,

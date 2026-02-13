@@ -1,6 +1,7 @@
 // utils/address.ts
 // Robust Qortal address utilities: format/validate, name resolution (cached),
 // and a persistent last-known-good (LKG) address with TTL.
+import { getNameDataCached } from './qortalApi';
 
 type FetchLike = typeof fetch;
 
@@ -96,7 +97,7 @@ export async function resolveRecipientStrict(input: string): Promise<string> {
   // name path
   const name = raw.replace(/^@+/, '');
   try {
-    const data = await qortalRequest({ action: 'GET_NAME_DATA', name });
+    const data = await getNameDataCached(name);
     const addr: unknown = data?.owner;
     if (typeof addr !== 'string') throw new Error(`Name not found: ${name}`);
 

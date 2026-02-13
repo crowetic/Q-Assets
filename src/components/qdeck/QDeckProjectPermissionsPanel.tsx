@@ -25,12 +25,16 @@ import { QDeckProject } from '../../types/qdeck';
 import { loadProjectsIndexMerged } from '../../utils/qdeckProjectIndexCache';
 import { resolveProjectForRead, saveProjectDoc } from '../../utils/qdeckApi';
 import { useAuth } from 'qapp-core';
-// import pLimit from 'p-limit';
-import { getAccountGroups, type GroupSummary } from '../../utils/qortalApi';
+import pLimit from 'p-limit';
+import {
+  getAccountDataCached,
+  getAccountGroups,
+  getNameDataCached,
+  type GroupSummary,
+} from '../../utils/qortalApi';
 import { fetchGroupMembers } from '../../utils/access';
 import { isQAddressFormat } from '../../utils/address';
-
-declare function qortalRequest<T = any>(request: any): Promise<T>;
+import { describeProjectPermissions } from '../../utils/qdeckAccess';
 
 type EditableProject = QDeckProject & {
   isDirty?: boolean;
@@ -46,7 +50,7 @@ export default function QDeckProjectPermissionsPanel() {
   const [projects, setProjects] = useState<EditableProject[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // const limit = useMemo(() => pLimit(2), []);
+  const limit = useMemo(() => pLimit(4), []);
   const [myGroups, setMyGroups] = useState<GroupSummary[]>([]);
   const groupMemberCacheRef = useRef(new Map<number, Set<string>>());
   const nameAddressCacheRef = useRef(new Map<string, string>());
@@ -62,7 +66,7 @@ export default function QDeckProjectPermissionsPanel() {
       return trimmed;
     }
     try {
-      const data = await qortalRequest({ action: 'GET_NAME_DATA', name: trimmed });
+      const data = await getNameDataCached(trimmed);
       const owner = data?.owner;
       if (typeof owner === 'string' && owner.trim()) {
         const addr = owner.trim();
@@ -81,7 +85,7 @@ export default function QDeckProjectPermissionsPanel() {
     const cached = publicKeyCacheRef.current.get(trimmed);
     if (cached) return cached;
     try {
-      const data = await qortalRequest({ action: 'GET_ACCOUNT_DATA', address: trimmed });
+      const data = await getAccountDataCached(trimmed);
       const publicKey = data?.publicKey;
       if (typeof publicKey === 'string' && publicKey.trim()) {
         const pk = publicKey.trim();
@@ -189,41 +193,46 @@ export default function QDeckProjectPermissionsPanel() {
       if (!myName) throw new Error('Authenticate to load your projects');
       const idx = await loadProjectsIndexMerged(myName);
       const entries = idx?.projects ?? [];
-      const mapped: EditableProject[] = [];
+      const mapped = (
+        await Promise.all(
+          entries.map((entry) =>
+            limit(async () => {
+              const issuer = idx?.issuerName || myName;
+              const resolved = await resolveProjectForRead(
+                issuer,
+                entry.projectId,
+                entry.visibility
+              ).catch(() => null);
+              const base = resolved || (entry as any);
+              const ownerGroups = base.ownerGroups || [];
+              const editorGroups = Array.from(
+                new Set([...(base.editorGroups || base.groupsAllowed || []), ...ownerGroups])
+              );
+              const privMode =
+                base.privateMeta?.mode ??
+                (base.privateMeta?.groupId != null ? 'group' : entry.mode);
 
-      for (const entry of entries) {
-        const issuer = idx?.issuerName || myName;
-        const resolved = await resolveProjectForRead(
-          issuer,
-          entry.projectId,
-          entry.visibility
-        ).catch(() => null);
-        const base = resolved || (entry as any);
-        const ownerGroups = base.ownerGroups || [];
-        const editorGroups = Array.from(
-          new Set([...(base.editorGroups || base.groupsAllowed || []), ...ownerGroups])
-        );
-        const privMode =
-          base.privateMeta?.mode ?? (base.privateMeta?.groupId != null ? 'group' : entry.mode);
-
-        mapped.push({
-          ...(base as any),
-          visibility: base.visibility ?? entry.visibility,
-          owners: base.owners || [base.createdBy || issuer || myName],
-          ownerGroups,
-          editors: base.editors || base.usersAllowed || [],
-          editorGroups,
-          createdBy: base.createdBy || issuer || myName,
-          encryption:
-            entry.visibility === 'private'
-              ? privMode === 'direct'
-                ? 'Direct'
-                : privMode === 'group'
-                  ? 'Group'
-                  : 'Private'
-              : undefined,
-        });
-      }
+              return {
+                ...(base as any),
+                visibility: base.visibility ?? entry.visibility,
+                owners: base.owners || [base.createdBy || issuer || myName],
+                ownerGroups,
+                editors: base.editors || base.usersAllowed || [],
+                editorGroups,
+                createdBy: base.createdBy || issuer || myName,
+                encryption:
+                  entry.visibility === 'private'
+                    ? privMode === 'direct'
+                      ? 'Direct'
+                      : privMode === 'group'
+                        ? 'Group'
+                        : 'Private'
+                    : undefined,
+              } as EditableProject;
+            })
+          )
+        )
+      ).filter(Boolean) as EditableProject[];
       setProjects(mapped);
     } catch (e: any) {
       setError(e?.message || 'Failed to load projects index');
@@ -409,6 +418,7 @@ export default function QDeckProjectPermissionsPanel() {
                   } can be added, and encryption settings stay fixed.`
                 : 'Private project uses direct encryption; only existing recipients can be added.'
               : null;
+            const permissionSummary = describeProjectPermissions(p);
             return (
               <Card key={p.projectId} variant="outlined">
                 {privateNote && (
@@ -431,6 +441,50 @@ export default function QDeckProjectPermissionsPanel() {
                       <Chip size="small" color="warning" label="Unsaved" sx={{ fontWeight: 600 }} />
                     )}
                   </Box>
+
+                  <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
+                    <Chip
+                      size="small"
+                      color="primary"
+                      label={`Permissions: ${permissionSummary.modeLabel}`}
+                    />
+                    <Chip
+                      size="small"
+                      color={p.adminOverride ? 'warning' : 'default'}
+                      label={p.adminOverride ? 'Admin override on' : 'Admin override off'}
+                    />
+                  </Stack>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', mt: 0.75 }}
+                  >
+                    {permissionSummary.viewRule}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', mt: 0.25 }}
+                  >
+                    {permissionSummary.editRule}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', mt: 0.25 }}
+                  >
+                    {permissionSummary.adminRule}
+                  </Typography>
+                  {permissionSummary.notes.map((note) => (
+                    <Typography
+                      key={`${p.projectId}:${note}`}
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ display: 'block', mt: 0.25 }}
+                    >
+                      {note}
+                    </Typography>
+                  ))}
 
                   <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ mt: 1 }}>
                     <Box sx={{ flex: 1 }}>

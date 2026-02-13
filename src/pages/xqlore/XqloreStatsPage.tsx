@@ -906,7 +906,7 @@ const XqloreStatsPage = () => {
           const uniqueAddresses = Array.from(
             new Set(draftEntries.map((entry) => entry.creatorAddress).filter(Boolean))
           ) as string[];
-          const limiter = pLimit(2);
+          const limiter = pLimit(4);
           const nameMap = new Map<string, string>();
           setStatusNote(`Resolving ${uniqueAddresses.length} creator names...`);
           setProgress({

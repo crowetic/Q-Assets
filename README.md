@@ -2,12 +2,16 @@
 
 Q-Assets is an asset issuance, management, trading, and information Q-App for the Qortal Blockchain.
 
+- Open pages faster with route-level lazy loading and deferred background startup tasks.
+- Reduce startup request spikes by batching notification refreshes and staggering background scanner boot timing.
+
 ## News & Notifications
 
 - Browse announcements, asset news, and promotions from the home page.
 - Load the news feed on demand so the home page stays snappy.
 - Join the Q-Assets notifications group from the prompt below the header to receive updates.
 - Send Q-Mail notifications in one queued publish to reduce confirmation prompts for large updates.
+- Refresh notification scopes in smaller batches for steadier performance on accounts with many group scopes.
 
 ## QDN Data Explorer
 
@@ -50,6 +54,9 @@ Q-Assets is an asset issuance, management, trading, and information Q-App for th
 - Keep multi-publisher board statuses consistent by merging authorized card indexes, so in-progress/completed changes stay aligned across different users and views.
 - Prevent publishing a new card before board hydration finishes, avoiding partial indexes when opening busy boards.
 - Show list-level loading placeholders while board cards hydrate for faster perceived load feedback.
+- Reduce duplicate board/index lookups with short-lived request caching and deduplication so Q-Deck stays smoother on busy nodes.
+- Keep board/project/admin lookups responsive by reusing cached name/account lookups across repeated actions.
+- Enable optional Q-Deck load timing diagnostics (`?qdeckPerf=1`) to show phase timings in-board (including initial opens) and log summaries in the console, with a hidden toggle in Board Actions.
 - Check for new board updates in the background and show a “new changes” banner so you can load them on demand.
 - Ignore your own publishes when deciding whether to show the “new changes” banner.
 - Pause Q-Deck polling while batch publish queues have pending changes to avoid overwriting local edits.
@@ -59,6 +66,8 @@ Q-Assets is an asset issuance, management, trading, and information Q-App for th
 - Reorder lists and customize list colors from the board manager to match your workflow.
 - Rename boards from the board view or the My/All Boards menus.
 - Use a cleaner comment view with avatars, quick add buttons, and comment counts at a glance.
+- Speed up board loads by using board-level comment discovery for card comment chips, loading full comment threads only when opened.
+- Highlight cards with comments newer than your last board visit using a per-board local timestamp baseline.
 - Remember per-board publish mode (immediate vs queued) the next time you open a board.
 - Show group names (not just IDs) in the My/All Boards permission chips.
 - Show completed timestamps on done cards in Q-Deck boards.
@@ -68,6 +77,7 @@ Q-Assets is an asset issuance, management, trading, and information Q-App for th
 - Pick assets from the Q-Assets index when linking them to projects, with non-blocking metadata hydration.
 - Show asset avatars alongside project asset links for quicker scanning.
 - Manage project admins/editors and admin override permissions from the Q-Deck project permissions panel.
+- Show clear effective permission summaries (view/edit/admin rules) in the board and project permissions panels.
 - Enforce project edit rights so only authorized editors or admin overrides can publish project updates.
 - Load project calendars faster by reading schedule metadata from card indexes and skipping archived cards.
 - Switch between My Projects and All Projects to discover public projects (and accessible private ones).

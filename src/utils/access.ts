@@ -205,7 +205,7 @@ export async function listManagementGroupNames(
     }
 
     const addrs = Array.from(memberAddrs);
-    const limit = pLimit(2);
+    const limit = pLimit(4);
 
     const perAddr = await Promise.all(
       addrs.map((addr) =>
@@ -459,7 +459,7 @@ export async function loadSectionFromGroup(
 export async function loadAllWikiSections(
   meta: { id: string; title: string; tags?: string[] }[] = WIKI_SECTIONS
 ): Promise<LoadedSection[]> {
-  const lim = pLimit(2);
+  const lim = pLimit(4);
   const names = await listManagementGroupNames();
   if (!names.length) {
     return meta.map((m) => ({
