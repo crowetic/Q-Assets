@@ -382,7 +382,7 @@ const XqloreAdminPage = () => {
           <Stack spacing={1.5}>
             <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2}>
               <Box>
-                <Typography variant="h4" sx={{ fontFamily: 'Orbitron' }}>
+                <Typography variant="h4" sx={{ fontFamily: 'Exo2' }}>
                   Xqlore Admin
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
@@ -409,7 +409,7 @@ const XqloreAdminPage = () => {
 
         <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 3, md: 4 }, mb: 3 }}>
           <Stack spacing={2}>
-            <Typography variant="h5" sx={{ fontFamily: 'Orbitron' }}>
+            <Typography variant="h5" sx={{ fontFamily: 'Exo2' }}>
               App registry
             </Typography>
             {loading && (
@@ -446,7 +446,7 @@ const XqloreAdminPage = () => {
 
         <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 3, md: 4 }, mb: 3 }}>
           <Stack spacing={2}>
-            <Typography variant="h5" sx={{ fontFamily: 'Orbitron' }}>
+            <Typography variant="h5" sx={{ fontFamily: 'Exo2' }}>
               Allowed publishers
             </Typography>
             <Stack direction="row" spacing={1} flexWrap="wrap">
@@ -491,7 +491,7 @@ const XqloreAdminPage = () => {
 
         <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 3, md: 4 } }}>
           <Stack spacing={2}>
-            <Typography variant="h5" sx={{ fontFamily: 'Orbitron' }}>
+            <Typography variant="h5" sx={{ fontFamily: 'Exo2' }}>
               Candidate app indexes
             </Typography>
             <Typography variant="body2" color="text.secondary">

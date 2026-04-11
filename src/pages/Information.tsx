@@ -148,7 +148,7 @@ const makeDefaultSections = (theme: Theme): InfoSection[] => [
           Fees
         </Typography>
         <Typography>
-          Network fee defaults to <code>0.01</code> QORT. No exchange fee.
+          Network fee defaults to <code>0.1</code> QORT. No exchange fee.
         </Typography>
       </>
     ),

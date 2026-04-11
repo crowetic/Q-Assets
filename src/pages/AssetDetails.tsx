@@ -64,7 +64,13 @@ import SectionCard from '../components/layout/SectionCard';
 import ActionsToolbar from '../components/asset/ActionsToolbar';
 import PublishedHtmlRenderer from '../components/PublishedHtmlRenderer';
 import { useAlert } from '../components/alerts';
-import { updateAsset, getAccountGroups, type GroupSummary, getGroupById } from '../utils/qortalApi';
+import {
+  DEFAULT_MANUAL_TX_FEE,
+  updateAsset,
+  getAccountGroups,
+  type GroupSummary,
+  getGroupById,
+} from '../utils/qortalApi';
 // import { getAssetInfo } from '../utils/qortalAssetRequests';
 import { useMemberGroupIds } from '../hooks/useMemberGroupIds';
 import { canViewAsset, getAssetPrivacy, type AssetPrivacy } from '../utils/assetPrivacy';
@@ -1639,7 +1645,7 @@ export default function AssetDetail() {
                   userPublicKey,
                   asset.assetId,
                   { newDescription },
-                  { fee: 0.01, txGroupId: 0 }
+                  { fee: DEFAULT_MANUAL_TX_FEE, txGroupId: 0 }
                 );
 
                 // Local UI reflect

@@ -58,7 +58,7 @@ export default function ActionsToolbar({
 
   const dataPage = pathname.startsWith('/assetdata');
 
-  const assetDetailsPage = pathname.startsWith('/assets');
+  const assetDetailsPage = pathname.startsWith('/assetexplorer') || pathname.startsWith('/assets');
 
   const handleOpenAssetData = () => {
     navigate(`/assetdata/${assetId}`);
@@ -121,7 +121,7 @@ export default function ActionsToolbar({
           <OrbitronButton
             variant="outlined"
             size="small"
-            onClick={() => navigate(`/assets/${assetId}`)}
+            onClick={() => navigate(`/assetexplorer/${assetId}`)}
             sx={fullWidthStyle}
           >
             View Asset Details

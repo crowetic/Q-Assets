@@ -4,6 +4,7 @@ import {
   Outlet,
   RouteObject,
   Navigate,
+  useParams,
 } from 'react-router-dom';
 import { AppWrapper } from '../AppWrapper';
 import Home from '../pages/Home';
@@ -44,6 +45,7 @@ import MyPublishedData from '../pages/manage/data/MyPublishedData';
 import PublishData from '../pages/manage/data/PublishData';
 import BulkPublish from '../pages/manage/data/BulkPublish';
 import NameBasedAssetData from '../pages/manage/data/NameBasedAssetData';
+import NameBasedAssetReceive from '../pages/manage/data/NameBasedAssetReceive';
 import DataExplorer from '../pages/manage/data/DataExplorer';
 import Archives from '../pages/manage/data/Archives';
 
@@ -63,6 +65,11 @@ function PortfolioProviderLayout() {
 
 function ManageDataLayout() {
   return <Outlet />;
+}
+
+function LegacyAssetDetailRedirect() {
+  const { assetId } = useParams();
+  return <Navigate to={assetId ? `/assetexplorer/${assetId}` : '/assetexplorer'} replace />;
 }
 
 declare global {
@@ -96,7 +103,8 @@ export function Routes() {
       ),
       children: [
         { index: true, element: <Home /> },
-        { path: 'assets', element: <AssetExplorer /> },
+        { path: 'assetexplorer', element: <AssetExplorer /> },
+        { path: 'assets', element: <Navigate to="/assetexplorer" replace /> },
         { path: 'xqlore', element: <XqloreExplorer /> },
         { path: 'xqlore/accounts/:address', element: <XqloreAccountPage /> },
         { path: 'xqlore/apps/:appName', element: <XqloreAppPage /> },
@@ -104,7 +112,8 @@ export function Routes() {
         { path: 'xqlore/trading', element: <XqloreTradingPage /> },
         { path: 'xqlore/admin', element: <XqloreAdminPage /> },
         { path: 'xqlore/stats', element: <XqloreStatsPage /> },
-        { path: 'assets/:assetId', element: <AssetDetail /> },
+        { path: 'assetexplorer/:assetId', element: <AssetDetail /> },
+        { path: 'assets/:assetId', element: <LegacyAssetDetailRedirect /> },
         { path: 'assetdata/:assetId', element: <AssetDataPage /> },
 
         {
@@ -137,7 +146,12 @@ export function Routes() {
             { path: 'my-data', element: <MyPublishedData /> },
             { path: 'publish', element: <PublishData /> },
             { path: 'bulk', element: <BulkPublish /> },
-            { path: 'name-assets', element: <NameBasedAssetData /> },
+            {
+              path: 'name-assets',
+              element: <Navigate to="/manage/data/name-assets/transfer" replace />,
+            },
+            { path: 'name-assets/transfer', element: <NameBasedAssetData /> },
+            { path: 'name-assets/receive', element: <NameBasedAssetReceive /> },
             { path: 'explorer', element: <DataExplorer /> },
             { path: 'archives', element: <Archives /> },
           ],

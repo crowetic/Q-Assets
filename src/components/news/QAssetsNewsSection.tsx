@@ -529,7 +529,7 @@ export default function QAssetsNewsSection() {
             <Button
               variant="outlined"
               size="small"
-              onClick={() => navigate(`/assets/${selected.assetId}`)}
+              onClick={() => navigate(`/assetexplorer/${selected.assetId}`)}
             >
               View Asset Details
             </Button>

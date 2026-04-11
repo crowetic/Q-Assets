@@ -1,3 +1,5 @@
+export const DEFAULT_MANUAL_TX_FEE = 0.01;
+
 export async function signAndBroadcast(rawTx: string): Promise<object> {
   const signedBytes = await qortalRequest({
     action: 'SIGN_TRANSACTION',
@@ -338,7 +340,7 @@ export async function createTransferAssetTransaction(
   assetId: number,
   amount: number, // amount in the asset's native units; ensure you pass atomic if your API expects it
   opts?: {
-    fee?: number; // default 0.01
+    fee?: number; // default 0.1
     txGroupId?: number; // default 0
   }
 ): Promise<string> {
@@ -348,7 +350,7 @@ export async function createTransferAssetTransaction(
   const txBody = {
     timestamp: Date.now(),
     reference: account.reference,
-    fee: opts?.fee ?? 0.01,
+    fee: opts?.fee ?? DEFAULT_MANUAL_TX_FEE,
     txGroupId: opts?.txGroupId ?? 0,
     recipient: recipientAddress,
     senderPublicKey,
@@ -506,7 +508,7 @@ export async function createIssueAssetTransaction(
   const txBody = {
     timestamp: Date.now(),
     reference: account.reference,
-    fee: 0.01,
+    fee: DEFAULT_MANUAL_TX_FEE,
     txGroupId: 0,
     recipient: null,
     issuerPublicKey,
@@ -607,7 +609,7 @@ export async function createUpdateAssetTransaction(
     newData?: string | object; // if object, will be JSON.stringified
   },
   opts?: {
-    fee?: number; // default 0.01
+    fee?: number; // default 0.1
     txGroupId?: number; // default 0
   }
 ): Promise<string> {
@@ -626,7 +628,7 @@ export async function createUpdateAssetTransaction(
   const txBody: any = {
     timestamp: Date.now(),
     reference: account.reference,
-    fee: opts?.fee ?? 0.01,
+    fee: opts?.fee ?? DEFAULT_MANUAL_TX_FEE,
     txGroupId: opts?.txGroupId ?? 0,
     assetId,
     ownerPublicKey,

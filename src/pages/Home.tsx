@@ -52,7 +52,7 @@ const Home = () => {
 
   const panels = [
     { title: 'Issue Asset', path: '/issue', icon: '🧬', isEmoji: true },
-    { title: 'All Assets', path: '/assets', icon: '🛸', isEmoji: true },
+    { title: 'All Assets', path: '/assetexplorer', icon: '🛸', isEmoji: true },
     { title: 'Portfolio', path: '/portfolio', icon: '🪐', isEmoji: true },
     { title: 'Asset Trading', path: '/trade', icon: '🚀', isEmoji: true },
     // or use: icon: '/assets/icons/trade.png', isEmoji: false

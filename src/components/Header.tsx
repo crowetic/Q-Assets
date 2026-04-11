@@ -35,7 +35,7 @@ const Header = () => {
 
   const navLinks = [
     { label: 'Home', to: '/' },
-    { label: 'Assets', to: '/assets' },
+    { label: 'Assets', to: '/assetexplorer' },
     { label: 'Issue', to: '/issue' },
     { label: 'Portfolio', to: '/portfolio' },
     { label: 'Trade', to: '/trade' },
@@ -52,8 +52,8 @@ const Header = () => {
     switch (to) {
       case '/':
         return pathname === '/';
-      case '/assets':
-        return pathname.startsWith('/assets') || pathname.startsWith('/asset');
+      case '/assetexplorer':
+        return pathname.startsWith('/assetexplorer') || pathname.startsWith('/assets');
       case '/xqlore':
         return pathname.startsWith('/xqlore');
       case '/issue':

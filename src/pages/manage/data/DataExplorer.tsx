@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { ReactNode } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link as RouterLink, useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Box,
@@ -42,6 +42,7 @@ import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
 import PublishRoundedIcon from '@mui/icons-material/PublishRounded';
 import PublicRoundedIcon from '@mui/icons-material/PublicRounded';
+import SchemaRoundedIcon from '@mui/icons-material/SchemaRounded';
 import { useAccountNames } from '../../../hooks/useAccountNames';
 import { useQdnResources, type QdnResource } from '../../../hooks/useQdnResources';
 import {
@@ -5174,6 +5175,26 @@ export default function DataExplorer() {
                   </Breadcrumbs>
                 )}
               </Box>
+              {activeName && (
+                <Stack
+                  spacing={0.5}
+                  alignItems={{ xs: 'flex-start', md: 'center' }}
+                  sx={{ width: { xs: '100%', md: 'auto' } }}
+                >
+                  <Button
+                    component={RouterLink}
+                    to="/manage/data/name-assets/transfer"
+                    variant="outlined"
+                    startIcon={<SchemaRoundedIcon />}
+                    sx={{ whiteSpace: 'nowrap' }}
+                  >
+                    Name-Based Asset
+                  </Button>
+                  <Typography variant="caption" color="text.secondary">
+                    Prepare transfer data for {activeName}
+                  </Typography>
+                </Stack>
+              )}
               <Box
                 sx={{
                   flex: { xs: 'auto', md: 1 },

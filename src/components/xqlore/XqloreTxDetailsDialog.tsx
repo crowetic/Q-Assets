@@ -182,7 +182,7 @@ export default function XqloreTxDetailsDialog({
     >
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <Stack spacing={0.5} sx={{ flex: 1 }}>
-          <Typography variant="h6" sx={{ fontFamily: 'Orbitron' }}>
+          <Typography variant="h6" sx={{ fontFamily: 'Exo2' }}>
             {title || 'Transaction Details'}
           </Typography>
           <Typography variant="caption" color="text.secondary">

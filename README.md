@@ -20,6 +20,28 @@ Q-Assets is an asset issuance, management, trading, and information Q-App for th
 - Manage files and sharing without leaving the app.
 - Show small QDN files that are not deleted tombstones.
 
+## Asset Explorer
+
+- Open the main asset explorer at `/assetexplorer`, with older `/assets` links still redirecting for backward compatibility.
+
+## Name-Based Assets
+
+- Open the workflow directly from Manage or jump into it from the top of Data Explorer after selecting a name.
+- Open separate send and receive NBA transfer flows for preparing or completing a name handoff.
+- Transfer a name even when no private QDN data needs to be migrated.
+- Optionally re-encrypt a selected private QDN resource for the future owner before the handoff.
+- Choose between recovery-friendly re-encryption and full-ownership-transfer re-encryption modes.
+- Resolve a future owner by Qortal name or address inside the app.
+- Warn before transfer creation when the receiving account has no on-chain public key yet, which usually means it still needs its first outbound transaction.
+- Create and sign the sell-name transaction without processing it yet, then publish the signed transfer package privately from your primary name by default, or from the active name when you explicitly opt into that mode.
+- Notify the transferee through Q-Mail with a direct link into the receive flow while keeping the same primary-name-by-default publishing behavior.
+- Complete the transfer from the receive flow by processing the seller transaction first, polling for its confirmation, and then repeatedly creating/signing/processing the buyer transaction until it succeeds or the retry window expires.
+- Cancel a still-pending outbound NBA package by publishing a tombstone over its identifier, which removes it from Q-Assets while still warning that a recipient may already have kept the signed sale transaction.
+- Review previous NBA transfer packages created by the current account and see whether matching `SELL_NAME`, `BUY_NAME`, or only a partial chain handoff has been detected yet.
+- Fall back to the name's actual current owner when showing NBA transfer state, so completed transfers stop appearing as pending and suspicious owner changes can be flagged.
+- Keep a submitted buyer transaction visible on the receive page while Q-Assets polls for confirmation, so freshly submitted completions do not disappear into an empty inbox.
+- Open an in-app NBA info modal that outlines the current transfer model plus upcoming TrueNBA and marketplace plans.
+
 ## Link Handling
 
 - Open `qortal://` links inside Q-Assets, including popup renders for external Q-Apps.

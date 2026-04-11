@@ -1092,7 +1092,7 @@ const XqloreStatsPage = () => {
           <Stack spacing={1.5}>
             <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2}>
               <Box>
-                <Typography variant="h4" sx={{ fontFamily: 'Orbitron' }}>
+                <Typography variant="h4" sx={{ fontFamily: 'Exo2' }}>
                   Long-term Stats
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
@@ -1193,7 +1193,7 @@ const XqloreStatsPage = () => {
         <Collapse in={showIndexTools} unmountOnExit>
           <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 3, md: 4 }, mb: 3 }}>
             <Stack spacing={2}>
-              <Typography variant="h5" sx={{ fontFamily: 'Orbitron' }}>
+              <Typography variant="h5" sx={{ fontFamily: 'Exo2' }}>
                 Publish / update tx index
               </Typography>
               <Typography variant="body2" color="text.secondary">
@@ -1336,7 +1336,7 @@ const XqloreStatsPage = () => {
 
         <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 3, md: 4 }, mt: 3 }}>
           <Stack spacing={2}>
-            <Typography variant="h5" sx={{ fontFamily: 'Orbitron' }}>
+            <Typography variant="h5" sx={{ fontFamily: 'Exo2' }}>
               Stats overview
             </Typography>
             <Typography variant="body2" color="text.secondary">

@@ -2,36 +2,36 @@ import { createTheme, alpha } from '@mui/material/styles';
 
 const commonThemeOptions = {
   typography: {
-    fontFamily: ['Orbitron', 'Inter', 'NataSans', 'Exo2'].join(','),
+    fontFamily: ['Exo2', 'Inter', 'NataSans', 'Orbitron'].join(','),
     h1: {
       fontSize: '2.5rem',
       fontWeight: 650,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Exo2',
     },
     h2: {
       fontSize: '2.25rem',
       fontWeight: 550,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Exo2',
     },
     h3: {
       fontSize: '2.0rem',
       fontWeight: 520,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Exo2',
     },
     h4: {
       fontSize: '1.75rem',
       fontWeight: 510,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Exo2',
     },
     h5: {
       fontSize: '1.5rem',
       fontWeight: 500,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Exo2',
     },
     h6: {
       fontSize: '1.25rem',
       fontWeight: 475,
-      fontFamily: 'Orbitron',
+      fontFamily: 'Exo2',
     },
     body1: {
       fontSize: '1rem',

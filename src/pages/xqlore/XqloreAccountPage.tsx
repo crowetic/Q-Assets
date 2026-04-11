@@ -140,7 +140,7 @@ const XqloreAccountPage = () => {
           <Stack spacing={1.5}>
             <Stack direction={{ xs: 'column', md: 'row' }} justifyContent="space-between" gap={2}>
               <Box>
-                <Typography variant="h4" sx={{ fontFamily: 'Orbitron' }}>
+                <Typography variant="h4" sx={{ fontFamily: 'Exo2' }}>
                   Account
                 </Typography>
                 <MuiLink
@@ -254,7 +254,7 @@ const XqloreAccountPage = () => {
                 <Typography variant="overline" sx={{ letterSpacing: '0.16em' }}>
                   {item.label}
                 </Typography>
-                <Typography variant="h5" sx={{ fontFamily: 'Orbitron' }}>
+                <Typography variant="h5" sx={{ fontFamily: 'Exo2' }}>
                   {item.value}
                 </Typography>
               </Box>
@@ -264,7 +264,7 @@ const XqloreAccountPage = () => {
 
         <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 2.5, md: 3.5 } }}>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Typography variant="h5" sx={{ fontFamily: 'Orbitron' }}>
+            <Typography variant="h5" sx={{ fontFamily: 'Exo2' }}>
               Recent transactions
             </Typography>
             {txState.loading && (

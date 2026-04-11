@@ -38,10 +38,9 @@ const panels: Panel[] = [
   },
   {
     title: 'Name-Based Asset Data',
-    description: 'Publish and Create Name-Based Assets with QDN Data.',
+    description: 'Prepare transferable private QDN data and future-owner handoff copies.',
     to: 'name-assets',
     icon: <SchemaRoundedIcon fontSize="inherit" />,
-    disabled: true,
   },
   {
     title: 'Data Explorer',

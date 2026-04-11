@@ -461,7 +461,7 @@ export default function PortfolioWallet({
                               size="small"
                               variant="outlined"
                               startIcon={<Launch fontSize="small" />}
-                              onClick={() => navigate(`/assets/${row.assetId}`)}
+                              onClick={() => navigate(`/assetexplorer/${row.assetId}`)}
                             >
                               View details
                             </Button>
@@ -506,7 +506,7 @@ export default function PortfolioWallet({
                               <span>
                                 <IconButton
                                   size="small"
-                                  onClick={() => navigate(`/assets/${row.assetId}`)}
+                                  onClick={() => navigate(`/assetexplorer/${row.assetId}`)}
                                 >
                                   <Launch fontSize="small" />
                                 </IconButton>

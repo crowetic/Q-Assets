@@ -1321,7 +1321,7 @@ export default function QDeckProjectPage() {
                   <Button
                     size="small"
                     component={RouterLink}
-                    to={resolvedId != null ? `/assets/${resolvedId}` : '/assets'}
+                    to={resolvedId != null ? `/assetexplorer/${resolvedId}` : '/assetexplorer'}
                     disabled={resolvedId == null}
                   >
                     View

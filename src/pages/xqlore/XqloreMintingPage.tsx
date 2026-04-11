@@ -36,7 +36,7 @@ const XqloreMintingPage = () => {
       <Box sx={{ width: '85vw', maxWidth: 1600, mx: 'auto' }}>
         <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 3, md: 4 } }}>
           <Stack spacing={2}>
-            <Typography variant="h4" sx={{ fontFamily: 'Orbitron' }}>
+            <Typography variant="h4" sx={{ fontFamily: 'Exo2' }}>
               Minting Overview
             </Typography>
             <Typography variant="body2" color="text.secondary">

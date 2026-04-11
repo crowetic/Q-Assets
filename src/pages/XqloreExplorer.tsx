@@ -565,7 +565,7 @@ const XqloreExplorer = () => {
                 <Typography
                   variant="h3"
                   sx={{
-                    fontFamily: 'Orbitron',
+                    fontFamily: 'Exo2',
                     letterSpacing: '0.08em',
                     textTransform: 'uppercase',
                   }}
@@ -781,7 +781,7 @@ const XqloreExplorer = () => {
                 <Typography variant="overline" sx={{ letterSpacing: '0.16em' }}>
                   {metric.label}
                 </Typography>
-                <Typography variant="h4" sx={{ fontFamily: 'Orbitron', mt: 0.5 }}>
+                <Typography variant="h4" sx={{ fontFamily: 'Exo2', mt: 0.5 }}>
                   {metric.value}
                 </Typography>
                 <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
@@ -802,7 +802,7 @@ const XqloreExplorer = () => {
         >
           <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 2.5, md: 3.5 } }}>
             <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between">
-              <Typography variant="h5" sx={{ fontFamily: 'Orbitron' }}>
+              <Typography variant="h5" sx={{ fontFamily: 'Exo2' }}>
                 Activity stream ({isSearchMode ? 'search' : timeRange})
               </Typography>
               <ToggleButtonGroup
@@ -958,7 +958,7 @@ const XqloreExplorer = () => {
 
           <Stack spacing={2}>
             <Paper elevation={0} sx={{ ...surfaceSx, p: 2.5 }}>
-              <Typography variant="h6" sx={{ fontFamily: 'Orbitron' }}>
+              <Typography variant="h6" sx={{ fontFamily: 'Exo2' }}>
                 Signal console ({isSearchMode ? 'search' : timeRange})
               </Typography>
               <Typography variant="body2" sx={{ color: theme.palette.text.secondary, mt: 0.5 }}>
@@ -1001,7 +1001,7 @@ const XqloreExplorer = () => {
 
             <Paper elevation={0} sx={{ ...surfaceSx, p: 2.5 }}>
               <Stack direction="row" spacing={1} alignItems="center">
-                <Typography variant="h6" sx={{ fontFamily: 'Orbitron' }}>
+                <Typography variant="h6" sx={{ fontFamily: 'Exo2' }}>
                   App attribution ({isSearchMode ? 'search' : timeRange})
                 </Typography>
                 {registryLoading && <Chip size="small" label="Loading app registry" />}
@@ -1049,7 +1049,7 @@ const XqloreExplorer = () => {
             </Paper>
 
             <Paper elevation={0} sx={{ ...surfaceSx, p: 2.5 }}>
-              <Typography variant="h6" sx={{ fontFamily: 'Orbitron' }}>
+              <Typography variant="h6" sx={{ fontFamily: 'Exo2' }}>
                 Tag matrix ({isSearchMode ? 'search' : timeRange})
               </Typography>
               <Typography variant="body2" sx={{ color: theme.palette.text.secondary, mt: 0.5 }}>
@@ -1098,7 +1098,7 @@ const XqloreExplorer = () => {
             </Paper>
 
             <Paper elevation={0} sx={{ ...surfaceSx, p: 2.5 }}>
-              <Typography variant="h6" sx={{ fontFamily: 'Orbitron' }}>
+              <Typography variant="h6" sx={{ fontFamily: 'Exo2' }}>
                 Identifier radar ({isSearchMode ? 'search' : timeRange})
               </Typography>
               <Typography variant="body2" sx={{ color: theme.palette.text.secondary, mt: 0.5 }}>

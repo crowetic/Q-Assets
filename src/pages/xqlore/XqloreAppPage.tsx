@@ -113,7 +113,7 @@ const XqloreAppPage = () => {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    fontFamily: 'Orbitron',
+                    fontFamily: 'Exo2',
                     fontWeight: 700,
                     color: theme.palette.text.secondary,
                   }}
@@ -125,7 +125,7 @@ const XqloreAppPage = () => {
                   )}
                 </Box>
                 <Box>
-                  <Typography variant="h4" sx={{ fontFamily: 'Orbitron' }}>
+                  <Typography variant="h4" sx={{ fontFamily: 'Exo2' }}>
                     {appEntry?.label || appName}
                   </Typography>
                   <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>
@@ -178,7 +178,7 @@ const XqloreAppPage = () => {
         </Paper>
 
         <Paper elevation={0} sx={{ ...surfaceSx, p: { xs: 2.5, md: 3.5 } }}>
-          <Typography variant="h5" sx={{ fontFamily: 'Orbitron' }}>
+          <Typography variant="h5" sx={{ fontFamily: 'Exo2' }}>
             Recent app activity
           </Typography>
           <Divider sx={{ my: 2 }} />

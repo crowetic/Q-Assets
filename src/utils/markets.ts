@@ -1,6 +1,6 @@
 // src/utils/markets.ts
 import { getAssetBalances } from '../utils/qortalAssetRequests';
-import { getAccountDataCached } from './qortalApi';
+import { DEFAULT_MANUAL_TX_FEE, getAccountDataCached } from './qortalApi';
 
 /* =========================
     Types
@@ -294,7 +294,7 @@ export async function createOrderAndBroadcast(params: {
   qtyAsset: number; // ASSET units
   address: string;
   publicKey?: string;
-  fee?: number; // default 0.01 QORT
+  fee?: number; // default 0.1 QORT
   txGroupId?: number; // default 0
   assetDecimals?: 0 | 8; // default 8; pass 0 if non-divisible
 }): Promise<string> {
@@ -305,7 +305,7 @@ export async function createOrderAndBroadcast(params: {
     qtyAsset,
     address,
     publicKey,
-    fee = 0.01,
+    fee = DEFAULT_MANUAL_TX_FEE,
     txGroupId = 0,
     assetDecimals = 8,
   } = params;
@@ -392,7 +392,7 @@ export async function cancelOrderAndBroadcast(params: {
   const body = {
     timestamp: Date.now(),
     reference,
-    fee: params.fee ?? 0.01,
+    fee: params.fee ?? DEFAULT_MANUAL_TX_FEE,
     txGroupId: params.txGroupId ?? 0,
     recipient: null,
     orderId,

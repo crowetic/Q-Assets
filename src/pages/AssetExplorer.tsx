@@ -613,7 +613,7 @@ const AssetExplorer = () => {
               return (
                 <Link
                   key={asset.assetId}
-                  to={`/assets/${asset.assetId}`}
+                  to={`/assetexplorer/${asset.assetId}`}
                   style={{ textDecoration: 'none' }}
                 >
                   <Paper

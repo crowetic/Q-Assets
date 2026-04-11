@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Box, Typography, Paper, Stack, CircularProgress } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import StorageRoundedIcon from '@mui/icons-material/StorageRounded';
+import SchemaRoundedIcon from '@mui/icons-material/SchemaRounded';
 import PaymentsRoundedIcon from '@mui/icons-material/PaymentsRounded';
 import FolderSpecialRoundedIcon from '@mui/icons-material/FolderSpecialRounded';
 import SecurityRoundedIcon from '@mui/icons-material/SecurityRounded';
@@ -26,6 +27,12 @@ const tiles: Tile[] = [
     description: 'Publish, organize, and bulk-manage QDN data under your names.',
     to: '/manage/data/explorer',
     icon: <StorageRoundedIcon fontSize="inherit" />,
+  },
+  {
+    title: 'Name-Based Asset Management',
+    description: 'Prepare future-owner handoff copies for private QDN data tied to your names.',
+    to: '/manage/data/name-assets',
+    icon: <SchemaRoundedIcon fontSize="inherit" />,
   },
   {
     title: 'Dividends',

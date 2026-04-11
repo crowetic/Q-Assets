@@ -1,8 +1,34 @@
 # Changelog
 
+## 0.9.7
+
+- Added a first-pass Name-Based Assets page under Manage → Data with future-owner resolution, private-resource discovery, and transfer-prep publishing for selected non-chunked private QDN resources.
+- Published NBA transfer-prep notices alongside fresh direct-encrypted handoff copies so transfer context can be shared with the intended new owner before the on-chain name handoff.
+- Enabled the Name-Based Asset Data entry in Data Management and documented the new workflow in the README.
+- Added direct entry points to the NBA workflow from the main Manage page and from the Data Explorer header once a name is selected.
+- Reworked NBA into dedicated transfer send/receive routes, with `/name-assets` now redirecting into the transfer flow.
+- Added manual `/names/sell` and `/names/buy` transaction builders for NBA transfers, including seller-sign-only package creation and back-to-back completion on the receive side.
+- Made private-data re-encryption optional during NBA transfer prep so name-only transfers can proceed without QDN data migration.
+- Added recipient-targeted NBA transfer package discovery plus Q-Mail notifications linking transferees straight into the receive page.
+- Raised manual transaction fee defaults from `0.01` to `0.1` QORT across the shared builders and aligned the NBA transfer wording to use “sell price”.
+- Clarified the NBA sell flow copy around private-data re-encryption, replaced the old owner-access toggle with explicit re-encryption modes, and added an NBA info modal describing current and planned modes.
+- Highlighted the `Receive NBA` action on the transfer page with a larger, more prominent call-to-action style.
+- Added a sender-side NBA transfer history panel that reloads prior transfer packages for the selected name and checks both `SELL_NAME` and `BUY_NAME` transactions so partial completions are visible.
+- Switched NBA transfer-package publishes and transfer-notification Q-Mail sends to use the account's primary name, and changed transfer history discovery to use `/arbitrary/search` for the account's `DOCUMENT_PRIVATE` publishes instead of only the sold name's publish history.
+- Added a `Publish with active name` override on the NBA transfer form, while keeping primary-name publishing as the default and explaining the single-publish-asset tradeoff in the UI.
+- Reworked NBA receive completion so the seller transaction is processed first, then Q-Assets polls the transferor's unconfirmed/confirmed sell state and only creates the buyer transaction once the sell exists on-chain.
+- Hardened NBA receive completion to keep retrying buyer transaction creation/submission after temporary failures or re-org-style sell-state reversions, instead of aborting after a single failed buy attempt.
+- Reduced NBA transfer-package identifier leakage by removing the sold-name segment and switching to a sender/recipient/date/random format that stays searchable without advertising the name in the identifier itself.
+- Added current-owner fallback checks for NBA transfer history/inbox state so completed transfers stop showing as pending, while names claimed by a third party are surfaced as possible interceptions.
+- Added a receive-side completion submissions section that keeps recently submitted buyer transactions visible and polls roughly every 5 seconds until confirmation.
+- Added an NBA transfer warning and explicit alert when the intended receiving account has no on-chain public key yet, so users know the transferee needs at least one outbound transaction first.
+- Added cancellation for still-pending outbound NBA transfer packages, using a tombstone publish over the package identifier and filtering tombstoned packages out of sender/recipient transfer discovery.
+- Moved the app-side asset explorer route from `/assets` to `/assetexplorer`, updated internal/deep links to use the new path, and kept legacy `/assets` URLs redirecting for backward compatibility.
+
 ## 0.9.6
 
 - Switched header typography from Orbitron to Exo2 for improved readability while keeping a futuristic look.
+- Fixed remaining Xqlore/page heading typography overrides so all major headers now consistently use Exo2 instead of Orbitron.
 - Added short-lived dedupe caching for `searchsimple` requests and Q-Deck resource reads to cut duplicate API calls during board loads.
 - Added cached/deduped account-group lookups used by permission checks to reduce repeated `/groups/member` requests.
 - Normalized Q-Deck permission identity matching (name/address comparisons) to avoid case/format mismatches causing inconsistent edit visibility.

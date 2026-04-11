@@ -151,7 +151,7 @@ export default function NewsPublisher({
         },
       ]);
 
-      const assetLink = `qortal://APP/Q-Assets/assets/${assetId}`;
+      const assetLink = `qortal://APP/Q-Assets/assetexplorer/${assetId}`;
       const links = [
         {
           label: 'View News Publication on Q-Assets',
